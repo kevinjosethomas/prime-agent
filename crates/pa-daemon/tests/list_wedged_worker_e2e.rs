@@ -206,7 +206,9 @@ fn resident_row<'a>(sessions: &'a [Value], id: &str) -> &'a Value {
     sessions
         .iter()
         .find(|row| row.get("id").and_then(Value::as_str) == Some(id))
-        .unwrap_or_else(|| panic!("no list row for session {id}: {sessions:?}"))
+        // The rows stay out of the panic: CodeQL flags the cleartext row dump
+        // (temp session paths ride them) — the id alone names the failure.
+        .unwrap_or_else(|| panic!("no list row for session {id}"))
 }
 
 #[test]

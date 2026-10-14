@@ -959,7 +959,7 @@ mod tests {
     fn row_for<'a>(rows: &'a [Value], id: &str) -> &'a Value {
         rows.iter()
             .find(|row| row.get("id").and_then(Value::as_str) == Some(id))
-            .unwrap_or_else(|| panic!("no row for {id}: {rows:?}"))
+            .unwrap_or_else(|| panic!("no row for {id}"))
     }
 
     /// The fabrication guard: a wedged (never-answering) resident that pushed a
