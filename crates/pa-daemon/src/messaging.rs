@@ -149,6 +149,18 @@ impl Supervisor {
     /// read's error fails the send (the roster's `worker_summary` downgrades
     /// instead).
     async fn source_worker_summary(&self, resident: &Arc<ResidentWorker>) -> Result<Value> {
+        // The cached summary serves routing decisions without a live
+        // get_state round-trip: every roster delta push (turn start/end,
+        // tool execution, etc.) refreshes this slot under the same
+        // sequence gate the list fix established.  The caller only needs
+        // sender-endpoint fields (activeSessionId, sessionId, runtimeKind,
+        // sessionName, parent edges) and the wake path's cwd + session_dir
+        // — all present in the full summary shape.
+        if let Some(cached) = resident.summary_snapshot.lock().unwrap().clone() {
+            return Ok(cached);
+        }
+        // A resident with no cached summary (its registration pull failed
+        // and it never pushed) falls back to the live round-trip.
         let state = self
             .route_command_typed(
                 resident,

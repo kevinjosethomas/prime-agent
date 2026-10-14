@@ -832,6 +832,12 @@ impl Worker {
         if let Ok(summary_value) = serde_json::to_value(&summary) {
             self.engine.set_session_summary(summary_value);
         }
+        // Push the roster delta so resident rows and the
+        // summary_snapshot reflect the new name without waiting for
+        // the next turn or event-triggered flush.  The name-availability
+        // check (assert_session_name_available) reads the snapshot,
+        // so a delayed push opens a rename→create race window.
+        self.push_roster_delta();
         if let Some(notice) = renamed_notice.as_ref() {
             self.broadcast_custom_row(notice);
         }

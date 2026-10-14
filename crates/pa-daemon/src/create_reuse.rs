@@ -255,6 +255,16 @@ impl Supervisor {
         resident: &Arc<ResidentWorker>,
         session_path: &str,
     ) -> Result<ReuseAnswer> {
+        // The cached summary serves the open/reuse path without a live
+        // get_state round-trip: the attach answer returns the full session
+        // summary, exactly the shape the summary_snapshot stores.  Every
+        // roster delta push refreshes this slot under the same sequence
+        // gate the list fix established.  Only fall back to the live
+        // round-trip when the cache was never populated (a resident whose
+        // registration pull failed and that never pushed).
+        if let Some(cached) = resident.summary_snapshot.lock().unwrap().clone() {
+            return Ok(ReuseAnswer::Summary(cached));
+        }
         match self
             .route_command_ready_typed(
                 resident,
