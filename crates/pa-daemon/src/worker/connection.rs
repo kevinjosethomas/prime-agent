@@ -955,6 +955,10 @@ impl Worker {
             }
         }
 
+        // A direct viewer changes `attachedClients` with no session event
+        // (TS daemon-mode.ts flushes the roster on session_client attach):
+        // the summary cache must not serve the pre-attach count.
+        self.push_roster_delta();
         response_success(None, "attach", Some(result))
     }
 
@@ -1058,6 +1062,10 @@ impl Worker {
         // The notify re-arms the runner's idle-passivation window now
         // that the client detached.
         self.work_notify.notify_one();
+        // A direct viewer changes `attachedClients` with no session event
+        // (TS daemon-mode.ts flushes the roster on session_client detach):
+        // the summary cache must not serve the pre-detach count.
+        self.push_roster_delta();
         response_success(None, "detach", None)
     }
 }
