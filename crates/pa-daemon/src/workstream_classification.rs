@@ -50,7 +50,7 @@ fn validate_request(payload: &Value) -> Result<ClassificationRequest, String> {
     if payload.to_string().len() > 128 * 1024 {
         return Err("Classification context exceeds 128 KiB".to_string());
     }
-    let request: ClassificationRequest = serde_json::from_value(payload.clone())
+    let mut request: ClassificationRequest = serde_json::from_value(payload.clone())
         .map_err(|_| "Invalid classification context".to_string())?;
     if request.provider != "prime-inference"
         || request.model_id != CLEF
@@ -78,10 +78,16 @@ fn validate_request(payload: &Value) -> Result<ClassificationRequest, String> {
             return Err("Invalid classification message".to_string());
         }
     }
+    // Inbox is the host's abstention state, never a model-evaluated outcome.
+    // Validate all supplied IDs first, then omit it from both questions and state.
+    request.workstreams.retain(|workstream| workstream.id != "inbox");
     Ok(request)
 }
 
-fn evaluation_batch(request: &ClassificationRequest, candidates: &[Workstream]) -> SystemOneRequest {
+fn evaluation_batch(
+    request: &ClassificationRequest,
+    candidates: &[Workstream],
+) -> SystemOneRequest {
     let questions = candidates
         .iter()
         .enumerate()
@@ -114,8 +120,13 @@ fn evaluation_batch(request: &ClassificationRequest, candidates: &[Workstream]) 
     }
 }
 
-fn selected_ids(candidates: &[Workstream], result: &SystemOneResponse) -> Result<Vec<String>, String> {
-    if !result.model.eq_ignore_ascii_case(CLEF) || result.answers.len() != candidates.len() {
+fn selected_ids(
+    candidates: &[Workstream],
+    result: &SystemOneResponse,
+) -> Result<Vec<String>, String> {
+    // Gateways may return a canonical model ID rather than the requested alias.
+    // The request remains pinned to CLEF; response identity is bounded metadata.
+    if !bounded(&result.model, 2_048) || result.answers.len() != candidates.len() {
         return Err("Invalid Clef evaluation response".to_string());
     }
     let mut selected = Vec::new();
@@ -124,11 +135,21 @@ fn selected_ids(candidates: &[Workstream], result: &SystemOneResponse) -> Result
             .answers
             .get(&format!("w{index}"))
             .ok_or_else(|| "Clef omitted a requested workstream evaluation".to_string())?;
-        let relevant = answer.probabilities.get("relevant").copied().unwrap_or(f64::NAN);
-        let unrelated = answer.probabilities.get("unrelated").copied().unwrap_or(f64::NAN);
+        let relevant = answer
+            .probabilities
+            .get("relevant")
+            .copied()
+            .unwrap_or(f64::NAN);
+        let unrelated = answer
+            .probabilities
+            .get("unrelated")
+            .copied()
+            .unwrap_or(f64::NAN);
         let scores = [relevant, unrelated, answer.confidence];
         if answer.probabilities.len() != 2
-            || scores.iter().any(|score| !score.is_finite() || !(0.0..=1.0).contains(score))
+            || scores
+                .iter()
+                .any(|score| !score.is_finite() || !(0.0..=1.0).contains(score))
             || (relevant + unrelated - 1.0).abs() > 0.02
             || !matches!(answer.choice.as_str(), "relevant" | "unrelated")
             || (answer.choice == "relevant" && relevant < unrelated)
@@ -162,12 +183,21 @@ pub(crate) async fn classify(agent_dir: &Path, payload: &Value) -> Result<Value,
     // Clef is an evaluation target, not a chat catalog entry. This local descriptor
     // exists only to reuse the registry's established auth/header merge. No catalog
     // entry is inserted, no chat model is switched, and no setting is rewritten.
-    let configured = registry.get_all().iter().find(|model| {
-        model.provider == "prime-inference" && model.id == CLEF
-    });
+    let configured = registry
+        .get_all()
+        .iter()
+        .find(|model| model.provider == "prime-inference" && model.id == CLEF);
     let base_url = configured
-        .or_else(|| registry.get_all().iter().find(|model| model.provider == "prime-inference"))
-        .map_or_else(|| pa_core::models::PRIME_INFERENCE_BASE_URL.to_string(), |model| model.base_url.clone());
+        .or_else(|| {
+            registry
+                .get_all()
+                .iter()
+                .find(|model| model.provider == "prime-inference")
+        })
+        .map_or_else(
+            || pa_core::models::PRIME_INFERENCE_BASE_URL.to_string(),
+            |model| model.base_url.clone(),
+        );
     let target: pa_types::ai::Model = serde_json::from_value(json!({
         "id": CLEF, "name": "Clef evaluation", "api": "systemone",
         "provider": "prime-inference", "baseUrl": base_url,
@@ -175,10 +205,13 @@ pub(crate) async fn classify(agent_dir: &Path, payload: &Value) -> Result<Value,
         "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
         "contextWindow": 0, "maxTokens": 0,
         "headers": configured.and_then(|model| model.headers.clone()),
-    })).map_err(|_| "Cannot prepare Clef evaluation authentication".to_string())?;
+    }))
+    .map_err(|_| "Cannot prepare Clef evaluation authentication".to_string())?;
     let credentials = registry.get_api_key_and_headers(&target, target.headers.as_ref());
     let has_authorization_header = credentials.headers.as_ref().is_some_and(|headers| {
-        headers.keys().any(|name| name.eq_ignore_ascii_case("authorization"))
+        headers
+            .keys()
+            .any(|name| name.eq_ignore_ascii_case("authorization"))
     });
     if !credentials.ok || (credentials.api_key.is_none() && !has_authorization_header) {
         return Err("Prime Inference authentication is unavailable".to_string());
@@ -186,7 +219,9 @@ pub(crate) async fn classify(agent_dir: &Path, payload: &Value) -> Result<Value,
     let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
     let options = StreamOptions {
         api_key: credentials.api_key,
-        headers: credentials.headers.map(|headers| headers.into_iter().collect()),
+        headers: credentials
+            .headers
+            .map(|headers| headers.into_iter().collect()),
         timeout_ms: Some(20_000),
         ..Default::default()
     };

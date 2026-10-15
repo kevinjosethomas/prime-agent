@@ -44,20 +44,24 @@ pub async fn evaluate(
     request: &SystemOneRequest,
     options: &StreamOptions,
 ) -> Result<SystemOneResponse, SystemOneError> {
-    if options.signal.as_ref().is_some_and(tokio_util::sync::CancellationToken::is_cancelled) {
+    if options
+        .signal
+        .as_ref()
+        .is_some_and(tokio_util::sync::CancellationToken::is_cancelled)
+    {
         return Err(SystemOneError::Cancelled);
     }
     if request.questions.is_empty()
         || request.questions.len() > 32
         || request.state.is_null()
-        || request.questions.values().any(|question| {
-            question.instructions.trim().is_empty() || question.criteria.len() < 2
-        })
+        || request
+            .questions
+            .values()
+            .any(|question| question.instructions.trim().is_empty() || question.criteria.len() < 2)
     {
         return Err(SystemOneError::InvalidRequest);
     }
-    let request_body =
-        serde_json::to_vec(request).map_err(|_| SystemOneError::InvalidRequest)?;
+    let request_body = serde_json::to_vec(request).map_err(|_| SystemOneError::InvalidRequest)?;
     if request_body.len() > MAX_REQUEST_BYTES {
         return Err(SystemOneError::InvalidRequest);
     }
@@ -102,7 +106,17 @@ pub async fn evaluate(
             return Err(SystemOneError::Http(response.status().as_u16()));
         }
         let mut body = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|_| SystemOneError::InvalidResponse)? {
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|error| {
+                if error.is_timeout() {
+                    SystemOneError::Timeout
+                } else {
+                    SystemOneError::InvalidResponse
+                }
+            })?
+        {
             if body.len() + chunk.len() > MAX_RESPONSE_BYTES {
                 return Err(SystemOneError::InvalidResponse);
             }
