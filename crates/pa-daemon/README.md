@@ -2,10 +2,15 @@
 
 Session supervision and wire serving.
 
-The fork-only `classify_workstream` control-plane command performs one bounded,
-tool-free Prime Inference completion. It resolves the supplied Clef model through
-the normal authenticated registry and returns only validated existing workstream
-IDs. It creates no session, changes no history, and never exports provider keys.
+The fork-only `classify_workstream` control-plane command performs bounded
+Prime Inference System One evaluation (never chat completion). It resolves request
+auth and team headers through the existing registry, evaluates every workstream
+in batches of at most 32 questions within 20 seconds total, and returns only
+existing workstream IDs whose relevant probability and confidence are at least
+0.75. That cutoff is an initial conservative policy, not an empirically calibrated
+accuracy guarantee. The explicit cloudflare/clef evaluation target is never
+inserted into the chat catalog. It creates no session, changes no history, and
+never exports provider keys.
 Adoption uses the content-free `daemon event` summary counter
 `workstream_classified_count` (schema v1).
 

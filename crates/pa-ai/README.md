@@ -13,3 +13,5 @@ No agent loop, no tool execution, no session state, no UI. Receives/returns `pa-
 
 ## Depends on
 pa-types (one-way).
+
+The fork adds `systemone::evaluate`, a bounded typed evaluation HTTP client using host-resolved request auth. It does not implement chat completion, agent execution, catalog registration, or Decision API control loops. Shared request/answer DTOs live in pa-types.

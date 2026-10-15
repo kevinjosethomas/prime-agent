@@ -88,6 +88,7 @@ jobs:
         run: cargo build --release --locked --target ${{ env.TARGET }} -j 4 -p pa-cli --bin prime-agent
       - name: Run focused workstream classifier tests
         run: |
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-ai --lib systemone
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib workstream_classification
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib workstream_classifier_round_trips
       - name: Verify workstream runtime identity and readiness

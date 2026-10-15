@@ -60,3 +60,5 @@ Everything in this crate is deliberately `pub` - it is the cross-crate contract.
 
 ## Depends on
 serde, serde_json, thiserror, anyhow, tokio, regex (the incident classifier's TS log-message patterns; see the `incident` scope entry). No workspace crates.
+
+`decision` owns the System One choice-evaluation request/answer DTOs shared by pa-ai transport and pa-daemon classification policy. No transport, credentials, or execution logic lives in these types.

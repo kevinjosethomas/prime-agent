@@ -12,6 +12,7 @@ pub mod models;
 pub mod models_generated;
 pub mod oauth;
 pub mod registry;
+pub mod systemone;
 pub mod types;
 
 mod event_stream;
