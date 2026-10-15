@@ -65,7 +65,10 @@ fn accepts_canonical_response_model_metadata_without_changing_the_requested_targ
     let request = validate_request(&payload()).unwrap();
     let mut canonical = response(&[0.9, 0.1]);
     canonical.model = "clef-2026-10".to_string();
-    assert_eq!(selected_ids(&request.workstreams, &canonical).unwrap(), vec!["o1"]);
+    assert_eq!(
+        selected_ids(&request.workstreams, &canonical).unwrap(),
+        vec!["o1"]
+    );
     assert_eq!(evaluation_batch(&request, &request.workstreams).model, CLEF);
     for model in [String::new(), " ".to_string(), "x".repeat(2_049)] {
         canonical.model = model;
@@ -76,15 +79,25 @@ fn accepts_canonical_response_model_metadata_without_changing_the_requested_targ
 #[test]
 fn reserved_inbox_is_never_an_evaluation_question_or_selected_outcome() {
     let mut context = payload();
-    context["workstreams"].as_array_mut().unwrap().insert(0, json!({
-        "id": "inbox", "title": "Inbox", "summary": "Awaiting classification"
-    }));
+    context["workstreams"].as_array_mut().unwrap().insert(
+        0,
+        json!({
+            "id": "inbox", "title": "Inbox", "summary": "Awaiting classification"
+        }),
+    );
     let request = validate_request(&context).unwrap();
     assert_eq!(request.workstreams.len(), 2);
     let batch = evaluation_batch(&request, &request.workstreams);
     assert_eq!(batch.questions.len(), 2);
-    assert!(!batch.state["workstreams"].as_array().unwrap().iter().any(|stream| stream["id"] == "inbox"));
-    assert_eq!(selected_ids(&request.workstreams, &response(&[0.9, 0.8])).unwrap(), vec!["o1", "root"]);
+    assert!(!batch.state["workstreams"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|stream| stream["id"] == "inbox"));
+    assert_eq!(
+        selected_ids(&request.workstreams, &response(&[0.9, 0.8])).unwrap(),
+        vec!["o1", "root"]
+    );
 }
 
 #[tokio::test]
@@ -93,8 +106,16 @@ async fn inbox_only_abstains_without_resolving_auth_or_contacting_a_provider() {
     context["workstreams"] = json!([{
         "id": "inbox", "title": "Inbox", "summary": "Awaiting classification"
     }]);
-    let result = classify(Path::new("/nonexistent-workstream-test-agent-dir"), &context).await.unwrap();
-    assert_eq!(result, json!({"turnId": "turn-1", "uncertain": true, "workstreamIds": []}));
+    let result = classify(
+        Path::new("/nonexistent-workstream-test-agent-dir"),
+        &context,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        result,
+        json!({"turnId": "turn-1", "uncertain": true, "workstreamIds": []})
+    );
 }
 
 #[test]

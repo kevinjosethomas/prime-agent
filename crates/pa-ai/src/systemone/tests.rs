@@ -215,9 +215,19 @@ async fn a_hanging_response_body_preserves_the_timeout_error() {
         std::future::pending::<()>().await;
         drop(socket);
     });
-    let result = tokio::time::timeout(Duration::from_secs(2), evaluate(&base, &request(), &StreamOptions {
-        timeout_ms: Some(100), ..Default::default()
-    })).await.unwrap();
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        evaluate(
+            &base,
+            &request(),
+            &StreamOptions {
+                timeout_ms: Some(100),
+                ..Default::default()
+            },
+        ),
+    )
+    .await
+    .unwrap();
     provider.abort();
     assert!(matches!(result, Err(SystemOneError::Timeout)));
 }

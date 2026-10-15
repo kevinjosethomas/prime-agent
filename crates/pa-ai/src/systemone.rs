@@ -106,17 +106,13 @@ pub async fn evaluate(
             return Err(SystemOneError::Http(response.status().as_u16()));
         }
         let mut body = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|error| {
-                if error.is_timeout() {
-                    SystemOneError::Timeout
-                } else {
-                    SystemOneError::InvalidResponse
-                }
-            })?
-        {
+        while let Some(chunk) = response.chunk().await.map_err(|error| {
+            if error.is_timeout() {
+                SystemOneError::Timeout
+            } else {
+                SystemOneError::InvalidResponse
+            }
+        })? {
             if body.len() + chunk.len() > MAX_RESPONSE_BYTES {
                 return Err(SystemOneError::InvalidResponse);
             }

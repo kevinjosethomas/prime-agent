@@ -80,7 +80,9 @@ fn validate_request(payload: &Value) -> Result<ClassificationRequest, String> {
     }
     // Inbox is the host's abstention state, never a model-evaluated outcome.
     // Validate all supplied IDs first, then omit it from both questions and state.
-    request.workstreams.retain(|workstream| workstream.id != "inbox");
+    request
+        .workstreams
+        .retain(|workstream| workstream.id != "inbox");
     Ok(request)
 }
 
