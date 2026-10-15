@@ -12,6 +12,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
+import rlm
 from workstreams import Client, DeliveryError, Link, Step
 
 
@@ -43,3 +44,20 @@ class DesktopInteropTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((persisted.status, persisted.parent_id, persisted.links, persisted.progress),
                              ("done", "o1", (Link("source", "https://example.com/intake", "Fixture intake"),), (1, 1)))
             self.assertIsNone((await restarted.get("o1")).parent_id)
+
+    async def test_canonical_assignment_queued_then_actual_roster_session(self):
+        with tempfile.TemporaryDirectory(prefix="workstreams assignment ") as directory:
+            argv = json.loads(os.environ["WORKSTREAM_DESKTOP_REPORTER"])
+            client = Client(command=[*argv, "--db", str(Path(directory) / "state.sqlite")])
+            task = await client.create("fixture", "Verify native assignment metadata")
+            child_dir = Path(directory) / "fixture-child"
+            await task.assign(rlm.RLMSpawnHandle("fixture-child", "fixture-worker", child_dir, "fixture/model"))
+            agents = (await client.context())["agents"]
+            self.assertEqual(len(agents), 1)
+            self.assertNotIn("sessionId", agents[0])
+            await task.assign(rlm.RLMSubagent("fixture-child", "fixture-active-id", "fixture-session-id",
+                                             "fixture-worker", child_dir, "running"))
+            agents = (await client.context())["agents"]
+            self.assertEqual(len(agents), 1)
+            self.assertEqual(agents[0]["sessionId"], "fixture-session-id")
+            self.assertEqual((agents[0]["rlmChildId"], agents[0]["sessionDir"]), ("fixture-child", str(child_dir)))

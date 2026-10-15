@@ -7,15 +7,18 @@ are async. Importing it performs no I/O and requires only the standard library.
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
+
+if TYPE_CHECKING:
+    from rlm import RLMSpawnHandle, RLMSubagent
 
 from ._client import Client
 from ._models import Link, Status, Step, Workstream
-from ._transport import DeliveryError, Report
+from ._transport import AssignmentError, DeliveryError, Report
 
-__all__ = ["Client", "DeliveryError", "Link", "Report", "Status", "Step", "Workstream",
-           "associate", "classify", "configure", "context", "create", "get", "list",
-           "retry", "update", "upsert"]
+__all__ = ["AssignmentError", "Client", "DeliveryError", "Link", "Report", "Status", "Step", "Workstream",
+           "assign", "associate", "classify", "configuration", "configure", "context", "create", "get", "list",
+           "retry", "spawn", "sync_agents", "update", "upsert"]
 
 _client: Client | None = None
 
@@ -32,6 +35,11 @@ def _configured() -> Client:
     if _client is None:
         raise RuntimeError("Workstreams reporter is not configured; open /root in Prime Agent Desktop")
     return _client
+
+
+def configuration() -> dict[str, Any]:
+    """Copy trusted local reporter configuration for another authorized kernel."""
+    return _configured().configuration()
 
 
 async def context() -> dict[str, Any]:
@@ -69,8 +77,24 @@ async def associate(workstream_id: str, session_id: str, *, name: str, role: str
     return await _configured().associate(workstream_id, session_id, name=name, role=role)
 
 
+async def assign(workstream_id: str, agent: RLMSpawnHandle | RLMSubagent, *, role: str = "worker") -> Any:
+    """Assign an actual RLMSpawnHandle or RLMSubagent to an existing outcome."""
+    return await _configured().assign(workstream_id, agent, role=role)
+
+
+async def spawn(workstream_id: str, prompt: str, *, name: str, model: str | None = None,
+                thinking: str | None = None, role: str = "worker") -> RLMSpawnHandle:
+    """Spawn a native RLM child and inherit trusted local workstream setup."""
+    return await _configured().spawn(workstream_id, prompt, name=name, model=model, thinking=thinking, role=role)
+
+
+async def sync_agents(workstream_id: str) -> tuple[RLMSubagent, ...]:
+    """Observe the direct-child roster once and refresh only already assigned children."""
+    return await _configured().sync_agents(workstream_id)
+
+
 async def classify(turn_ids: Sequence[str], workstream_ids: Sequence[str]) -> Any:
-    """Explicit correction only; Clef labels ordinary exchanges automatically."""
+    """Apply an explicitly user-requested correction, protected from automatic relabeling."""
     return await _configured().classify(turn_ids, workstream_ids)
 
 

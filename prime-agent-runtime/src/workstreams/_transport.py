@@ -30,6 +30,15 @@ class DeliveryError(RuntimeError):
         self.report = report
 
 
+class AssignmentError(DeliveryError):
+    """A child was admitted, but metadata delivery failed. Never respawn to retry."""
+
+    def __init__(self, handle: Any, error: Exception):
+        super().__init__("Child spawned; workstream assignment was not confirmed. Retain handle and retry assignment, not spawn.",
+                         error.report if isinstance(error, DeliveryError) else None)
+        self.handle = handle
+
+
 class Reporter:
     def __init__(self, command: Sequence[str], env: Mapping[str, str] | None, timeout: float):
         if isinstance(command, (str, bytes)) or not command or any(

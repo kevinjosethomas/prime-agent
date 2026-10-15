@@ -53,6 +53,61 @@ APIs, not by guessing from a chat title. `context()` returns the metadata snapsh
 root binding, associated agents, and the last 30 indexed turns' IDs; it contains no
 message bodies. It is not an API for reading a session's conversation.
 
+## Native RLM assignment from any agent
+
+The API is available to every agent whose kernel has the trusted local reporter
+configuration. It is not restricted to `/root`. Create/update workstreams normally,
+then spawn and assign native children without a second agent engine:
+
+```python
+child = await task.spawn(
+    "Implement structured log parsing and verify malformed records.",
+    name="parser-worker", model="provider/model", thinking="low", role="implementer",
+)
+# child is the original rlm.RLMSpawnHandle, suitable for native collect/observation.
+results = await rlm.collect(child, timeout_ms=30_000)
+await task.sync_agents()
+```
+
+`spawn` delegates to `rlm.spawn(prompt, name=..., model=..., thinking=...)`. It adds
+trusted bootstrap instructions that configure `import workstreams` inside the child
+kernel and load the same stable workstream ID. Children using `task.spawn` pass this
+setup onward to their children. Model selection, task execution, resource budgets,
+and agent lifecycles remain owned by RLM. Omit `model`/`thinking` to retain RLM defaults.
+`collect` returns snapshots: a timeout can leave a child running. Inspect its actual
+status before claiming completion. The native runtime owns collection and lifecycle.
+
+Assign an already observed child with `await task.assign(handle, role="reviewer")`,
+or `await workstreams.assign(task.id, roster_row)`. The input must be an actual
+`rlm.RLMSpawnHandle` or `rlm.RLMSubagent`, not a guessed dictionary. A queued spawn
+handle supplies `rlm_child_id` and `session_dir`, but no session ID. The metadata
+records that real scoped identity without inventing a clickable chat. Once a roster
+row has a real `session_id`, `assign(row)` adds it. `sync_agents()` reads the direct-child
+roster once and updates only children already assigned to this workstream, matching
+both child ID and session directory. It does not poll, sleep, or claim to see other
+agents' private descendant rosters. An owner can also assign a supplied verified row.
+
+If spawn succeeds but recording the assignment fails, `AssignmentError.handle`
+retains the admitted child. **Do not spawn again** to repair metadata:
+
+```python
+try:
+    child = await task.spawn("Verify parser", name="parser-reviewer")
+except workstreams.AssignmentError as error:
+    child = error.handle
+    if error.report is not None:
+        await workstreams.retry(error.report)
+    else:
+        await task.assign(child)
+```
+
+For an existing independently created local kernel, the parent can share
+`client.configuration()` and that agent can call `workstreams.configure(**configuration)`
+once. The returned configuration is a fresh copy of reporter argv, environment and
+timeout. It contains trusted local paths/setup, not credentials: do not put secrets
+in reporter argv/environment or source this configuration from incoming task data.
+No global files, startup services, permissions or network endpoints are created.
+
 ## Milestones and status
 
 ```python
@@ -73,11 +128,15 @@ stays unknown; parent progress is not calculated from guessed subtask weights.
 Clef automatically labels user/assistant exchanges using workstream context and
 recent conversation. A missing/unavailable classifier must remain visible as an
 unclassified state; this package does not quietly call a larger model instead.
-For an explicit correction, pass indexed turn IDs from `context()`:
+Only when the user explicitly requests a correction, pass indexed turn IDs from `context()`:
 
 ```python
 await workstreams.classify([actual_turn_id], ["o1", "travel"])
 ```
+
+These corrections are recorded with source `manual`, replacing earlier labels while
+remaining protected from later automatic classification. Do not use this API for
+routine message labeling or an unsolicited guess.
 
 Each report gets a unique UUID event ID. If delivery fails or times out, its commit
 may be uncertain. Retry the exact event, not a newly generated equivalent update:

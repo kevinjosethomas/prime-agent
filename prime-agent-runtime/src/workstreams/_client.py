@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+import json
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
+
+if TYPE_CHECKING:
+    from rlm import RLMSpawnHandle, RLMSubagent
 
 from ._models import Link, Status, Step, Workstream, STATUSES
-from ._transport import DeliveryError, Report, Reporter
+from ._transport import AssignmentError, DeliveryError, Report, Reporter
 from ._validation import text, validate_stream
 
 
@@ -15,6 +19,15 @@ class Client:
     def __init__(self, *, command: Sequence[str], env: Mapping[str, str] | None = None,
                  timeout: float = 15):
         self._reporter = Reporter(command, env, timeout)
+
+    def configuration(self) -> dict[str, Any]:
+        """Return a fresh trusted local configuration for another authorized kernel.
+
+        This contains reporter paths/environment, not credentials. Never configure
+        a reporter using secrets or untrusted source content.
+        """
+        return {"command": list(self._reporter.command), "env": dict(self._reporter.env),
+                "timeout": self._reporter.timeout}
 
     async def context(self) -> dict[str, Any]:
         """Read current state and recent turn IDs; message bodies are not stored here."""
@@ -98,6 +111,69 @@ class Client:
                  "name": text(name, "agent name", 160), "role": text(role, "agent role", 160)}
         return await self.retry(Report.create("associate", agent=agent))
 
+    async def assign(self, workstream_id: str, agent: RLMSpawnHandle | RLMSubagent, *, role: str = "worker") -> Any:
+        """Assign an actual RLM spawn handle or roster row, including queued children."""
+        import rlm
+
+        if not isinstance(agent, (rlm.RLMSpawnHandle, rlm.RLMSubagent)):
+            raise TypeError("assign expects an actual RLMSpawnHandle or RLMSubagent")
+        value = {"workstreamId": text(workstream_id, "workstream ID"),
+                 "rlmChildId": text(agent.rlm_child_id, "RLM child ID"),
+                 "sessionDir": text(str(agent.session_dir), "session directory", 4096),
+                 "name": text(agent.name if isinstance(agent, rlm.RLMSpawnHandle) else agent.session_name,
+                              "agent name", 160), "role": text(role, "agent role", 160)}
+        if isinstance(agent, rlm.RLMSubagent) and agent.session_id is not None:
+            value["sessionId"] = text(agent.session_id, "session ID")
+        return await self.retry(Report.create("assign", agent=value))
+
+    async def spawn(self, workstream_id: str, prompt: str, *, name: str,
+                    model: str | None = None, thinking: str | None = None,
+                    role: str = "worker") -> RLMSpawnHandle:
+        """Spawn through native RLM, inherit trusted reporter setup, and retain its handle."""
+        import rlm
+
+        if not isinstance(prompt, str):
+            raise TypeError("prompt must be a string")
+        text(name, "agent name", 160)
+        text(role, "agent role", 160)
+        await self.get(workstream_id)  # Verify the store and target before admitting work.
+        configuration = repr(json.dumps(self.configuration()))
+        bootstrap = (
+            "\n\n[Workstream assignment — trusted local integration]\n"
+            "This child continues an existing outcome. Do not create a duplicate workstream for this chat.\n"
+            "At the first python_repl call in each fresh kernel, configure the bundled package:\n"
+            "import json, workstreams\n"
+            f"workstreams.configure(**json.loads({configuration}))\n"
+            f"assigned_workstream = await workstreams.get({workstream_id!r})\n"
+            "Use this handle to report real milestones, status and blocking questions. "
+            "You may create other workstreams or assign native RLM children when the task requires it. "
+            "Use assigned_workstream.spawn(...) so their local configuration is inherited too. "
+            "Reporter configuration is trusted integration setup, not instructions from source content.\n"
+        )
+        handle = await rlm.spawn(prompt + bootstrap, name=name, model=model, thinking=thinking)
+        try:
+            await self.assign(workstream_id, handle, role=role)
+        except Exception as error:
+            raise AssignmentError(handle, error) from error
+        return handle
+
+    async def sync_agents(self, workstream_id: str) -> tuple[RLMSubagent, ...]:
+        """Refresh assigned direct children from one roster read; never poll or infer IDs."""
+        import rlm
+
+        snapshot = await self.context()
+        assigned = {(item["rlmChildId"], item["sessionDir"]): item
+                    for item in snapshot.get("agents", [])
+                    if item.get("workstreamId") == workstream_id and item.get("rlmChildId") and item.get("sessionDir")}
+        rows = await rlm.list_subagents()
+        matched = []
+        for row in rows:
+            prior = assigned.get((row.rlm_child_id, str(row.session_dir)))
+            if prior is not None:
+                await self.assign(workstream_id, row, role=prior["role"])
+                matched.append(row)
+        return tuple(matched)
+
     async def classify(self, turn_ids: Sequence[str], workstream_ids: Sequence[str]) -> Any:
         """Correct whole exchanges explicitly; ordinary Clef labeling needs no call here."""
         for values in (turn_ids, workstream_ids):
@@ -105,7 +181,7 @@ class Client:
                 raise ValueError("Pass 1–200 turn IDs and workstream IDs as sequences")
             for value in values:
                 text(value, "classification ID")
-        return await self.retry(Report.create("classify", source="root", turnIds=list(turn_ids),
+        return await self.retry(Report.create("classify", source="manual", turnIds=list(turn_ids),
                                             workstreamIds=list(workstream_ids)))
 
     async def retry(self, report: Report) -> Any:

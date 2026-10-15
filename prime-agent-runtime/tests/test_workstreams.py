@@ -7,13 +7,16 @@ No daemon, network, kernel installation, or model inference is needed.
 from __future__ import annotations
 
 import asyncio
+import ast
 from dataclasses import FrozenInstanceError
 import json
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import AsyncMock, patch
 
+import rlm
 import workstreams
 from workstreams import Client, DeliveryError, Link, Step
 
@@ -39,10 +42,16 @@ else:
         state["workstreams"] = [item for item in state["workstreams"] if item["id"] != value["id"]] + [value]
     elif event["operation"] == "associate":
         state["agents"].append(event["agent"])
+    elif event["operation"] == "assign":
+        agent = event["agent"]
+        key = lambda item: (item.get("workstreamId"), item.get("rlmChildId"), item.get("sessionDir"))
+        state["agents"] = [item for item in state["agents"] if key(item) != key(agent)] + [agent]
     store.write_text(json.dumps(state))
     # Fail after commit once, proving retry retains the exact deduplication ID.
     if event.get("workstream", {}).get("summary") == "uncertain":
         sys.exit(42)
+    if event.get("agent", {}).get("name") == "fail-assignment":
+        sys.exit(43)
     print(json.dumps({"disposition": "applied"}))
 '''
 
@@ -138,7 +147,7 @@ class WorkstreamTests(unittest.IsolatedAsyncioTestCase):
         await self.client.classify(["turn-1"], ["json", "other"])
         report = self.state()["reports"][-1]
         self.assertEqual({key: value for key, value in report.items() if key != "eventId"},
-                         {"operation": "classify", "source": "root", "turnIds": ["turn-1"],
+                         {"operation": "classify", "source": "manual", "turnIds": ["turn-1"],
                           "workstreamIds": ["json", "other"]})
         with self.assertRaises(ValueError):
             await self.client.classify("turn-1", ["json"])
@@ -167,6 +176,54 @@ class WorkstreamTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(DeliveryError) as caught:
             await client.context()
         self.assertEqual(str(caught.exception), "Workstream reporter exited with code 9")
+
+    async def test_native_spawn_inherits_configuration_and_retains_queued_identity(self):
+        task = await self.client.create("parser", "Parse JSON in Prime CLI logs")
+        handle = rlm.RLMSpawnHandle("real-child-id", "parser-worker", Path(self.directory.name) / "child", "provider/model")
+        with patch.object(rlm, "spawn", AsyncMock(return_value=handle)) as spawn:
+            actual = await task.spawn("Implement parsing", name="parser-worker", model="provider/model",
+                                      thinking="low", role="implementer")
+        self.assertIs(actual, handle)
+        spawn.assert_awaited_once()
+        prompt = spawn.await_args.args[0]
+        self.assertTrue(prompt.startswith("Implement parsing\n\n"))
+        self.assertEqual(spawn.await_args.kwargs, {"name": "parser-worker", "model": "provider/model", "thinking": "low"})
+        line = next(line for line in prompt.splitlines() if line.startswith("workstreams.configure("))
+        decoded = json.loads(ast.literal_eval(ast.parse(line).body[0].value.keywords[0].value.args[0]))
+        self.assertEqual(decoded, self.client.configuration())
+        self.assertEqual(self.state()["agents"], [{"workstreamId": "parser", "rlmChildId": "real-child-id",
+                                                 "sessionDir": str(handle.session_dir), "name": "parser-worker", "role": "implementer"}])
+        exported = self.client.configuration()
+        exported["command"].append("mutated")
+        exported["env"]["WORKSTREAM_TEST_STORE"] = "mutated"
+        self.assertEqual(self.client.configuration()["env"], self.config["env"])
+        self.assertEqual(self.client.configuration()["command"], self.config["command"])
+
+    async def test_sync_agents_uses_actual_session_id_and_scoped_child_identity(self):
+        task = await self.client.create("parser", "Parse JSON in Prime CLI logs")
+        directory = Path(self.directory.name) / "child"
+        await task.assign(rlm.RLMSpawnHandle("child", "worker", directory, "provider/model"), role="reviewer")
+        assigned = rlm.RLMSubagent("child", "actual-active-id", "actual-session-id", "worker", directory, "running")
+        other = rlm.RLMSubagent("child", "wrong-active-id", "wrong-session-id", "worker", directory / "other-scope", "running")
+        with patch.object(rlm, "list_subagents", AsyncMock(return_value=[other, assigned])) as roster:
+            self.assertEqual(await task.sync_agents(), (assigned,))
+        roster.assert_awaited_once_with()
+        self.assertEqual(self.state()["agents"], [{"workstreamId": "parser", "rlmChildId": "child",
+                                                 "sessionDir": str(directory), "name": "worker", "role": "reviewer",
+                                                 "sessionId": "actual-session-id"}])
+        with self.assertRaises(TypeError):
+            await task.assign({"sessionId": "guessed"})
+
+    async def test_assignment_failure_preserves_child_handle_and_retry_event(self):
+        task = await self.client.create("parser", "Parse JSON in Prime CLI logs")
+        handle = rlm.RLMSpawnHandle("child", "fail-assignment", Path(self.directory.name) / "child", "provider/model")
+        with patch.object(rlm, "spawn", AsyncMock(return_value=handle)) as spawn:
+            with self.assertRaises(workstreams.AssignmentError) as caught:
+                await task.spawn("Implement parsing", name="fail-assignment")
+        self.assertIs(caught.exception.handle, handle)
+        self.assertIsNotNone(caught.exception.report)
+        self.assertEqual(await self.client.retry(caught.exception.report), {"disposition": "duplicate"})
+        spawn.assert_awaited_once()
 
     def test_configuration_refuses_shell_strings_and_invalid_timeouts(self):
         with self.assertRaises(ValueError):
