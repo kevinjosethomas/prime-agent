@@ -634,6 +634,24 @@ impl Supervisor {
         stream: &tokio::sync::mpsc::Sender<(Vec<Outbound>, bool)>,
     ) -> (Vec<Value>, bool) {
         match command {
+            DaemonCommand::ClassifyWorkstream { rest, .. } => {
+                let payload = Value::Object(rest.clone());
+                let outcome = crate::workstream_classification::classify(
+                    &self.options.agent_dir,
+                    &payload,
+                )
+                .await;
+                let response = match outcome {
+                    Ok(result) => {
+                        self.note_daemon_event("workstream_classified", None);
+                        response_success(Some(&command_id), &type_name, Some(result))
+                    }
+                    Err(error) => {
+                        response_failure(Some(&command_id), &type_name, &error, None)
+                    }
+                };
+                (vec![response_line(&response)], false)
+            }
             DaemonCommand::AckResult { .. } => (Vec::new(), false),
             DaemonCommand::Restart { .. } | DaemonCommand::Shutdown { .. } => {
                 // WHO asked: the request's client id and command id land in the daemon log

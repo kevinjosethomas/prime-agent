@@ -783,7 +783,7 @@ fn live_probe_memo_reprobes_when_installed_rlm_is_removed() {
 }
 
 /// Live-gated closure freeze (run with `--ignored` on a machine with a real kernel venv): the
-/// runtime-ready probe's import closure must stay stdlib-or- rlm-relative at MODULE level. Pins the
+/// runtime-ready probe's import closure must stay stdlib-or-runtime-relative at MODULE level. Pins the
 /// shipped artifact.
 #[test]
 #[ignore = "live: needs a real kernel venv under HOME (bench VMs)"]
@@ -804,7 +804,7 @@ fn live_probe_closure_is_stdlib_or_rlm_relative() {
         eprintln!("installed rlm not found; skipping live closure test");
         return;
     };
-    let script = r#"import ast, json, sys
+    let script = r#"import ast, json, pathlib, sys
 
 stdlib = {
     "inspect", "__future__", "typing", "dataclasses", "enum", "functools",
@@ -814,7 +814,7 @@ stdlib = {
     "warnings", "asyncio", "types", "stat", "unicodedata", "atexit",
     "secrets", "selectors", "socket", "struct", "fcntl", "termios", "ast",
     "codecs", "contextvars", "ctypes", "linecache", "platform",
-    "tempfile", "traceback",
+    "tempfile", "traceback", "math", "pickle", "select", "urllib",
 }
 
 def collect(nodes, found):
@@ -831,15 +831,18 @@ def collect(nodes, found):
         if body:
             collect(body, found)
 
-def path_of(module, root):
-    if module in ("rlm",):
-        return root + "/__init__.py"
-    if module.startswith("rlm."):
-        return root + "/" + module.split(".", 1)[1].replace(".", "/") + ".py"
-    return None
+def path_of(module, roots):
+    package, _, tail = module.partition(".")
+    root = roots.get(package)
+    if root is None:
+        return None
+    return str(root / (tail.replace(".", "/") + ".py")) if tail else str(root / "__init__.py")
 
-root = sys.argv[1]
-seed = ["rlm", "rlm.mcp", "rlm.harness", "rlm.bash", "rlm.repl"]
+roots = {"rlm": pathlib.Path(sys.argv[1]), "workstreams": pathlib.Path(sys.argv[2])}
+seed = ["rlm", "rlm.mcp", "rlm.harness", "rlm.bash", "rlm.repl", "workstreams"]
+# Include the workstreams package's relative imports without expanding the legacy RLM seed.
+seed.extend("workstreams." + ".".join(path.relative_to(roots["workstreams"]).with_suffix("").parts)
+            for path in roots["workstreams"].rglob("*.py") if path.name != "__init__.py")
 closure = []
 pending = list(seed)
 violations = []
@@ -848,7 +851,7 @@ while pending:
     if module in closure:
         continue
     closure.append(module)
-    path = path_of(module, root)
+    path = path_of(module, roots)
     if path is None:
         continue
     try:
@@ -860,7 +863,7 @@ while pending:
     collect(tree.body, found)
     for lineno, target in found:
         head = target.split(".")[0]
-        if head == "rlm":
+        if head in roots:
             pending.append(target)
         elif head not in stdlib:
             violations.append(module + ":" + str(lineno) + ": " + target)
@@ -871,6 +874,12 @@ print(json.dumps({"closure": sorted(closure), "violations": violations}))
         .arg("-c")
         .arg(script)
         .arg(&real_rlm)
+        .arg(
+            real_rlm
+                .parent()
+                .expect("rlm has a package parent")
+                .join("workstreams"),
+        )
         .output()
         .expect("the real python must run the closure parse");
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -884,12 +893,13 @@ print(json.dumps({"closure": sorted(closure), "violations": violations}))
         report.closure.contains(&"rlm.mcp".to_string())
             && report.closure.contains(&"rlm.harness".to_string())
             && report.closure.contains(&"rlm.bash".to_string())
-            && report.closure.contains(&"rlm.repl".to_string()),
+            && report.closure.contains(&"rlm.repl".to_string())
+            && report.closure.contains(&"workstreams".to_string()),
         "the frozen closure seed is wrong: {report:?}"
     );
     assert!(
         report.violations.is_empty(),
-        "the probe import closure grew beyond rlm+stdlib (closure {:?}): {:?}",
+        "the probe import closure grew beyond rlm+workstreams+stdlib (closure {:?}): {:?}",
         report.closure,
         report.violations
     );

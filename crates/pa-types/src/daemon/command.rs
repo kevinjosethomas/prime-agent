@@ -685,6 +685,13 @@ pub enum DaemonCommand {
         #[serde(flatten)]
         rest: JsonMap,
     },
+    /// Stateless, bounded workstream classification through the authenticated model registry.
+    ClassifyWorkstream {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
     GetAvailableModels {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,

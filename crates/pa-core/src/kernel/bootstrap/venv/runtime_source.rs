@@ -46,7 +46,7 @@ pub(super) fn resolve_runtime_source_dir() -> Option<PathBuf> {
         .find(|candidate| candidate.join("pyproject.toml").exists())
 }
 
-/// Content identity of the runtime: a hash of every `rlm/*.py` file, the
+/// Content identity of the runtime: a hash of every `rlm/*.py` and `workstreams/*.py` file, the
 /// packaged machine library under `src/rlm/machines` (wheel package data:
 /// machine changes are runtime changes), and `pyproject.toml`, so any
 /// runtime change invalidates an existing venv. Falls back to the bare
@@ -73,6 +73,11 @@ fn hash_runtime_source(source_dir: &Path) -> anyhow::Result<String> {
     let rlm_dir = source_dir.join("src").join("rlm");
     let mut files = vec![source_dir.join("pyproject.toml")];
     collect_python_files(&rlm_dir, &mut files)?;
+    // Older sidecars and minimal test fixtures need not contain the optional package.
+    let workstreams_dir = source_dir.join("src").join("workstreams");
+    if workstreams_dir.is_dir() {
+        collect_python_files(&workstreams_dir, &mut files)?;
+    }
     collect_package_data_files(&rlm_dir.join("machines"), &mut files)?;
     files.sort();
     let mut hasher = sha2::Sha256::new();
@@ -165,6 +170,25 @@ version: 2
         std::fs::remove_dir_all(temp.path().join("src").join("rlm").join("machines"))?;
         let bare = hash_runtime_source(temp.path())?;
         assert_ne!(bare, after);
+        Ok(())
+    }
+
+    #[test]
+    fn workstreams_source_changes_invalidate_the_runtime_identity() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        runtime_fixture(temp.path(), "machine")?;
+        let without_workstreams = hash_runtime_source(temp.path())?;
+        let workstreams = temp.path().join("src").join("workstreams");
+        std::fs::create_dir_all(&workstreams)?;
+        let client = workstreams.join("__init__.py");
+        std::fs::write(&client, "VERSION = 1\n")?;
+        let initial = hash_runtime_source(temp.path())?;
+        assert_ne!(without_workstreams, initial);
+        std::fs::write(&client, "VERSION = 2\n")?;
+        let changed = hash_runtime_source(temp.path())?;
+        assert_ne!(initial, changed);
+        std::fs::remove_dir_all(&workstreams)?;
+        assert_eq!(without_workstreams, hash_runtime_source(temp.path())?);
         Ok(())
     }
 }

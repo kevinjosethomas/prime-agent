@@ -2,6 +2,13 @@
 
 Session supervision and wire serving.
 
+The fork-only `classify_workstream` control-plane command performs one bounded,
+tool-free Prime Inference completion. It resolves the supplied Clef model through
+the normal authenticated registry and returns only validated existing workstream
+IDs. It creates no session, changes no history, and never exports provider keys.
+Adoption uses the content-free `daemon event` summary counter
+`workstream_classified_count` (schema v1).
+
 ## Scope
 ACP stdio transport (`acp`): the JSON-RPC serve surface for Agent
 Client Protocol clients, served over a daemon session (initialize, session/new, session/prompt, session/close,

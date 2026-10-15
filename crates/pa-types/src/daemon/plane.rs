@@ -110,6 +110,7 @@ pub fn is_session_plane_daemon_command(command_type: &str) -> bool {
 /// else counts as a mutation for the update-flow admission gate (`attach`/`reattach` are
 /// intentionally read-only, so a reconnecting client is never fenced out).
 const READ_ONLY_DAEMON_COMMANDS: &[&str] = &[
+    "classify_workstream",
     "ack_result",
     "list",
     "list_saved_sessions",

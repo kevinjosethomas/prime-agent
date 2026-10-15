@@ -921,6 +921,7 @@ const DAEMON_EVENT: EventRule = EventRule {
         ("registration_refused_count", optional(count())),
         ("session_rebound_count", optional(count())),
         ("root_identity_persist_failed_count", optional(count())),
+        ("workstream_classified_count", optional(count())),
         ("saved_sessions_list_count", optional(count())),
         ("saved_sessions_usage_rows_max", optional(count())),
     ],

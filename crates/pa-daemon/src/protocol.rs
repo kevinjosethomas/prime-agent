@@ -47,6 +47,7 @@ pub(crate) fn app_version() -> &'static str {
 /// Command types the daemon recognizes (TS `DAEMON_COMMAND_TYPES` in TS
 /// declared order, followed by the Rust-native supervisor/worker frames).
 pub const KNOWN_COMMAND_TYPES: &[&str] = &[
+    "classify_workstream",
     "ack_result",
     "list",
     "list_agent_peers",
@@ -333,6 +334,7 @@ pub fn default_server_capabilities() -> Vec<DaemonServerCapability> {
                 "heartbeat_catalog",
                 "heartbeat_management",
                 "model_catalog",
+                "workstream_classification",
                 "side_question_transcript",
                 "transient_bash",
                 "kernel_bash_activity",
@@ -914,6 +916,7 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
         } => active_session_id.as_deref(),
         // Control-plane commands carry no session selector.
         DaemonCommand::List { .. }
+        | DaemonCommand::ClassifyWorkstream { .. }
         | DaemonCommand::ListAgentPeers { .. }
         | DaemonCommand::GetWorkerPeerTransport { .. }
         | DaemonCommand::RosterSubscribe { .. }
@@ -934,6 +937,7 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
 #[must_use]
 pub fn command_type_name(command: &DaemonCommand) -> &'static str {
     match command {
+        DaemonCommand::ClassifyWorkstream { .. } => "classify_workstream",
         DaemonCommand::List { .. } => "list",
         DaemonCommand::ListSavedSessions { .. } => "list_saved_sessions",
         DaemonCommand::ListAgentPeers { .. } => "list_agent_peers",
@@ -1140,6 +1144,31 @@ mod tests {
             }
         }
         assert!(default_server_capabilities().contains(&"factory_activity".to_string()));
+    }
+
+    #[test]
+    fn workstream_classifier_round_trips_without_a_session_selector() {
+        let command = json!({
+            "type": "classify_workstream", "provider": "prime-inference",
+            "modelId": "catalog-clef-id", "turnId": "t", "workstreams": [],
+            "messages": [{"role": "user", "text": "hello"}]
+        });
+        let line = json!({
+            "type": "command", "id": "c", "protocol": {
+                "name": "prime-agent.daemon", "version": 7
+            }, "command": command
+        })
+        .to_string();
+        let parsed = parse_supervisor_command_line(&line).unwrap();
+        assert_eq!(command_active_session_id(&parsed.command), None);
+        assert_eq!(command_type_name(&parsed.command), "classify_workstream");
+        assert_eq!(serde_json::to_value(parsed.command).unwrap(), command);
+        assert!(!pa_types::daemon::is_session_plane_daemon_command(
+            "classify_workstream"
+        ));
+        assert!(!pa_types::daemon::is_daemon_mutating_command(
+            "classify_workstream"
+        ));
     }
 
     #[test]

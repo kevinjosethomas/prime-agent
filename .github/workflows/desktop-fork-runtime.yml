@@ -19,8 +19,50 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/dependency-audit
+  format:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e
+        with:
+          components: rustfmt
+      - name: Format and prepare a reviewable patch
+        run: |
+          cargo fmt --all
+          git diff --binary > "$RUNNER_TEMP/rustfmt.patch"
+          git diff --exit-code
+      - name: Upload formatting patch
+        if: failure()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: rustfmt-patch
+          path: ${{ runner.temp }}/rustfmt.patch
+          if-no-files-found: error
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify async workstream API
+        run: PYTHONPATH=prime-agent-runtime/src python -m unittest discover -s prime-agent-runtime/tests -p 'test_workstreams.py'
+      - name: Build and inspect Python wheel
+        run: |
+          python -m pip install build
+          python -m build --wheel prime-agent-runtime
+          python - <<'PYW'
+          import glob, zipfile
+          with zipfile.ZipFile(glob.glob('prime-agent-runtime/dist/*.whl')[0]) as wheel:
+              assert 'workstreams/__init__.py' in wheel.namelist()
+          PYW
   macos:
-    needs: audit
+    needs: [audit, format, python]
     runs-on: macos-14
     timeout-minutes: 90
     env:
@@ -44,6 +86,14 @@ jobs:
       # no consumer (~26% of the build step, measured).
       - name: Build (release, locked)
         run: cargo build --release --locked --target ${{ env.TARGET }} -j 4 -p pa-cli --bin prime-agent
+      - name: Run focused workstream classifier tests
+        run: |
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib workstream_classification
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib workstream_classifier_round_trips
+      - name: Verify workstream runtime identity and readiness
+        run: |
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-core --lib workstreams
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-core --lib kernel::bootstrap::venv
       - name: Generate bundled catalog assets (fixture, offline-safe)
         run: |
           set -euo pipefail
