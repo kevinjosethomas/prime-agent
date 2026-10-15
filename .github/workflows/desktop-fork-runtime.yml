@@ -1,0 +1,90 @@
+name: Desktop fork runtime
+on:
+  push:
+    branches: [feat/root-desktop-runtime]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: desktop-fork-runtime-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/dependency-audit
+  macos:
+    needs: audit
+    runs-on: macos-14
+    timeout-minutes: 90
+    env:
+      TARGET: aarch64-apple-darwin
+      COPYFILE_DISABLE: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      # The pinned SHA is the toolchain pin: this action version has no
+      # `toolchain` input, and its parse step hard-codes 1.98.1. Change the
+      # compiler by changing the SHA; a `toolchain:` input is ignored.
+      - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e
+        with:
+          targets: ${{ env.TARGET }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: ${{ env.TARGET }}
+      # Only the shipped binary links here: the job packages `prime-agent`
+      # alone, so pa-daemon's [[bin]] would be a second thin-LTO link with
+      # no consumer (~26% of the build step, measured).
+      - name: Build (release, locked)
+        run: cargo build --release --locked --target ${{ env.TARGET }} -j 4 -p pa-cli --bin prime-agent
+      - name: Generate bundled catalog assets (fixture, offline-safe)
+        run: |
+          set -euo pipefail
+          python3 scripts/release/bundle_catalog.py generate --fixture \
+            --out "target/${{ env.TARGET }}/catalog-assets"
+      - name: Assemble tarball + checksums + manifest (commit-stamped)
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -1)"
+          [[ -n "${version}" ]] || { echo "could not read the workspace version"; exit 1; }
+          python3 scripts/release/assemble_artifacts.py \
+            --repo-root . \
+            --version "${version}" \
+            --target "${{ env.TARGET }}" \
+            --sha "${GITHUB_SHA}" \
+            --binary "target/${{ env.TARGET }}/release/prime-agent" \
+            --catalog-assets "target/${{ env.TARGET }}/catalog-assets" \
+            --out-dir "target/${{ env.TARGET }}/dist"
+          cat "target/${{ env.TARGET }}/dist/manifest.json"
+      # The livecheck extracts the tarball and runs the payload binary's
+      # `--version` from a scratch cwd (verify_release.py). The aarch64 leg
+      # executes it natively; the x86_64 leg, cross-compiled on the
+      # Apple-silicon pool, executes it under Rosetta 2 — the runtime the
+      # x64 payload runs on for an Apple-Silicon Mac customer, so the gate
+      # still boots the artifact on its delivery runtime.
+      - name: Livecheck the assembled continuous artifact on its build runner
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -1)"
+          [[ -n "${version}" ]] || { echo "could not read the workspace version"; exit 1; }
+          python3 scripts/release/verify_release.py \
+            --dist-dir "target/${{ env.TARGET }}/dist" \
+            --version "${version}" \
+            --target "${{ env.TARGET }}" \
+            --sha "${GITHUB_SHA}"
+      - name: Upload artifacts
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: artifacts-${{ env.TARGET }}
+          path: |
+            target/${{ env.TARGET }}/dist/prime-agent-*
+            target/${{ env.TARGET }}/dist/SHA256SUMS
+            target/${{ env.TARGET }}/dist/manifest.json
+          if-no-files-found: error
