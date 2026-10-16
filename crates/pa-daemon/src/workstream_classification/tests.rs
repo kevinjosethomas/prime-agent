@@ -13,6 +13,23 @@ fn payload() -> Value {
     })
 }
 
+#[test]
+fn accepts_twenty_four_context_messages_and_rejects_a_larger_window() {
+    let mut context = payload();
+    let messages: Vec<Value> = (0..24)
+        .map(|index| json!({"role": "user", "text": format!("Context message {index}")}))
+        .collect();
+    context["recentMessages"] = json!(messages);
+    let request = validate_request(&context).unwrap();
+    let batch = evaluation_batch(&request, &request.workstreams);
+    assert_eq!(batch.state["recentMessages"], context["recentMessages"]);
+    context["recentMessages"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"role": "user", "text": "One context message too many"}));
+    assert!(validate_request(&context).is_err());
+}
+
 fn response(scores: &[f64]) -> SystemOneResponse {
     SystemOneResponse {
         model: CLEF.to_string(),

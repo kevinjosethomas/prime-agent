@@ -56,7 +56,7 @@ fn validate_request(payload: &Value) -> Result<ClassificationRequest, String> {
         || request.model_id != CLEF
         || !bounded(&request.turn_id, 2_048)
         || request.workstreams.len() > 100
-        || request.recent_messages.len() > 12
+        || request.recent_messages.len() > 24
         || request.messages.is_empty()
         || request.messages.len() > 12
     {
