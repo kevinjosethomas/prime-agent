@@ -36,3 +36,8 @@ pa-types only (the daemon wire protocol types live there). The headless `UiMode`
 ## Transcript caching
 
 Fullscreen transcript frames render the visible entry window through a persistent entry cursor. Per-entry, per-detail line caches retain visited rows; unseen entries stay unrendered. Selection highlighting restyles only the rows the selection change touched (cached rows, never a rebuild from raw entries), and appends, entry growth, and tail re-anchors fold into the sparse window's bookkeeping instead of a geometry pass. Absolute-row operations, including paused detail changes, use separately cached count-only geometry and paint only the requested window. Cold geometry still scans uncached content; the exceptional copy fallbacks walk only the selected range from the viewport cursor. The frame's end sections — the splash and the streaming tail (the shortcut guide, pending bash output, the loaders) — render only when the visible window reaches them, and frames without a selection skip the restyle pass (its styled rows are the cached window verbatim). These caches and viewport coordinates are private to this crate; wire types and dependency direction are unchanged.
+
+The local desktop auth broker also consumes the existing `AuthPanelHandle` request
+channel. `AuthPanelHandle::cancel` is the narrow external-surface cancellation
+method: it marks the shared flag and wakes pending paste/team replies before the
+owning process exits. Auth storage and OAuth remain outside this crate.

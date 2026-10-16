@@ -16,6 +16,7 @@
 // Internal ported modules are crate-private: the only public API is the
 // runtime boundary below (see crates/pa-cli/README.md).
 pub(crate) mod args;
+pub(crate) mod auth_json;
 pub(crate) mod client_settings;
 pub(crate) mod client_traces;
 pub(crate) mod client_update;
@@ -86,6 +87,13 @@ pub fn main_with_runtime(args: &[String], runtime: &dyn mode::Runtime) -> i32 {
 
 fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String> {
     use std::io::IsTerminal;
+
+    if args.first().map(String::as_str) == Some("auth") {
+        if args.len() == 2 && args[1] == "--json" {
+            return auth_json::run();
+        }
+        return Err("Usage: prime-agent auth --json".to_string());
+    }
 
     // Telemetry reports the version `--version` prints: the beta channel
     // restamps only the packaged manifest, never the compiled-in version.

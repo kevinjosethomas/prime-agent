@@ -14,6 +14,21 @@ The `prime-agent` executable surface (flags, subcommands, exit codes). Internal 
 ## Depends on
 pa-types, pa-ai, pa-agent, pa-core, pa-daemon, pa-tui (one-way, composition root).
 
+## Desktop auth broker
+
+`prime-agent auth --json` is the local, one-flow JSONL adapter in `auth_json/`.
+It reuses `ProviderAuth`, `TerminalMcpAuth`, and the existing auth panel channel;
+it does not create a daemon/session or implement credentials/OAuth a second time.
+The ready frame supports a no-login capability probe. Provider listing, explicit
+login/logout, browser URLs, masked input, Prime team selection, and cancellation
+travel over stdin/stdout. Secret input is never an argument, event, debug value,
+or persisted broker state. Input is bounded to 16 KiB per line, 8 KiB per answer,
+with a ten-minute flow and five-minute prompt deadline. The desktop host owns the
+child and discards stderr; only explicit UI actions begin authentication. Existing
+API-key storage means saved, not independently verified access. Successful flows
+refresh the existing model/MCP catalog. The contract is fork-specific, not a TS
+protocol replacement; existing TUI login behavior remains owned by those services.
+
 ## Print runtime
 The headless print/json modes (`print_runtime.rs`) drive the in-process
 session engine directly: prompt admission, the turn-boundary compaction

@@ -209,6 +209,11 @@ impl AuthPanelHandle {
         self.cancel.clone()
     }
 
+    /// Cancel this flow from an external client surface, waking pending inputs and guarding writes.
+    pub fn cancel(&self) {
+        self.cancel.mark();
+    }
+
     /// The bare cancel flag (the #2790 codex login's shape) — loads observe every mark.
     #[must_use]
     pub fn cancel_flag(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
