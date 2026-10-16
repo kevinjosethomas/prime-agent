@@ -95,6 +95,10 @@ jobs:
         run: |
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-core --lib workstreams
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-core --lib kernel::bootstrap::venv
+      - name: Verify Slack MCP login, callback, and catalog regressions
+        run: |
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-core --lib mcp::
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --test mcp_catalog_e2e
       - name: Generate bundled catalog assets (fixture, offline-safe)
         run: |
           set -euo pipefail
