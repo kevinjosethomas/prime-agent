@@ -1,8 +1,9 @@
 """RLM-native workstream state API backed by Prime Agent Desktop's local store.
 
-Desktop supplies configure(command=..., env=...) once per kernel. This module
-does not create a database, listener, agent, or daemon session. All state calls
-are async. Importing it performs no I/O and requires only the standard library.
+Desktop supplies configure(command=..., env=...) once per kernel. The package
+does not create a separate database, listener, or agent engine. Agent admission
+delegates to native RLM. All state calls are async. Importing performs no I/O
+and requires only the standard library.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 if TYPE_CHECKING:
-    from rlm import RLMSpawnHandle, RLMSubagent
+    from rlm import RLMCreateSessionHandle, RLMSpawnHandle, RLMSubagent
 
 from ._client import Client
 from ._models import Link, Status, Step, Workstream
@@ -18,7 +19,7 @@ from ._transport import AssignmentError, DeliveryError, Report
 
 __all__ = ["AssignmentError", "Client", "DeliveryError", "Link", "Report", "Status", "Step", "Workstream",
            "assign", "associate", "classify", "configuration", "configure", "context", "create", "get", "list",
-           "retry", "spawn", "sync_agents", "update", "upsert"]
+           "retry", "spawn", "start_agent", "sync_agents", "update", "upsert"]
 
 _client: Client | None = None
 
@@ -77,8 +78,8 @@ async def associate(workstream_id: str, session_id: str, *, name: str, role: str
     return await _configured().associate(workstream_id, session_id, name=name, role=role)
 
 
-async def assign(workstream_id: str, agent: RLMSpawnHandle | RLMSubagent, *, role: str = "worker") -> Any:
-    """Assign an actual RLMSpawnHandle or RLMSubagent to an existing outcome."""
+async def assign(workstream_id: str, agent: RLMCreateSessionHandle | RLMSpawnHandle | RLMSubagent, *, role: str = "worker") -> Any:
+    """Assign an actual native session/spawn handle or RLM roster row to an outcome."""
     return await _configured().assign(workstream_id, agent, role=role)
 
 
@@ -86,6 +87,14 @@ async def spawn(workstream_id: str, prompt: str, *, name: str, model: str | None
                 thinking: str | None = None, role: str = "worker") -> RLMSpawnHandle:
     """Spawn a native RLM child and inherit trusted local workstream setup."""
     return await _configured().spawn(workstream_id, prompt, name=name, model=model, thinking=thinking, role=role)
+
+
+async def start_agent(workstream_id: str, prompt: str, *, name: str, model: str | None = None,
+                      thinking: str | None = None, cwd: str | None = None,
+                      role: str = "worker-parent") -> RLMCreateSessionHandle:
+    """Create an independent native depth-0 agent; this is not an RLM child spawn."""
+    return await _configured().start_agent(workstream_id, prompt, name=name, model=model,
+                                           thinking=thinking, cwd=cwd, role=role)
 
 
 async def sync_agents(workstream_id: str) -> tuple[RLMSubagent, ...]:

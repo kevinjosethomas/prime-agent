@@ -53,11 +53,72 @@ APIs, not by guessing from a chat title. `context()` returns the metadata snapsh
 root binding, associated agents, and the last 30 indexed turns' IDs; it contains no
 message bodies. It is not an API for reading a session's conversation.
 
-## Native RLM assignment from any agent
+## Independent work agents for the orchestrator
 
-The API is available to every agent whose kernel has the trusted local reporter
-configuration. It is not restricted to `/root`. Create/update workstreams normally,
-then spawn and assign native children without a second agent engine:
+Agent One starts independent work agents instead of owning ordinary RLM children:
+
+```python
+worker = await task.start_agent(
+    "Own structured CLI parsing. Verify the result and report only a meaningful outcome or blocker.",
+    name="parser-owner", model="provider/model", thinking="low", cwd="/verified/project",
+)
+```
+
+Signature: `start_agent(prompt, *, name, model=None, thinking=None, cwd=None,
+role="worker-parent")`. Client/module forms take `workstream_id` first. The wrapper
+calls existing `rlm.create_session`, which requires a daemon-backed depth-0 caller.
+It returns the original `rlm.RLMCreateSessionHandle` with `active_session_id`,
+`session_id`, `name`, `session_file` and `model`. These are actual native identities;
+no child ID or guessed session ID is invented. The independent resident has its own
+durable native session and may use `task.spawn` for its own RLM children.
+
+The bootstrap configures the same trusted reporter and existing workstream ID inside
+the new agent. When `context().root.sessionId` is recorded, it instructs that agent
+to update workstream state and send one concise meaningful result, blocking question,
+or failure through typed `agent_message.send(..., receiver_role="sibling",
+receiver_name=actual_orchestrator_id)`. Routine progress stays in metadata. If no
+verified orchestrator ID exists, it omits the callback rather than guessing a recipient.
+The wrapper itself does not send a message on the worker's behalf.
+
+Independent agents are siblings. They do not appear in the creator's
+`rlm.list_subagents`, cannot be passed to `rlm.collect`, and are not refreshed by
+`task.sync_agents`. Use the existing native sibling observation/messaging APIs:
+
+```python
+import agent_observe, agent_message
+status = await agent_observe.get_agent(worker.session_id)
+# For an authorized follow-up to the same actual worker:
+await agent_message.send("Continue with the verified approach.",
+                         receiver_role="sibling", receiver_name=worker.session_id)
+```
+
+An idle agent is not proof that its task succeeded. Require actual result evidence
+and reported state. There is no new completion watcher or automatic terminal notice
+for these independent roots. A crashed worker cannot self-report, and native sibling
+messaging currently requires an available live family peer. Do not promise delivery
+or immediate recovery across daemon/worker replacement; preserve durable state and
+surface an unavailable recipient honestly.
+
+If creation succeeds but association fails, `AssignmentError.handle` retains the
+actual independent session. Retry its exact `report` when present; otherwise call
+`await task.assign(error.handle, role="worker-parent")`. Never create another agent
+just to repair metadata. `assign` accepts `RLMCreateSessionHandle` in addition to
+the RLM child handles described below.
+
+This orchestrator/worker separation is **role guidance only**. It does not hard-block
+`rlm.spawn` for Agent One, change depth/capacity limits, or add a new protocol. A future
+per-session capability could enforce that distinction. Setting global or inherited
+RLM depth to zero is not an equivalent solution: native independent sessions inherit
+that limit and would lose their own child-spawning capability too. A newly added
+Python helper is available only after its runtime package is actually deployed;
+existing native `rlm.create_session` plus `task.associate(handle.session_id, ...)`
+can be used when an older installed package lacks `start_agent`.
+
+## Native RLM children owned by work agents
+
+The state API is available to every authorized agent whose kernel has the trusted
+local reporter configuration. Work agents create/update outcomes normally, then
+spawn and assign their own native children without a second agent engine:
 
 ```python
 child = await task.spawn(

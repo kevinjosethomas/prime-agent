@@ -225,6 +225,64 @@ class WorkstreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.client.retry(caught.exception.report), {"disposition": "duplicate"})
         spawn.assert_awaited_once()
 
+    async def test_start_agent_uses_native_independent_session_and_verified_orchestrator(self):
+        task = await self.client.create("parser", "Parse JSON in Prime CLI logs")
+        snapshot = self.state()
+        snapshot["root"] = {"sessionId": "fixture-orchestrator-id"}
+        self.store.write_text(json.dumps(snapshot))
+        handle = rlm.RLMCreateSessionHandle("native-active-id", "native-session-id", "parser-parent",
+                                            Path(self.directory.name) / "native-session-id.jsonl", "provider/model")
+        with patch.object(rlm, "create_session", AsyncMock(return_value=handle)) as create, \
+             patch.object(rlm, "spawn", AsyncMock()) as spawn, \
+             patch.object(rlm, "collect", AsyncMock()) as collect:
+            actual = await task.start_agent("Implement parsing", name="parser-parent", model="provider/model",
+                                            thinking="low", cwd="/verified/project")
+        self.assertIs(actual, handle)
+        create.assert_awaited_once()
+        spawn.assert_not_awaited()
+        collect.assert_not_awaited()
+        self.assertEqual(create.await_args.kwargs, {"name": "parser-parent", "model": "provider/model",
+                                                   "thinking": "low", "cwd": "/verified/project"})
+        prompt = create.await_args.args[0]
+        self.assertTrue(prompt.startswith("Implement parsing\n\n"))
+        bootstrap_line = next(line for line in prompt.splitlines() if line.startswith("workstreams.configure("))
+        decoded = json.loads(ast.literal_eval(ast.parse(bootstrap_line).body[0].value.keywords[0].value.args[0]))
+        self.assertEqual(decoded, self.client.configuration())
+        callback_line = next(line for line in prompt.splitlines() if line.startswith("await agent_message.send("))
+        call = ast.parse(callback_line).body[0].value.value
+        self.assertEqual({keyword.arg: ast.literal_eval(keyword.value) for keyword in call.keywords},
+                         {"receiver_role": "sibling", "receiver_name": "fixture-orchestrator-id"})
+        self.assertEqual(self.state()["agents"], [{"workstreamId": "parser", "sessionId": "native-session-id",
+                                                 "name": "parser-parent", "role": "worker-parent"}])
+
+    async def test_start_agent_without_recorded_root_never_guesses_a_recipient(self):
+        workstreams.configure(**self.config)
+        await workstreams.create("parser", "Parse JSON in Prime CLI logs")
+        handle = rlm.RLMCreateSessionHandle("active", "session", "parent", Path("/fixture/session.jsonl"), "provider/model")
+        with patch.object(rlm, "create_session", AsyncMock(return_value=handle)) as create:
+            actual = await workstreams.start_agent("parser", "Implement parsing", name="parent")
+        self.assertIs(actual, handle)
+        self.assertNotIn("await agent_message.send(", create.await_args.args[0])
+        self.assertEqual(self.state()["agents"][0]["sessionId"], "session")
+
+    async def test_start_agent_assignment_failure_retains_native_handle_without_recreation(self):
+        task = await self.client.create("parser", "Parse JSON in Prime CLI logs")
+        handle = rlm.RLMCreateSessionHandle("active", "session", "fail-assignment", Path("/fixture/session.jsonl"), "provider/model")
+        with patch.object(rlm, "create_session", AsyncMock(return_value=handle)) as create:
+            with self.assertRaises(workstreams.AssignmentError) as caught:
+                await task.start_agent("Implement parsing", name="parent")
+            self.assertIs(caught.exception.handle, handle)
+            self.assertEqual(await self.client.retry(caught.exception.report), {"disposition": "duplicate"})
+        create.assert_awaited_once()
+
+    async def test_start_agent_validates_task_before_admitting_native_work(self):
+        with patch.object(rlm, "create_session", AsyncMock()) as create:
+            with self.assertRaises(KeyError):
+                await self.client.start_agent("unknown", "Implement parsing", name="parent")
+            with self.assertRaises(ValueError):
+                await self.client.start_agent("unknown", " ", name="parent")
+        create.assert_not_awaited()
+
     def test_configuration_refuses_shell_strings_and_invalid_timeouts(self):
         with self.assertRaises(ValueError):
             Client(command="echo unsafe")

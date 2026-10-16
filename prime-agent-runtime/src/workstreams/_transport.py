@@ -31,10 +31,10 @@ class DeliveryError(RuntimeError):
 
 
 class AssignmentError(DeliveryError):
-    """A child was admitted, but metadata delivery failed. Never respawn to retry."""
+    """An agent was admitted, but metadata delivery failed. Never restart it to retry."""
 
     def __init__(self, handle: Any, error: Exception):
-        super().__init__("Child spawned; workstream assignment was not confirmed. Retain handle and retry assignment, not spawn.",
+        super().__init__("Agent admitted; workstream assignment was not confirmed. Retain handle and retry assignment, not agent creation.",
                          error.report if isinstance(error, DeliveryError) else None)
         self.handle = handle
 

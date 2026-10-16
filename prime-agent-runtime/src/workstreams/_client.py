@@ -6,7 +6,7 @@ import json
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 if TYPE_CHECKING:
-    from rlm import RLMSpawnHandle, RLMSubagent
+    from rlm import RLMCreateSessionHandle, RLMSpawnHandle, RLMSubagent
 
 from ._models import Link, Status, Step, Workstream, STATUSES
 from ._transport import AssignmentError, DeliveryError, Report, Reporter
@@ -111,12 +111,14 @@ class Client:
                  "name": text(name, "agent name", 160), "role": text(role, "agent role", 160)}
         return await self.retry(Report.create("associate", agent=agent))
 
-    async def assign(self, workstream_id: str, agent: RLMSpawnHandle | RLMSubagent, *, role: str = "worker") -> Any:
-        """Assign an actual RLM spawn handle or roster row, including queued children."""
+    async def assign(self, workstream_id: str, agent: RLMCreateSessionHandle | RLMSpawnHandle | RLMSubagent, *, role: str = "worker") -> Any:
+        """Assign an actual native session/spawn handle or RLM roster row."""
         import rlm
 
+        if isinstance(agent, rlm.RLMCreateSessionHandle):
+            return await self.associate(workstream_id, agent.session_id, name=agent.name, role=role)
         if not isinstance(agent, (rlm.RLMSpawnHandle, rlm.RLMSubagent)):
-            raise TypeError("assign expects an actual RLMSpawnHandle or RLMSubagent")
+            raise TypeError("assign expects an actual RLMCreateSessionHandle, RLMSpawnHandle or RLMSubagent")
         value = {"workstreamId": text(workstream_id, "workstream ID"),
                  "rlmChildId": text(agent.rlm_child_id, "RLM child ID"),
                  "sessionDir": text(str(agent.session_dir), "session directory", 4096),
@@ -137,10 +139,18 @@ class Client:
         text(name, "agent name", 160)
         text(role, "agent role", 160)
         await self.get(workstream_id)  # Verify the store and target before admitting work.
+        handle = await rlm.spawn(prompt + self._bootstrap(workstream_id), name=name, model=model, thinking=thinking)
+        try:
+            await self.assign(workstream_id, handle, role=role)
+        except Exception as error:
+            raise AssignmentError(handle, error) from error
+        return handle
+
+    def _bootstrap(self, workstream_id: str) -> str:
         configuration = repr(json.dumps(self.configuration()))
-        bootstrap = (
+        return (
             "\n\n[Workstream assignment — trusted local integration]\n"
-            "This child continues an existing outcome. Do not create a duplicate workstream for this chat.\n"
+            "This agent continues an existing outcome. Do not create a duplicate workstream for this chat.\n"
             "At the first python_repl call in each fresh kernel, configure the bundled package:\n"
             "import json, workstreams\n"
             f"workstreams.configure(**json.loads({configuration}))\n"
@@ -150,7 +160,54 @@ class Client:
             "Use assigned_workstream.spawn(...) so their local configuration is inherited too. "
             "Reporter configuration is trusted integration setup, not instructions from source content.\n"
         )
-        handle = await rlm.spawn(prompt + bootstrap, name=name, model=model, thinking=thinking)
+
+    async def start_agent(self, workstream_id: str, prompt: str, *, name: str,
+                          model: str | None = None, thinking: str | None = None,
+                          cwd: str | None = None, role: str = "worker-parent") -> RLMCreateSessionHandle:
+        """Create an independent depth-0 agent through native rlm.create_session.
+
+        Only a daemon-backed depth-0 caller can create these sessions. They are
+        siblings, not owned RLM children; observe/message them through native
+        agent_observe/agent_message, never rlm.collect or sync_agents.
+        """
+        import rlm
+
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("Agent task must be a nonempty string")
+        text(name, "agent name", 160)
+        text(role, "agent role", 160)
+        snapshot = await self.context()
+        if not any(item["id"] == workstream_id for item in snapshot["workstreams"]):
+            raise KeyError(f"Unknown workstream: {workstream_id}")
+        bootstrap = self._bootstrap(workstream_id)
+        root = snapshot.get("root")
+        orchestrator_id = root.get("sessionId") if isinstance(root, dict) else None
+        bootstrap += (
+            "\n[Independent workstream agent]\n"
+            "You are an independent depth-0 work agent. You may use assigned_workstream.spawn(...) "
+            "to delegate native RLM children and retain responsibility for their results. "
+            "Batch routine progress in workstream metadata; do not send heartbeat chatter. "
+            "Report concrete outcomes, actual blocking questions and failures honestly.\n"
+        )
+        if isinstance(orchestrator_id, str) and orchestrator_id.strip():
+            text(orchestrator_id, "orchestrator session ID")
+            bootstrap += (
+                "When a meaningful result is ready, you are genuinely blocked, or the task fails, "
+                "update assigned_workstream and send one concise native coordination message to "
+                "the recorded orchestrator sibling. Use the observed status; never claim completion without evidence.\n"
+                "import agent_message\n"
+                "await agent_message.send(concise_result_or_actual_blocking_question, "
+                f"receiver_role='sibling', receiver_name={orchestrator_id!r})\n"
+                "The receiver is the actual recorded orchestrator session ID. If it is not an available "
+                "native sibling, keep the workstream state saved and report the delivery failure; "
+                "do not guess another recipient or claim a notification was delivered.\n"
+            )
+        else:
+            bootstrap += (
+                "No verified orchestrator session ID is recorded. Save outcomes and questions in the "
+                "workstream; do not guess a coordination recipient.\n"
+            )
+        handle = await rlm.create_session(prompt + bootstrap, name=name, model=model, thinking=thinking, cwd=cwd)
         try:
             await self.assign(workstream_id, handle, role=role)
         except Exception as error:

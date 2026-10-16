@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from ._client import Client
-    from rlm import RLMSpawnHandle, RLMSubagent
+    from rlm import RLMCreateSessionHandle, RLMSpawnHandle, RLMSubagent
 
 Status = Literal["todo", "active", "needs_input", "ready", "backlog", "done"]
 STATUSES = ("todo", "active", "needs_input", "ready", "backlog", "done")
@@ -94,7 +94,7 @@ class Workstream:
         """Link an actual Prime Agent session; does not spawn or message it."""
         return await self._client.associate(self.id, session_id, name=name, role=role)
 
-    async def assign(self, agent: RLMSpawnHandle | RLMSubagent, *, role: str = "worker") -> Any:
+    async def assign(self, agent: RLMCreateSessionHandle | RLMSpawnHandle | RLMSubagent, *, role: str = "worker") -> Any:
         """Assign an actual RLM spawn handle/roster row without guessing a session ID."""
         return await self._client.assign(self.id, agent, role=role)
 
@@ -102,6 +102,13 @@ class Workstream:
                     thinking: str | None = None, role: str = "worker") -> RLMSpawnHandle:
         """Spawn a native RLM child with this workstream and trusted local reporter setup."""
         return await self._client.spawn(self.id, prompt, name=name, model=model, thinking=thinking, role=role)
+
+    async def start_agent(self, prompt: str, *, name: str, model: str | None = None,
+                          thinking: str | None = None, cwd: str | None = None,
+                          role: str = "worker-parent") -> RLMCreateSessionHandle:
+        """Start an independent native depth-0 agent, with its own optional RLM children."""
+        return await self._client.start_agent(self.id, prompt, name=name, model=model,
+                                              thinking=thinking, cwd=cwd, role=role)
 
     async def sync_agents(self) -> tuple[RLMSubagent, ...]:
         """Resolve assigned children to actual roster session IDs with one observation."""
