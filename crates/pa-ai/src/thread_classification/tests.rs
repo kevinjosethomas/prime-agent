@@ -178,3 +178,25 @@ fn enforces_utf8_bytes_total_budget_and_candidate_message_limits() {
     assert!(decode_thread_request(&serde_json::to_vec(&value).unwrap()).is_err());
     assert!(decode_thread_request(&vec![b' '; MAX_THREAD_REQUEST_BYTES + 1]).is_err());
 }
+
+#[test]
+fn explicit_overview_answers_and_followups_keep_their_own_conversation_without_bridging_tasks() {
+    let mut value = payload();
+    value["target"] = json!({"id":"overview-answer","role":"assistant","text":"The icon change is done. Authentication is waiting for review. Thread classification is being tested."});
+    value["recentMessages"] = json!([{ "id":"overview-request","role":"user","text":"What is the status across everything?"}]);
+    value["candidates"] = json!([{ "id":"overview-thread","messages":[{"id":"overview-request","role":"user","text":"What is the status across everything?"}]}]);
+    let request = decode_thread_request(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let evaluation = thread_evaluation(&request);
+    let question = &evaluation.questions["t0"];
+    assert_eq!(evaluation.state["target"]["role"], "assistant");
+    assert!(question
+        .instructions
+        .contains("CAN continue its own explicit overview/status/inventory conversation"));
+    assert!(question
+        .instructions
+        .contains("clear acknowledgement or follow-up"));
+    assert!(question.criteria["related"].contains("assistant overview/status/inventory answer"));
+    assert!(question.criteria["unrelated"]
+        .contains("unrelated to each individual underlying task thread"));
+    assert!(!question.criteria["unrelated"].contains("or mixed multi-topic overview"));
+}
