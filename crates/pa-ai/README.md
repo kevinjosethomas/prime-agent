@@ -21,3 +21,9 @@ map bounded public conversation context into independent Clef same-conversation
 questions and validate complete per-candidate distributions. This is separate from
 workstream outcome relevance. No threshold, state, credentials, or execution is owned
 here; CLI consumers resolve auth and own continuity policy. Wire DTOs are pa-types.
+
+Thread evaluation shares only the target and final six causal public messages. Each
+question carries its own complete speaker-labelled candidate evidence, omitting
+opaque IDs and index references from model input. Concise user/assistant-specific
+rules reduce context and coreference burden, at the cost of older recent history;
+frozen live-corpus evaluation, rather than policy fixtures, determines accuracy.
