@@ -13,6 +13,7 @@ pub mod models_generated;
 pub mod oauth;
 pub mod registry;
 pub mod systemone;
+pub mod thread_classification;
 pub mod types;
 
 mod event_stream;

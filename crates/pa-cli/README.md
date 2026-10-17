@@ -135,3 +135,15 @@ installed version. The adapter holds the shipped TypeScript shutdown-admission
 lease in both historic supervisor registries until Rust owns the replacement
 socket, preventing old clients from launching a competing daemon. Admission
 records are refreshed and removed only while their ownership token matches.
+
+## Semantic thread evaluator
+
+`prime-agent thread-classify --json` composes the pa-ai semantic-thread evaluator
+with native ModelRegistry/AuthStorage resolution and the existing System One
+transport. It emits ready-v1 before auth, accepts one <=128 KiB public-context
+request, and returns every candidate's validated related/unrelated/confidence
+distribution. No daemon/session is created; no model or settings are registered.
+The CLI owns framing/deadlines/auth only. Classification question policy and
+distribution validation live in pa-ai, shared wire DTOs in pa-types. Empty candidates
+and readiness+EOF do not access auth/network. Raw input and credentials are never
+logged; provider errors are sanitized by the native transport.

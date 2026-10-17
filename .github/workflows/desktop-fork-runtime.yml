@@ -97,6 +97,16 @@ jobs:
           rows = [json.loads(line) for line in result.stdout.splitlines()]
           assert len(rows) == 1 and rows[0]['type'] == 'ready' and rows[0]['protocolVersion'] == 1
           PYAUTH
+      - name: Verify semantic thread evaluator and compiled CLI probe
+        run: |
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-ai --lib thread_classification
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-cli --lib thread_classify
+          python3 - <<'PYTHREAD'
+          import json, subprocess
+          result = subprocess.run(['target/aarch64-apple-darwin/release/prime-agent', 'thread-classify', '--json'], input='', text=True, capture_output=True, timeout=10, check=True)
+          rows = [json.loads(line) for line in result.stdout.splitlines()]
+          assert rows == [{'type': 'ready', 'protocolVersion': 1}]
+          PYTHREAD
       - name: Run focused workstream classifier tests
         run: |
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-ai --lib systemone

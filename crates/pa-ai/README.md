@@ -15,3 +15,9 @@ No agent loop, no tool execution, no session state, no UI. Receives/returns `pa-
 pa-types (one-way).
 
 The fork adds `systemone::evaluate`, a bounded typed evaluation HTTP client using host-resolved request auth. It does not implement chat completion, agent execution, catalog registration, or Decision API control loops. Shared request/answer DTOs live in pa-types.
+
+`thread_classification::{decode_thread_request, thread_evaluation, thread_scores}`
+map bounded public conversation context into independent Clef same-conversation
+questions and validate complete per-candidate distributions. This is separate from
+workstream outcome relevance. No threshold, state, credentials, or execution is owned
+here; CLI consumers resolve auth and own continuity policy. Wire DTOs are pa-types.

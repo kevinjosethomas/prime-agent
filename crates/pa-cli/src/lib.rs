@@ -51,6 +51,7 @@ pub(crate) mod session_export;
 pub(crate) mod sessions_table_format;
 pub(crate) mod subscription_login;
 pub(crate) mod telemetry_notice;
+pub(crate) mod thread_classify;
 pub(crate) mod traces_login;
 
 /// The runtime boundary: everything a mode-runner crate implements to plug
@@ -87,6 +88,13 @@ pub fn main_with_runtime(args: &[String], runtime: &dyn mode::Runtime) -> i32 {
 
 fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String> {
     use std::io::IsTerminal;
+
+    if args.first().map(String::as_str) == Some("thread-classify") {
+        if args.len() == 2 && args[1] == "--json" {
+            return thread_classify::run();
+        }
+        return Err("Usage: prime-agent thread-classify --json".to_string());
+    }
 
     if args.first().map(String::as_str) == Some("auth") {
         if args.len() == 2 && args[1] == "--json" {
