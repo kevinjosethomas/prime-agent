@@ -90,10 +90,17 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
     use std::io::IsTerminal;
 
     if args.first().map(String::as_str) == Some("thread-classify") {
-        if args.len() == 2 && args[1] == "--json" {
-            return thread_classify::run();
-        }
-        return Err("Usage: prime-agent thread-classify --json".to_string());
+        let mode = match &args[1..] {
+            [flag] if flag == "--json" => thread_classify::EvaluationMode::Binary,
+            [flag] if flag == "--contrastive" => thread_classify::EvaluationMode::Contrastive,
+            [json, contrastive] if json == "--json" && contrastive == "--contrastive" => {
+                thread_classify::EvaluationMode::Contrastive
+            }
+            _ => {
+                return Err("Usage: prime-agent thread-classify --json [--contrastive]".to_string())
+            }
+        };
+        return thread_classify::run(mode);
     }
 
     if args.first().map(String::as_str) == Some("auth") {

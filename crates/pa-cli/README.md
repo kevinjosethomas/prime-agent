@@ -147,3 +147,9 @@ The CLI owns framing/deadlines/auth only. Classification question policy and
 distribution validation live in pa-ai, shared wire DTOs in pa-types. Empty candidates
 and readiness+EOF do not access auth/network. Raw input and credentials are never
 logged; provider errors are sanitized by the native transport.
+
+The opt-in `thread-classify --json --contrastive` (shorthand
+`thread-classify --contrastive`) uses one exclusive choice across distinct
+candidate destinations plus none. Ready/request/result DTOs and native auth are
+unchanged; plain `--json` keeps binary mode. The host must collapse same-canonical
+anchors before this mode so equivalent anchors do not split probability mass.

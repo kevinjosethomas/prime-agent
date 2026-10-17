@@ -106,6 +106,9 @@ jobs:
           result = subprocess.run(['target/aarch64-apple-darwin/release/prime-agent', 'thread-classify', '--json'], input='', text=True, capture_output=True, timeout=10, check=True)
           rows = [json.loads(line) for line in result.stdout.splitlines()]
           assert rows == [{'type': 'ready', 'protocolVersion': 1}]
+          for flags in [['--json', '--contrastive'], ['--contrastive']]:
+              probe = subprocess.run(['target/aarch64-apple-darwin/release/prime-agent', 'thread-classify', *flags], input='', text=True, capture_output=True, timeout=10, check=True)
+              assert [json.loads(line) for line in probe.stdout.splitlines()] == [{'type': 'ready', 'protocolVersion': 1}]
           PYTHREAD
       - name: Run focused workstream classifier tests
         run: |

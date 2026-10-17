@@ -27,3 +27,10 @@ question carries its own complete speaker-labelled candidate evidence, omitting
 opaque IDs and index references from model input. Concise user/assistant-specific
 rules reduce context and coreference burden, at the cost of older recent history;
 frozen live-corpus evaluation, rather than policy fixtures, determines accuracy.
+
+`contrastive_thread_evaluation` and `contrastive_thread_scores` are the opt-in
+exclusive-choice mapping: one question across candidate transcripts plus none,
+with complete distribution validation. Callers collapse same-destination anchors.
+Each output retains P(candidate), its complement, and the absolute margin against
+the best other alternative including none. This derived margin is not calibrated
+correctness, and independent binary scores remain unchanged.

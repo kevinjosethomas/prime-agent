@@ -4,15 +4,21 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use pa_ai::thread_classification::{
-    decode_thread_request, thread_evaluation, thread_scores, CLEF_THREAD_MODEL,
-    MAX_THREAD_REQUEST_BYTES,
+    contrastive_thread_evaluation, contrastive_thread_scores, decode_thread_request,
+    thread_evaluation, thread_scores, CLEF_THREAD_MODEL, MAX_THREAD_REQUEST_BYTES,
 };
 use pa_ai::types::StreamOptions;
 use pa_types::thread_classification::{ThreadClassificationRequest, ThreadScore};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-pub(crate) fn run() -> Result<i32, String> {
+#[derive(Clone, Copy)]
+pub(crate) enum EvaluationMode {
+    Binary,
+    Contrastive,
+}
+
+pub(crate) fn run(mode: EvaluationMode) -> Result<i32, String> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -22,7 +28,7 @@ pub(crate) fn run() -> Result<i32, String> {
     let result = runtime.block_on(serve(
         tokio::io::BufReader::new(tokio::io::stdin()),
         tokio::io::stdout(),
-        move |request| evaluate(agent_dir, request),
+        move |request| evaluate(agent_dir, request, mode),
     ));
     runtime.shutdown_timeout(Duration::from_secs(2));
     result
@@ -124,12 +130,21 @@ fn credentials(agent_dir: &Path) -> Result<(String, StreamOptions), String> {
 async fn evaluate(
     agent_dir: PathBuf,
     request: ThreadClassificationRequest,
+    mode: EvaluationMode,
 ) -> Result<Vec<ThreadScore>, String> {
     let (base_url, options) = credentials(&agent_dir)?;
-    let response = pa_ai::systemone::evaluate(&base_url, &thread_evaluation(&request), &options)
+    let evaluation = match mode {
+        EvaluationMode::Binary => thread_evaluation(&request),
+        EvaluationMode::Contrastive => contrastive_thread_evaluation(&request),
+    };
+    let response = pa_ai::systemone::evaluate(&base_url, &evaluation, &options)
         .await
         .map_err(|error| error.to_string())?;
-    thread_scores(&request, &response).map_err(str::to_string)
+    match mode {
+        EvaluationMode::Binary => thread_scores(&request, &response),
+        EvaluationMode::Contrastive => contrastive_thread_scores(&request, &response),
+    }
+    .map_err(str::to_string)
 }
 
 #[cfg(test)]
