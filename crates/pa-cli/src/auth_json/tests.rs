@@ -309,7 +309,10 @@ async fn traces_catalog_state_and_logout_use_the_native_store_in_a_temporary_hom
         reply
     }
     let list = json!({"type":"list","id":"flow"});
-    assert_eq!(exchange(temp.path(), list.clone()).await["traces"]["configured"], false);
+    assert_eq!(
+        exchange(temp.path(), list.clone()).await["traces"]["configured"],
+        false
+    );
     let mut auth = pa_core::auth::AuthStorage::create(temp.path());
     auth.set(
         pa_core::auth::PRIME_AGENT_TRACES_PROVIDER_ID,
@@ -318,12 +321,18 @@ async fn traces_catalog_state_and_logout_use_the_native_store_in_a_temporary_hom
             prime_team: None,
         },
     );
-    assert_eq!(exchange(temp.path(), list.clone()).await["traces"]["configured"], true);
+    assert_eq!(
+        exchange(temp.path(), list.clone()).await["traces"]["configured"],
+        true
+    );
     let settled = exchange(
         temp.path(),
         json!({"type":"begin","id":"flow","target":"traces","key":"prime-agent-traces","action":"logout"}),
     )
     .await;
     assert_eq!(settled["status"], "success");
-    assert_eq!(exchange(temp.path(), list).await["traces"]["configured"], false);
+    assert_eq!(
+        exchange(temp.path(), list).await["traces"]["configured"],
+        false
+    );
 }

@@ -1,11 +1,11 @@
 //! Adapt the existing CLI auth services; no new credential storage or OAuth implementation.
 use super::protocol::{Action, Method, Target};
+use pa_core::auth::PRIME_AGENT_TRACES_PROVIDER_ID;
 use pa_tui::auth_panel::{AuthPanelHandle, PastePromptTone, PasteStyle};
 use pa_tui::client_auth::ClientAuthCommands;
 use pa_tui::provider_auth::{
     AuthFlow, AuthStatusStyle, AuthType, ProviderAuthCommands, ProviderAuthOutcome, ProviderRow,
 };
-use pa_core::auth::PRIME_AGENT_TRACES_PROVIDER_ID;
 use pa_tui::traces::TraceLoginOutcome;
 use serde_json::{json, Value};
 use std::path::PathBuf;
