@@ -535,15 +535,40 @@ pub(crate) fn session_summary(core: &SessionCore, inputs: SummaryInputs) -> Sess
         .or_else(|| store.map(|store| store.header.timestamp.clone()));
     // Usage: the whole-file own-usage fold (TS `getOwnUsageSummary`);
     // a pathless store folds its in-memory entries.
+    let info = store
+        .filter(|store| !store.path.as_os_str().is_empty())
+        .and_then(|store| crate::session_store::read_session_info(&store.path));
     let usage = store
         .and_then(|store| {
             if store.path.as_os_str().is_empty() {
                 crate::session_usage::own_usage_summary_of(store.entries())
             } else {
-                crate::session_store::read_session_info(&store.path).and_then(|info| info.usage)
+                info.as_ref().and_then(|info| info.usage.clone())
             }
         })
         .map(|usage| json!(usage));
+    let last_user_prompt_at = info
+        .as_ref()
+        .and_then(|info| info.last_user_prompt_ms)
+        .or_else(|| {
+            store
+                .filter(|store| store.path.as_os_str().is_empty())
+                .and_then(|store| {
+                    store.entries().iter().rev().find_map(|entry| {
+                        if entry.type_ != "message" {
+                            return None;
+                        }
+                        let message = entry.fields.get("message")?;
+                        if message.get("role").and_then(Value::as_str) != Some("user") {
+                            return None;
+                        }
+                        message
+                            .get("timestamp")
+                            .and_then(crate::types::prompt_timestamp_ms)
+                    })
+                })
+        })
+        .map(crate::util::iso_from_unix_ms);
     SessionSummary {
         id: core.active_session_id.clone(),
         lifecycle: active_lifecycle(&core.runtime_kind, scalars.message_count == 0, streaming)
@@ -559,6 +584,7 @@ pub(crate) fn session_summary(core: &SessionCore, inputs: SummaryInputs) -> Sess
         is_session_active: streaming || compacting || queued > 0,
         has_registered_cron_job: Some(false),
         last_activity_at,
+        last_user_prompt_at,
         rlm_depth: Some(core.rlm_depth),
         active_session_id: Some(core.active_session_id.clone()),
         session_id: store

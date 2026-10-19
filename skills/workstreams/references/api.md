@@ -8,15 +8,17 @@ it performs no I/O and requires only the Python standard library.
 ## Read and manage outcomes
 
 ```python
-items = await workstreams.list(status="active")  # immutable tuple of Workstream
+items = await workstreams.list(status="active")  # visible immutable snapshots
+archived = await workstreams.list(archived=True) # only archived workstreams
+all_items = await workstreams.list(archived=None) # include visible and archived
 task = await workstreams.get("prime-cli-json")    # KeyError if missing
 task = await workstreams.update("prime-cli-json", summary="Parser verified")
 task = await task.refresh()
 ```
 
 `create(id, title, **fields)` refuses an already observed ID. `upsert(id, title,
-**fields)` replaces complete state; omitted fields take defaults. Prefer `update`
-to change selected fields. Supported fields:
+**fields)` replaces editable state; omitted fields take defaults. The host-owned
+archive flag is preserved. Prefer `update` to change selected fields. Supported fields:
 
 | Field | Meaning |
 | --- | --- |
@@ -37,21 +39,52 @@ before partial writes. Independent agents' full-state updates are last-writer-wi
 this version does not offer compare-and-swap or transactional multi-workstream edits.
 The duplicate check in `create` is not an atomic create-if-absent across processes.
 
+Reuse the existing product or independently owned feature before creating anything.
+All Primer feedback belongs to its existing Primer workstream: fixes, layout,
+threads, renaming the agent, and dropping files into Primer are milestones. Chats,
+workers, and PRs do not create new outcomes. Keep Lighthouse intake and judging
+together in the O1 case:
+
 ```python
-case = await workstreams.create("o1", "Prepare O1 case", status="active")
-intake = await case.subtask("o1-intake", "Complete Lighthouse O1 intake")
-intake = await intake.update(links=[
+case = await workstreams.get("o1")  # use the existing observed stable ID
+case = await case.milestone("intake", "Complete Lighthouse O1 intake")
+case = await case.milestone("judging", "Prepare judging applications")
+case = await case.update(links=[
     Link("source", "https://example.com/intake", "Intake questionnaire"),
 ])
-children = await workstreams.list(parent_id="o1")
-await intake.associate(actual_session_id, name="intake-worker", role="researcher")
+await case.associate(actual_session_id, name="intake-worker", role="researcher")
 ```
+
+`task.subtask(id, title, **fields)` creates a workstream with `parent_id=task.id`.
+Use it only for an independently owned feature, not routine milestones or chat
+branches. `list(parent_id=task.id)` lists its visible children.
 
 `associate` stores an actual existing session ID; it does not independently verify
 daemon availability or agent ownership. Discover the ID through supported RLM/roster
 APIs, not by guessing from a chat title. `context()` returns the metadata snapshot,
 root binding, associated agents, and the last 30 indexed turns' IDs; it contains no
 message bodies. It is not an API for reading a session's conversation.
+
+## Archive and restore
+
+```python
+task = await task.archive()
+task = await workstreams.restore(task.id)
+# Equivalent client forms: await client.archive(id), await client.restore(id).
+```
+
+`archive` and `restore` return refreshed immutable handles. They use the host's
+`set-archived` operation, preserving status, milestones and `updated_at`. The snapshot
+field `archived` defaults to `False` when an older host omits it. `list()` and
+`list(archived=False)` hide archived entries; `archived=True` selects only archived
+entries and `archived=None` includes all. Status and parent filters still apply.
+`get(id)` can always read an archived entry. Partial updates preserve its host-owned
+archive flag; `archived` is not an `upsert` or `update` field. Use these methods instead.
+
+Archive duplicate or dropped outcomes rather than deleting their history. Archiving
+does not merge workstreams, transfer milestones, or mark work complete. Preserve useful
+milestones in the existing product workstream first. Restore an existing archived
+outcome when it resumes instead of creating another workstream for the new chat.
 
 ## Independent work agents for the orchestrator
 

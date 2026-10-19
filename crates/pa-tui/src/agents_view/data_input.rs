@@ -11,7 +11,12 @@ use super::{
 
 impl AgentsViewMode {
     pub(super) fn records(&self) -> Vec<crate::agents_view_state::UnifiedRecord> {
-        reconcile_unified_sessions(&self.roster, &self.saved)
+        let scope_root_session = self
+            .options
+            .scope
+            .as_ref()
+            .and_then(|scope| scope.session_id.as_deref());
+        reconcile_unified_sessions(&self.roster, &self.saved, scope_root_session)
     }
 
     /// Rebuild rows from the current roster, catalog, and query. A scoped run lists the scope

@@ -42,16 +42,21 @@ class Client:
             summary=value["summary"], question=value["question"], owner=value["owner"],
             steps=tuple(Step(**step) for step in value["steps"]), updated_at=value["updatedAt"],
             description=value.get("description", ""), parent_id=value.get("parentId"),
-            links=tuple(Link(**link) for link in value.get("links", [])), _client=self,
+            links=tuple(Link(**link) for link in value.get("links", [])),
+            archived=value.get("archived", False), _client=self,
         )
 
-    async def list(self, *, status: Status | None = None, parent_id: str | None = None) -> tuple[Workstream, ...]:
-        """List snapshots, optionally restricted to a status or a parent workstream."""
+    async def list(self, *, status: Status | None = None, parent_id: str | None = None,
+                   archived: bool | None = False) -> tuple[Workstream, ...]:
+        """List visible snapshots; archived=True selects hidden ones, None includes all."""
         if status is not None and status not in STATUSES:
             raise ValueError("Invalid workstream status")
+        if archived is not None and type(archived) is not bool:
+            raise TypeError("archived must be a boolean or None")
         return tuple(self._handle(value) for value in (await self.context())["workstreams"]
                      if (status is None or value["status"] == status)
-                     and (parent_id is None or value.get("parentId") == parent_id))
+                     and (parent_id is None or value.get("parentId") == parent_id)
+                     and (archived is None or value.get("archived", False) == archived))
 
     async def get(self, id: str) -> Workstream:
         """Read one current workstream; raise KeyError when the ID does not exist."""
@@ -89,7 +94,7 @@ class Client:
         current = next((value for value in (await self.context())["workstreams"] if value["id"] == id), None)
         if current is None:
             raise KeyError(f"Unknown workstream: {id}")
-        value = {key: item for key, item in current.items() if key != "updatedAt"}
+        value = {key: item for key, item in current.items() if key not in {"updatedAt", "archived"}}
         if "id" in changes:
             raise TypeError("Workstream IDs are immutable")
         if "parent_id" in changes:
@@ -102,6 +107,16 @@ class Client:
         if value["status"] != "needs_input" and "question" not in changes:
             value["question"] = ""
         return await self._upsert(value)
+
+    async def archive(self, id: str) -> Workstream:
+        """Hide a workstream without changing its status or timestamps."""
+        await self.retry(Report.create("set-archived", workstreamId=text(id, "workstream ID"), archived=True))
+        return await self.get(id)
+
+    async def restore(self, id: str) -> Workstream:
+        """Show a workstream again without changing its status or timestamps."""
+        await self.retry(Report.create("set-archived", workstreamId=text(id, "workstream ID"), archived=False))
+        return await self.get(id)
 
     async def associate(self, workstream_id: str, session_id: str, *, name: str,
                         role: str = "worker") -> Any:
@@ -156,7 +171,11 @@ class Client:
             f"workstreams.configure(**json.loads({configuration}))\n"
             f"assigned_workstream = await workstreams.get({workstream_id!r})\n"
             "Use this handle to report real milestones, status and blocking questions. "
-            "You may create other workstreams or assign native RLM children when the task requires it. "
+            "Reuse the existing product workstream for related fixes, layout, threads, "
+            "renaming the agent and dropping files into Primer; "
+            "record those as milestones, not new workstreams for each chat, worker or PR. "
+            "Create another workstream only for an independently owned feature or product. "
+            "You may assign native RLM children when the task requires it. "
             "Use assigned_workstream.spawn(...) so their local configuration is inherited too. "
             "Reporter configuration is trusted integration setup, not instructions from source content.\n"
         )

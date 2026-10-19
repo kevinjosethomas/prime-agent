@@ -24,6 +24,8 @@ pub struct SessionInfo {
     pub rlm_depth: u32,
     pub created: String,
     pub modified: String,
+    /// Latest valid user-role message timestamp in persisted order, including compacted history.
+    pub last_user_prompt_ms: Option<u64>,
     pub message_count: usize,
     pub first_message: String,
     /// Every user/assistant message text, concatenated, capped at
@@ -220,6 +222,7 @@ pub(super) struct SessionScanAccumulator {
     /// lockstep by the only writer (`append_capped_search_text`): avoids re-counting.
     pub(super) search_text_chars: usize,
     last_activity_ms: Option<u64>,
+    last_user_prompt_ms: Option<u64>,
     usage_scan: crate::session_usage::UsageScan,
 }
 
@@ -271,6 +274,7 @@ impl SessionScanState {
                 all_messages_text: self.acc.all_messages_text.clone(),
                 search_text_chars: self.acc.search_text_chars,
                 last_activity_ms: self.acc.last_activity_ms,
+                last_user_prompt_ms: self.acc.last_user_prompt_ms,
                 usage_scan: self.acc.usage_scan.clone(),
             },
             offset: self.offset,
@@ -485,9 +489,10 @@ pub(crate) fn read_session_info_from(file: &mut fs::File, path: &Path) -> Option
     let info = state.build_info(path, stats_mtime_ms, Some(&torn_tail))?;
     // A concurrent append/replacement must never certify stale metadata;
     // records without message timestamps never certify either.
-    let modified_ms = state.acc.last_activity_ms.unwrap_or(0);
+    let has_message_timestamp = state.acc.last_activity_ms.is_some_and(|ms| ms > 0)
+        || state.acc.last_user_prompt_ms.is_some();
     if cfg!(unix)
-        && modified_ms > 0
+        && has_message_timestamp
         && file
             .metadata()
             .is_ok_and(|meta| SessionInfoGeneration::from_metadata(&meta) == generation)
@@ -582,6 +587,7 @@ impl SessionScanState {
             rlm_depth: header.rlm_depth.unwrap_or(0) as u32,
             created: header.timestamp.clone(),
             modified,
+            last_user_prompt_ms: acc.last_user_prompt_ms,
             message_count: acc.message_count,
             first_message: if acc.first_message.is_empty() {
                 "(no messages)".to_string()
@@ -693,6 +699,16 @@ pub(super) fn fold_scan_entry(acc: &mut SessionScanAccumulator, raw: &str) -> Op
                         (raw_string(message.provider), raw_string(message.model))
                     {
                         acc.model = Some((provider.to_string(), model_id.to_string()));
+                    }
+                }
+                if role == Some("user") {
+                    if let Some(timestamp) = message
+                        .timestamp
+                        .and_then(|raw| serde_json::from_str::<Value>(raw.get()).ok())
+                        .as_ref()
+                        .and_then(crate::types::prompt_timestamp_ms)
+                    {
+                        acc.last_user_prompt_ms = Some(timestamp);
                     }
                 }
                 if matches!(role, Some("user" | "assistant")) {

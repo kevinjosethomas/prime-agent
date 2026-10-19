@@ -45,6 +45,27 @@ class DesktopInteropTests(unittest.IsolatedAsyncioTestCase):
                              ("done", "o1", (Link("source", "https://example.com/intake", "Fixture intake"),), (1, 1)))
             self.assertIsNone((await restarted.get("o1")).parent_id)
 
+    async def test_canonical_archive_restore_and_update_preserve_host_metadata(self):
+        with tempfile.TemporaryDirectory(prefix="workstreams archive ") as directory:
+            argv = json.loads(os.environ["WORKSTREAM_DESKTOP_REPORTER"])
+            client = Client(command=[*argv, "--db", str(Path(directory) / "state.sqlite")],
+                            env={"ELECTRON_RUN_AS_NODE": "1"})
+            task = await client.create("primer", "Primer", status="active",
+                                       steps=[Step("layout", "Verify layout")])
+            archived = await task.archive()
+            self.assertEqual((archived.archived, archived.updated_at, archived.status, archived.steps),
+                             (True, task.updated_at, task.status, task.steps))
+            self.assertEqual(await client.list(status="active"), ())
+            self.assertEqual(await client.list(status="active", archived=True), (archived,))
+            self.assertEqual(await client.list(status="active", archived=None), (archived,))
+            changed = await task.update(summary="Layout verified")
+            self.assertTrue(changed.archived)
+            self.assertEqual(changed.status, task.status)
+            restored = await changed.restore()
+            self.assertEqual((restored.archived, restored.updated_at, restored.status, restored.steps),
+                             (False, changed.updated_at, task.status, task.steps))
+            self.assertEqual(await client.list(status="active"), (restored,))
+
     async def test_canonical_assignment_queued_then_actual_roster_session(self):
         with tempfile.TemporaryDirectory(prefix="workstreams assignment ") as directory:
             argv = json.loads(os.environ["WORKSTREAM_DESKTOP_REPORTER"])

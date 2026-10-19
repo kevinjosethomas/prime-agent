@@ -14,6 +14,7 @@ fn legacy_read_session_info(path: &Path) -> Option<SessionInfo> {
     let mut all_messages_text = String::new();
     let mut usage_scan = crate::session_usage::UsageScan::default();
     let mut last_activity_ms: Option<u64> = None;
+    let mut last_user_prompt_ms = None;
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -102,6 +103,14 @@ fn legacy_read_session_info(path: &Path) -> Option<SessionInfo> {
                             model = Some((provider.to_string(), model_id.to_string()));
                         }
                     }
+                    if role == Some("user") {
+                        if let Some(timestamp) = message
+                            .get("timestamp")
+                            .and_then(crate::types::prompt_timestamp_ms)
+                        {
+                            last_user_prompt_ms = Some(timestamp);
+                        }
+                    }
                     if matches!(role, Some("user" | "assistant")) {
                         if let Some(timestamp) = message.get("timestamp").and_then(Value::as_u64) {
                             last_activity_ms = Some(last_activity_ms.unwrap_or(0).max(timestamp));
@@ -163,6 +172,7 @@ fn legacy_read_session_info(path: &Path) -> Option<SessionInfo> {
         rlm_depth: header.rlm_depth.unwrap_or(0) as u32,
         created: header.timestamp,
         modified,
+        last_user_prompt_ms,
         message_count,
         first_message: if first_message.is_empty() {
             "(no messages)".to_string()
@@ -1208,5 +1218,28 @@ fn borrowed_metadata_reads_match_full_parse_across_shape_matrix() {
         fs::remove_dir_all(abort_dir).unwrap();
     }
 
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// The single-writer premise: a fold by a process that does not hold the
+/// file's lease (the daemon catalog's cold read) never persists a sidecar.
+#[test]
+fn a_non_holder_fold_writes_no_sidecar() {
+    let dir = test_dir();
+    let path = dir.join("unleased.jsonl");
+    append_rows(
+        &path,
+        &[
+            json!({"type":"session","id":"sc","timestamp":"2026-09-23T00:00:00.000Z","cwd":"/test"}),
+            json!({"type":"message","id":"u1","timestamp":"2026-09-23T00:00:00.000Z",
+                "message":{"role":"user","content":"hi","timestamp":1_790_110_000_000_u64}}),
+        ],
+    );
+    let info = read_session_info(&path).unwrap();
+    assert_eq!(info.message_count, 1);
+    assert!(
+        !path.with_extension("info-cache.json").exists(),
+        "only the lease holder's release writes a sidecar"
+    );
     fs::remove_dir_all(dir).unwrap();
 }

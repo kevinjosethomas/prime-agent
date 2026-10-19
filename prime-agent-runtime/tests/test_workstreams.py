@@ -37,9 +37,18 @@ else:
     state["events"].append(event["eventId"])
     state["reports"].append(event)
     if event["operation"] == "upsert":
-        value = event["workstream"]
+        value = dict(event["workstream"])
+        assert "archived" not in value  # Host upserts do not accept this field.
+        prior = next((item for item in state["workstreams"] if item["id"] == value["id"]), None)
+        if prior is not None and "archived" in prior:
+            value["archived"] = prior["archived"]
         value["updatedAt"] = len(state["reports"])
         state["workstreams"] = [item for item in state["workstreams"] if item["id"] != value["id"]] + [value]
+    elif event["operation"] == "set-archived":
+        value = next((item for item in state["workstreams"] if item["id"] == event["workstreamId"]), None)
+        if value is None:
+            sys.exit(44)
+        value["archived"] = event["archived"]
     elif event["operation"] == "associate":
         state["agents"].append(event["agent"])
     elif event["operation"] == "assign":
@@ -71,18 +80,18 @@ class WorkstreamTests(unittest.IsolatedAsyncioTestCase):
         return json.loads(self.store.read_text())
 
     async def test_restart_roundtrip_subtasks_links_and_real_association(self):
-        case = await self.client.create("o1", "Prepare O1 case", status="active")
-        intake = await case.subtask("intake", "Complete Lighthouse intake", links=[
-            Link("source", "https://example.com/intake", "Intake")])
-        await intake.associate("actual-session-id", name="intake-worker", role="researcher")
+        product = await self.client.create("cli", "Prime CLI", status="active")
+        parser = await product.subtask("parser", "Structured log parser", links=[
+            Link("source", "https://example.com/parser", "Parser design")])
+        await parser.associate("actual-session-id", name="parser-owner", role="implementer")
         restarted = Client(**self.config)
-        self.assertEqual((await restarted.get("intake")).parent_id, case.id)
-        self.assertEqual((await restarted.list(parent_id="o1"))[0].links,
-                         (Link("source", "https://example.com/intake", "Intake"),))
+        self.assertEqual((await restarted.get("parser")).parent_id, product.id)
+        self.assertEqual((await restarted.list(parent_id="cli"))[0].links,
+                         (Link("source", "https://example.com/parser", "Parser design"),))
         self.assertEqual((await restarted.context())["agents"], [{
-            "workstreamId": "intake", "sessionId": "actual-session-id",
-            "name": "intake-worker", "role": "researcher"}])
-        self.assertIsNone(case.progress)
+            "workstreamId": "parser", "sessionId": "actual-session-id",
+            "name": "parser-owner", "role": "implementer"}])
+        self.assertIsNone(product.progress)
 
     async def test_milestones_completion_question_and_immutable_snapshots(self):
         task = await self.client.create("parser", "Parse JSON in Prime CLI logs",
@@ -160,6 +169,52 @@ class WorkstreamTests(unittest.IsolatedAsyncioTestCase):
         await workstreams.update("one", status="active")
         self.assertEqual(tuple(item.id for item in await workstreams.list(status="active")), (task.id,))
         self.assertEqual((await workstreams.get("one")).title, "One outcome")
+
+    async def test_archive_restore_snapshots_filters_and_module_facade(self):
+        workstreams.configure(**self.config)
+        task = await workstreams.create("primer", "Primer", status="active",
+                                        steps=[Step("layout", "Verify layout")])
+        other = await workstreams.create("other", "Independent product", status="todo")
+        self.assertFalse(task.archived)  # Older hosts may omit the flag entirely.
+        archived = await task.archive()
+        self.assertEqual(archived, await self.client.get(task.id))
+        self.assertEqual((archived.archived, archived.status, archived.updated_at, archived.steps),
+                         (True, task.status, task.updated_at, task.steps))
+        self.assertFalse(task.archived)  # The original snapshot stays immutable.
+        self.assertEqual(await workstreams.list(), (other,))
+        self.assertEqual(await workstreams.list(archived=False), (other,))
+        self.assertEqual(await workstreams.list(archived=True, status="active"), (archived,))
+        self.assertEqual(await workstreams.list(archived=None), (archived, other))
+        restored = await workstreams.restore(task.id)
+        self.assertEqual(restored, task)
+        self.assertEqual(await workstreams.archive(task.id), archived)
+        self.assertEqual(await archived.restore(), task)
+        reports = self.state()["reports"][-4:]
+        self.assertEqual([{key: value for key, value in report.items() if key != "eventId"}
+                          for report in reports], [
+            {"operation": "set-archived", "workstreamId": task.id, "archived": flag}
+            for flag in (True, False, True, False)])
+        for invalid in (0, "false"):
+            with self.assertRaises(TypeError):
+                await workstreams.list(archived=invalid)
+        with self.assertRaises(DeliveryError):
+            await self.client.archive("missing")
+
+    async def test_update_archived_workstream_preserves_host_flag_without_upserting_it(self):
+        task = await self.client.create("primer", "Primer", status="active",
+                                        steps=[Step("layout", "Verify layout")])
+        await task.archive()
+        changed = await task.update(summary="Layout verified")
+        self.assertEqual((changed.archived, changed.status, changed.steps),
+                         (True, task.status, task.steps))
+        self.assertNotIn("archived", self.state()["reports"][-1]["workstream"])
+        with self.assertRaisesRegex(TypeError, "Unknown workstream fields: archived"):
+            await task.update(archived=False)
+        self.assertTrue((await task.refresh()).archived)
+        self.assertEqual(await self.client.list(), ())
+        restored = await self.client.restore(task.id)
+        self.assertEqual((restored.archived, restored.updated_at, restored.status),
+                         (False, changed.updated_at, changed.status))
 
     async def test_timeout_terminates_child_and_does_not_block_event_loop(self):
         client = Client(command=[sys.executable, "-c", "import threading; threading.Event().wait()"], timeout=0.2)

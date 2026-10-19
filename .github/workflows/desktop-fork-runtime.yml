@@ -1,7 +1,7 @@
 name: Desktop fork runtime
 on:
   push:
-    branches: [feat/root-desktop-runtime]
+    branches: [feat/root-desktop-runtime, primer/runtime-followups-candidate, primer/runtime-prompt-metadata]
   workflow_dispatch:
 permissions:
   contents: read
@@ -50,8 +50,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Verify async workstream API
-        run: PYTHONPATH=prime-agent-runtime/src python -m unittest discover -s prime-agent-runtime/tests -p 'test_workstreams.py'
+      # This repository does not stage the separately owned desktop reporter.
+      # Full discovery includes the exact readiness probe; canonical SQLite tests
+      # skip without WORKSTREAM_DESKTOP_REPORTER. See docs/desktop-runtime-verification.md.
+      - name: Verify complete Python source and readiness suite (not desktop interop)
+        run: PYTHONPATH=prime-agent-runtime/src python -m unittest discover -s prime-agent-runtime/tests -v
+      - name: Verify session and subagent runtime regressions
+        working-directory: prime-agent-runtime
+        run: |
+          PYTHONPATH=src python -m unittest discover -s test -p test_create_session.py -v
+          PYTHONPATH=src python -m unittest discover -s test -p test_subagent_registry.py -v
+      - name: State canonical reporter coverage boundary
+        run: |
+          echo 'Python source/readiness coverage is not canonical desktop archive verification. The 3 reporter tests skip here because this repository does not stage the desktop reporter. Require an exact-candidate, exact-desktop-artifact full discovery run with zero skips before installation; see docs/desktop-runtime-verification.md.' >> "$GITHUB_STEP_SUMMARY"
       - name: Build and inspect Python wheel
         run: |
           python -m pip install build
@@ -105,6 +116,7 @@ jobs:
           result = subprocess.run(['target/aarch64-apple-darwin/release/prime-agent', 'auth', '--json'], input='', text=True, capture_output=True, timeout=10, check=True)
           rows = [json.loads(line) for line in result.stdout.splitlines()]
           assert len(rows) == 1 and rows[0]['type'] == 'ready' and rows[0]['protocolVersion'] == 1
+          assert 'provider_auth_methods' in rows[0]['capabilities']
           PYAUTH
       - name: Verify semantic thread evaluator and compiled CLI probe
         run: |
@@ -128,6 +140,12 @@ jobs:
         run: |
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-core --lib workstreams
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-core --lib kernel::bootstrap::venv
+      - name: Verify canonical last-user-prompt metadata and cache regressions
+        run: |
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib last_user_prompt_metadata
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib session_store::info_tests
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib summary_tests
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib windowed_attach_tests
       - name: Verify Slack MCP login, callback, and catalog regressions
         run: |
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-core --lib mcp::

@@ -24,6 +24,9 @@ mod info_tests;
 mod stream_tests;
 
 #[cfg(test)]
+#[path = "session_store/prompt_metadata_tests.rs"]
+mod prompt_metadata_tests;
+#[cfg(test)]
 #[path = "session_store_window_tests.rs"]
 mod window_tests;
 

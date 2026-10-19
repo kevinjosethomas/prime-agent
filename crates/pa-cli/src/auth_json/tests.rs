@@ -61,6 +61,29 @@ fn bounded_decode_rejects_oversized_secrets_unknown_actions_and_missing_reply_va
         Ok(Request::Reply { value: None, .. })
     ));
 }
+#[test]
+fn explicit_method_is_optional_and_only_valid_for_provider_login() {
+    for method_id in ["oauth", "api_key"] {
+        let request = json!({"type":"begin","id":"flow","target":"provider","key":"anthropic","action":"login","methodId":method_id});
+        assert!(matches!(
+            protocol::decode(&serde_json::to_vec(&request).unwrap()),
+            Ok(Request::Begin {
+                method_id: Some(_),
+                ..
+            })
+        ));
+    }
+    for (target, action, method_id) in [
+        ("provider", "login", "anthropic:api_key"),
+        ("provider", "logout", "oauth"),
+        ("mcp", "login", "oauth"),
+    ] {
+        let request = json!({"type":"begin","id":"flow","target":target,"key":"anthropic","action":action,"methodId":method_id});
+        assert!(protocol::decode(&serde_json::to_vec(&request).unwrap()).is_err());
+    }
+    assert!(matches!(protocol::decode(br#"{"type":"begin","id":"flow","target":"provider","key":"anthropic","action":"login"}"#), Ok(Request::Begin { method_id: None, .. })));
+}
+
 #[tokio::test]
 async fn readiness_probe_and_eof_never_begin_an_authentication_flow() {
     let (server, client) = tokio::io::duplex(65536);

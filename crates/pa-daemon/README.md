@@ -30,6 +30,12 @@ never exports provider keys.
 Adoption uses the content-free `daemon event` summary counter
 `workstream_classified_count` (schema v1).
 
+The optional `lastUserPromptAt` summary/catalog field is derived by the existing
+resumable session-info fold from persisted user-role message timestamps. It is not
+activity or mtime. See [the metadata contract](../../docs/last-user-prompt-metadata.md).
+The same canonical scalar serves active, saved and passive-child rows; sidecar
+version 3 rebuilds old prefixes once before resuming cached metadata.
+
 ## Scope
 ACP stdio transport (`acp`): the JSON-RPC serve surface for Agent
 Client Protocol clients, served over a daemon session (initialize, session/new, session/prompt, session/close,

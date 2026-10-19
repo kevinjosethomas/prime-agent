@@ -44,6 +44,22 @@ pub fn message_timestamp_ms(message: &Value) -> Option<u64> {
     message.get("timestamp").and_then(Value::as_u64)
 }
 
+/// The user-prompt timestamp contract shared by attach and catalog metadata.
+pub(crate) fn prompt_timestamp_ms(timestamp: &Value) -> Option<u64> {
+    match timestamp {
+        Value::Number(number) => number.as_u64().or_else(|| {
+            number
+                .as_f64()
+                .filter(|value| value.is_finite())
+                .map(|value| value.max(0.0) as u64)
+        }),
+        Value::String(iso) => pa_types::incident::timestamp_to_ms(iso)
+            .filter(|ms| *ms > 0)
+            .map(|ms| ms as u64),
+        _ => None,
+    }
+}
+
 /// The lightweight session shape for list/create/rename/attach/state responses.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,6 +72,9 @@ pub struct SessionSummary {
     pub has_registered_cron_job: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_activity_at: Option<String>,
+    /// The latest valid persisted user-role prompt timestamp, not assistant activity or mtime.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_user_prompt_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rlm_depth: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
