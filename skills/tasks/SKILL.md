@@ -50,7 +50,7 @@ Examples from Primer feedback on 2026-10-19 (all subtasks under Primer):
 - "Follow-ups should sit above the composer with edit, delete and steer" → one
   subtask for the follow-up queue. "Steers should just show as text" is feedback on
   the same change: update it.
-- "Add a Pull requests tab next to Workstreams" → its own subtask. "PRs take so
+- "Add a Pull requests tab next to Tasks" → its own subtask. "PRs take so
   long to load" and "Do we need a drafts section?" update that subtask.
 - "Make Cmd+Q ask before quitting" → its own subtask.
 - "How hard is it to export prime-rl weights on CPU?" is not Primer: it belongs to
