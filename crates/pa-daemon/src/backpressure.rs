@@ -7,7 +7,7 @@
 
 use pa_types::daemon::DaemonErrorInfo;
 
-use crate::protocol::{DaemonResponse, response_failure};
+use crate::protocol::{response_failure, DaemonResponse};
 
 /// In-flight requests one worker accepts before its route saturates; also the
 /// bound of the supervisor-to-worker command channel (admission precedes
