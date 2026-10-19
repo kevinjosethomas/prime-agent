@@ -12,8 +12,7 @@ use crate::worker::{EventPump, OutboundFrame};
 pub(crate) const ROSTER_PUSH_DISABLE_ENV: &str = "PA_WORKER_DISABLE_ROSTER_PUSH";
 
 /// The session event types that trigger a roster flush: each edge moves
-/// a summary field the roster consumers render (`thinking_level_changed`
-/// has no Rust frame yet; it stays listed for when it does).
+/// a summary field the roster consumers render.
 pub(crate) const ROSTER_SESSION_EVENT_TRIGGERS: &[&str] = &[
     "turn_start",
     "turn_end",

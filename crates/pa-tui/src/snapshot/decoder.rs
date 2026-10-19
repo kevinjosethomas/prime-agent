@@ -16,6 +16,14 @@ pub enum TurnUpdate {
     SessionInfoChanged { name: Option<String> },
     /// `service_tier_changed`: the session's effective service tier.
     ServiceTierChanged { tier: String },
+    /// `model_changed`: the model the session now runs (any client's switch)
+    /// and its effective thinking level.
+    ModelChanged {
+        model: Value,
+        thinking_level: Option<String>,
+    },
+    /// `thinking_level_changed`: the session's effective thinking level.
+    ThinkingLevelChanged { level: String },
     /// `message_start` with a user message.
     UserMessage(String),
     /// An assistant message; `streaming` distinguishes in-flight from
@@ -207,6 +215,17 @@ pub fn event_to_update(event: &Value) -> Option<TurnUpdate> {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string(),
+        }),
+        // Another client's switch moves this client's model label too.
+        "model_changed" => Some(TurnUpdate::ModelChanged {
+            model: event.get("model").cloned().unwrap_or(Value::Null),
+            thinking_level: event
+                .get("thinkingLevel")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        }),
+        "thinking_level_changed" => Some(TurnUpdate::ThinkingLevelChanged {
+            level: event.get("level").and_then(Value::as_str)?.to_string(),
         }),
         "turn_end" => Some(TurnUpdate::TurnEnded {
             error: event

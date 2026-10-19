@@ -129,11 +129,24 @@ impl Worker {
         // The switched model reaches the roster surfaces immediately (TS
         // schedules a roster flush after the switch).
         self.push_roster_delta();
-        response_success(
-            None,
-            "set_model",
-            Some(serde_json::to_value(&model).unwrap_or(Value::Null)),
-        )
+        let model = serde_json::to_value(&model).unwrap_or(Value::Null);
+        self.emit_model_changed(&model);
+        response_success(None, "set_model", Some(model))
+    }
+
+    /// Tell every attached client the model the session now runs: a switch
+    /// one client makes (the desktop picker) must move the others' model
+    /// labels (the TUI tray) without a reattach.
+    pub(crate) fn emit_model_changed(&self, model: &Value) {
+        let thinking_level = self
+            .engine
+            .effective_thinking_level()
+            .unwrap_or_else(|| "off".to_string());
+        self.emit_worker_event(serde_json::json!({
+            "type": "model_changed",
+            "model": model,
+            "thinkingLevel": thinking_level,
+        }));
     }
 
     /// `set_thinking_level { level }`: apply the requested level through
@@ -224,6 +237,10 @@ impl Worker {
         // emits `thinking_level_changed`, a roster-flush trigger).
         if applied.as_deref() != previous_level.as_deref() {
             self.push_roster_delta();
+            self.emit_worker_event(serde_json::json!({
+                "type": "thinking_level_changed",
+                "level": applied,
+            }));
         }
         response_success(None, "set_thinking_level", None)
     }
