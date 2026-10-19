@@ -150,6 +150,10 @@ async fn spawn_fake_supervisor(
                         ),
                         "prompt" => response_success(Some(&id), command_type, None),
                         "wait_for_idle" => {
+                            child_subagents.wait_budget_ms.store(
+                                command["timeoutMs"].as_u64().unwrap_or(0),
+                                Ordering::SeqCst,
+                            );
                             tokio::time::sleep(std::time::Duration::from_millis(idle_delay_ms))
                                 .await;
                             // The quiescence arm also waits out the
@@ -261,6 +265,30 @@ struct FakeChildSubagents {
     running: AtomicBool,
     quiescent_waits: std::sync::atomic::AtomicUsize,
     answer_reads: AtomicU32,
+    wait_budget_ms: std::sync::atomic::AtomicU64,
+}
+
+#[tokio::test]
+async fn bounded_idle_wait_forwards_the_child_observers_deadline() {
+    let (follow_up_tx, _follow_up_rx) = mpsc::unbounded_channel();
+    let child = Arc::new(FakeChildSubagents::default());
+    let (sessions, _kill_rx) = sessions_with_fake_child_subagents(
+        follow_up_tx,
+        0,
+        FakeKill::Success,
+        FakeChild::Healthy,
+        Arc::clone(&child),
+    )
+    .await;
+    sessions
+        .inner
+        .wait_for_child("child-live", Duration::from_millis(25))
+        .await;
+    assert_eq!(
+        child.wait_budget_ms.load(Ordering::SeqCst),
+        25,
+        "the worker must receive the deadline, not just the caller's socket reader"
+    );
 }
 
 /// [`sessions_with_fake_supervisor`] whose child reports its own running

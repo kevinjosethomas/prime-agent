@@ -396,14 +396,19 @@ impl SupervisorChildSessionsInner {
         }
         // The child's own descendants keep it busy (`child_busy`), so the
         // wait holds until they settle too.
+        let wait_ms = u64::try_from(budget.as_millis()).unwrap_or(u64::MAX);
+        let mut rest = Map::default();
+        // The deadline must reach the worker, not just the caller's socket read.
+        // Otherwise each watcher slice leaves a 24-hour supervisor request behind.
+        rest.insert("timeoutMs".to_string(), json!(wait_ms));
         let command = DaemonCommand::WaitForIdle {
             id: None,
             active_session_id: active_session_id.to_string(),
             wait_for_rlm_quiescence: Some(true),
-            rest: Map::default(),
+            rest,
         };
         let _ = self
-            .command(&command, budget.as_millis() as u64 + IDLE_WAIT_GRACE_MS)
+            .command(&command, wait_ms.saturating_add(IDLE_WAIT_GRACE_MS))
             .await;
     }
 

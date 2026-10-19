@@ -40,6 +40,18 @@ pub(crate) const WORKER_REQUEST_TIMEOUT_MS: u64 = 24 * 60 * 60 * 1000;
 /// The route budget of a client command: turn-long waits ride TS's 24 h
 /// worker-request budget; everything else is a short control route.
 pub(crate) fn client_route_timeout(command: &DaemonCommand) -> u64 {
+    if let DaemonCommand::WaitForIdle { rest, .. } = command {
+        // A disconnected observer must not retain a request slot for a whole day,
+        // even if the worker itself is wedged and cannot answer its bounded wait.
+        return rest.get("timeoutMs").and_then(Value::as_u64).map_or(
+            WORKER_REQUEST_TIMEOUT_MS,
+            |timeout_ms| {
+                timeout_ms
+                    .saturating_add(5_000)
+                    .min(WORKER_REQUEST_TIMEOUT_MS)
+            },
+        );
+    }
     if matches!(
         command,
         DaemonCommand::PromptAndWait { .. }
@@ -587,7 +599,7 @@ impl Supervisor {
                         None,
                     ))],
                     false,
-                )
+                );
             }
         };
         // A rebind retargets the routed frame (the worker does not know the

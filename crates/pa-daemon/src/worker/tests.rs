@@ -4,6 +4,9 @@ use super::*;
 #[tokio::test]
 async fn bounded_idle_wait_expires_without_aborting_the_live_turn() {
     let worker = created_dispatch_worker().await;
+    // Let the newly spawned empty runner reach its first park before setting
+    // the busy fixture; otherwise its initial park clears the synthetic flag.
+    tokio::task::yield_now().await;
     worker.core.lock().unwrap().busy = true;
     let response = tokio::time::timeout(
         Duration::from_millis(250),

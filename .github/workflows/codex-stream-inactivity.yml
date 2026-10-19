@@ -25,3 +25,5 @@ jobs:
       - run: cargo test --locked -p pa-daemon --lib queue_priority
       - run: cargo test --locked -p pa-daemon --lib update_snapshot
       - run: cargo test --locked -p pa-daemon --lib bounded_idle_wait
+      - run: cargo test --locked -p pa-daemon --lib backpressure::tests
+      - run: cargo test --locked -p pa-daemon --lib rlm_children::watch_tests
