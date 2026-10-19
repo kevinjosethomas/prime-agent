@@ -607,7 +607,13 @@ async fn ownership_stream_final_aggregate_snapshot_and_settle_agree() {
                 message: json!({"role":"assistant"}),
                 tool_results: vec![],
             },
-            EngineEvent::AgentEnd { messages: vec![] },
+            // The engine settles the run with its own undecorated rows.
+            EngineEvent::AgentEnd {
+                messages: vec![
+                    json!({"role":"user","content":"same","timestamp":1}),
+                    json!({"role":"assistant","content":[],"timestamp":2}),
+                ],
+            },
             EngineEvent::Done(Ok(())),
         ],
         true,
@@ -633,6 +639,11 @@ async fn ownership_stream_final_aggregate_snapshot_and_settle_agree() {
         .iter()
         .find(|event| event["type"] == "agent_end")
         .unwrap();
+    assert_eq!(
+        aggregate["messages"][0]["nativeMessageId"],
+        snapshot[1]["nativeMessageId"]
+    );
+    assert_eq!(aggregate["messages"][0]["clientInputId"], "input-a");
     assert_eq!(aggregate["messages"][1], *assistant);
     let changes: Vec<_> = events
         .iter()

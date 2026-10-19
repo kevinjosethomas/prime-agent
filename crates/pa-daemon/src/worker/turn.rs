@@ -93,8 +93,15 @@ fn same_settled_row(decorated: &Value, settled: &Value) -> bool {
     let strip = |row: &Value| {
         let mut row = row.clone();
         if let Some(fields) = row.as_object_mut() {
-            fields.remove("nativeMessageId");
-            fields.remove("replyOwnership");
+            for stamp in [
+                "nativeMessageId",
+                "replyOwnership",
+                "clientInputId",
+                "replyToMessageId",
+                "replyContext",
+            ] {
+                fields.remove(stamp);
+            }
         }
         row
     };
