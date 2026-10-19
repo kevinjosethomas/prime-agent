@@ -128,7 +128,14 @@ pub fn stream_openai_codex_responses(
             rest: Map::default(),
         };
 
-        let result = run_stream(&model, &context, options.as_ref(), &mut output, &writer).await;
+        let result = Box::pin(run_stream(
+            &model,
+            &context,
+            options.as_ref(),
+            &mut output,
+            &writer,
+        ))
+        .await;
         match result {
             Ok(()) => {
                 writer.push(AssistantMessageEvent::Done {
@@ -233,7 +240,7 @@ async fn run_stream(
         // cleanup dropped the cached one); the retry resends the full request body.
         let mut chain_reset_retried = false;
         loop {
-            let attempt = run_websocket_attempt(
+            let attempt = Box::pin(run_websocket_attempt(
                 model,
                 &options,
                 &body,
@@ -241,7 +248,7 @@ async fn run_stream(
                 output,
                 writer,
                 &mut websocket_started,
-            )
+            ))
             .await;
             match attempt {
                 Ok(()) => {
@@ -397,12 +404,12 @@ async fn run_websocket_attempt(
 ) -> Result<(), CodexStreamError> {
     let session_id = options.base.session_id.as_deref();
     let url = resolve_codex_websocket_url(&model.base_url);
-    let connection = inactivity::wait_for_activity(acquire_websocket(
+    let connection = Box::pin(inactivity::wait_for_activity(acquire_websocket(
         &url,
         websocket_headers,
         session_id,
         options.base.signal.clone(),
-    ))
+    )))
     .await??;
 
     let use_cached_context = matches!(

@@ -2342,7 +2342,7 @@ fn model_and_thinking_switches_decode_for_every_attached_client() {
     assert_eq!(
         event_to_update(&json!({
             "type": "model_changed",
-            "model": model.clone(),
+            "model": model,
             "thinkingLevel": "high",
         })),
         Some(TurnUpdate::ModelChanged {

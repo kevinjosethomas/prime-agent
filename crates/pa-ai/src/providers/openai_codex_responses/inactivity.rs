@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 use super::errors::{CodexApiError, CodexStreamError};
 use super::websocket::WorkerEvent;
 
-pub(super) const STREAM_INACTIVITY: Duration = Duration::from_secs(10 * 60);
+pub(super) const STREAM_INACTIVITY: Duration = Duration::from_mins(10);
 
 const PROBE_INTERVAL: Duration = Duration::from_secs(5);
 const PAUSE_GAP: Duration = Duration::from_secs(30);
@@ -38,6 +38,8 @@ impl ActivityWindow {
             || kind.starts_with("response.reasoning_")
             || kind.starts_with("response.function_call_arguments.")
             || kind.starts_with("response.content_part.");
+        // An event-type suffix, not a file extension: the wire casing is exact.
+        #[allow(clippy::case_sensitive_file_extension_comparisons)]
         let nonempty = !kind.ends_with(".delta")
             || event
                 .get("delta")
@@ -163,7 +165,7 @@ mod tests {
     async fn codex_stream_inactivity_restarts_after_a_real_event() {
         let (sender, mut receiver) = mpsc::channel(1);
         let pending = tokio::spawn(async move {
-            tokio::time::sleep(STREAM_INACTIVITY - Duration::from_secs(1)).await;
+            tokio::time::sleep(STREAM_INACTIVITY.saturating_sub(Duration::from_secs(1))).await;
             sender
                 .send(WorkerEvent::Event(json!({ "type": "response.created" })))
                 .await

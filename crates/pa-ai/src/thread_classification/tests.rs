@@ -1,3 +1,5 @@
+// Scores are decoded JSON literals; exact float equality is the contract under test.
+#![allow(clippy::float_cmp)]
 use super::*;
 use pa_types::decision::ChoiceAnswer;
 use serde_json::{json, Value};

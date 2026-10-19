@@ -1,6 +1,6 @@
 //! Dedicated System One evaluation transport, never a chat-completion adapter.
 //! Wire contract verified against upstream's historical transport at commit
-//! 56408e2a83af8b84983e83670f1e485d71d71f3d and https://system-one.dev/en/api.
+//! 56408e2a83af8b84983e83670f1e485d71d71f3d and <https://system-one.dev/en/api>.
 //! The full experimental Decision API was reverted upstream; this narrow client
 //! intentionally adds no control loops, model catalog entries, or agent execution.
 
