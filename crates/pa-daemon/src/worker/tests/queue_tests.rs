@@ -3,6 +3,7 @@ use super::*;
 
 fn priority_test_item(message: &str, policy: TurnPolicy) -> QueuedItem {
     QueuedItem {
+        focused_reply: None,
         message: message.to_string(),
         priority: QueuePriority::Human,
         preview: None,
@@ -318,6 +319,8 @@ fn queue_snapshot_round_trips_through_the_recovery_journal() {
         pa_core::session_engine::messages::HEARTBEAT_PROMPT_PREVIEW_LABEL
     );
     let heartbeat = crate::journal::WorkerQueueItemRecord {
+        focused_reply: None,
+        images: Vec::new(),
         message: content.to_string(),
         priority: Some(QueuePriority::Background),
         preview: Some(labeled_preview),
@@ -333,6 +336,8 @@ fn queue_snapshot_round_trips_through_the_recovery_journal() {
         policy: "injected".to_string(),
     };
     let plain = crate::journal::WorkerQueueItemRecord {
+        focused_reply: None,
+        images: Vec::new(),
         message: "follow-me".to_string(),
         priority: Some(QueuePriority::Human),
         preview: None,
@@ -409,6 +414,7 @@ async fn forced_batch_arming_classifies_the_visible_plain_rows() {
     {
         let mut core = worker.core.lock().unwrap();
         core.steering.push_back(QueuedItem {
+            focused_reply: None,
             priority: QueuePriority::Human,
             preview: None,
             message: "steer one".to_string(),
@@ -423,6 +429,7 @@ async fn forced_batch_arming_classifies_the_visible_plain_rows() {
             forced_batch: false,
         });
         core.steering.push_back(QueuedItem {
+            focused_reply: None,
             priority: QueuePriority::Background,
             preview: None,
             message: "agent message row".to_string(),
@@ -437,6 +444,7 @@ async fn forced_batch_arming_classifies_the_visible_plain_rows() {
             forced_batch: false,
         });
         core.steering.push_back(QueuedItem {
+            focused_reply: None,
             priority: QueuePriority::Background,
             preview: None,
             message: "injected custom row".to_string(),
@@ -451,6 +459,7 @@ async fn forced_batch_arming_classifies_the_visible_plain_rows() {
             forced_batch: false,
         });
         core.steering.push_back(QueuedItem {
+            focused_reply: None,
             priority: QueuePriority::Human,
             preview: None,
             message: "steer two".to_string(),
@@ -494,4 +503,26 @@ async fn forced_batch_arming_classifies_the_visible_plain_rows() {
             "no item carries the armed flag"
         );
     }
+}
+
+#[test]
+fn focused_routes_stay_solo_and_survive_queue_recovery_with_images() {
+    let mut core = SessionCore::test_core(None, "/tmp".to_string());
+    core.steering_mode = "all".to_string();
+    let mut a = priority_test_item("same", TurnPolicy::Queued);
+    a.focused_reply = Some(pa_types::daemon::FocusedThreadReply {
+        client_input_id: "a".to_string(), reply_to_message_id: "parent-a".to_string(), reply_context: vec![],
+    });
+    a.images.push(pa_agent::types::ImageContent {data:"image".to_string(), mime_type:"image/png".to_string()});
+    core.steering.push_back(a);
+    core.steering.push_back(priority_test_item("same", TurnPolicy::Queued));
+    let lanes = queue_lanes(&core);
+    let encoded = serde_json::to_value(&lanes.steering).unwrap();
+    let restored: Vec<crate::journal::WorkerQueueItemRecord> = serde_json::from_value(encoded).unwrap();
+    assert_eq!(restored[0].focused_reply.as_ref().unwrap().client_input_id, "a");
+    assert_eq!(restored[0].images[0].data, "image");
+    let batch = gather_delivery_batch(&mut core, Lane::Steering);
+    assert_eq!(batch.len(), 1);
+    assert_eq!(core.steering.len(), 1);
+    assert!(core.steering[0].focused_reply.is_none());
 }

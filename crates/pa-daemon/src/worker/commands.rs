@@ -411,11 +411,9 @@ impl Worker {
         }
         let (core, inputs) = self.summary_inputs();
         let summary = self.summary_locked(&core, inputs);
-        response_success(
-            None,
-            "get_state",
-            Some(serde_json::to_value(&summary).unwrap_or(Value::Null)),
-        )
+        let mut state = serde_json::to_value(&summary).unwrap_or(Value::Null);
+        state["inputCapabilities"] = json!({"focusedThreadReplyV1": true});
+        response_success(None, "get_state", Some(state))
     }
 
     /// `get_session_header`: the persisted session header line (TS wraps it

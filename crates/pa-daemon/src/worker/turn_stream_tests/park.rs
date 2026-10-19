@@ -206,6 +206,7 @@ async fn compacting_window_parks_a_cleared_suspension_until_it_ends() {
         core.compacting = true;
         core.queued_input_suspended = false;
         core.steering.push_back(QueuedItem {
+            focused_reply: None,
             priority: QueuePriority::Human,
             preview: None,
             message: "racing steer".to_string(),
@@ -342,6 +343,7 @@ async fn idle_passivation_refuses_while_the_lanes_hold_undelivered_input() {
         // the queued arm this window would fire immediately.
         core.last_activity_ms = crate::util::now_ms().saturating_sub(120_000);
         core.steering.push_back(QueuedItem {
+            focused_reply: None,
             priority: QueuePriority::Human,
             preview: None,
             message: "the parked steer".to_string(),
@@ -375,6 +377,7 @@ async fn idle_passivation_refuses_while_the_lanes_hold_undelivered_input() {
         "an empty lane re-arms the window"
     );
     runner.core.lock().unwrap().follow_up.push_back(QueuedItem {
+        focused_reply: None,
         priority: QueuePriority::Human,
         preview: None,
         message: "the parked follow-up".to_string(),

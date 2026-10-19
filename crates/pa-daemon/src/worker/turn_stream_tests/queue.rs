@@ -12,6 +12,7 @@ async fn suspended_runner_parks_a_queued_item_until_resumed() {
         let mut core = runner.core.lock().unwrap();
         core.queued_input_suspended = true;
         core.steering.push_back(QueuedItem {
+            focused_reply: None,
             priority: QueuePriority::Human,
             preview: None,
             message: "parked steer".to_string(),
@@ -67,6 +68,7 @@ fn runner_events(
 /// A queued plain-prompt item for the pump tests.
 fn queued_prompt(message: &str, policy: TurnPolicy) -> QueuedItem {
     QueuedItem {
+        focused_reply: None,
         priority: QueuePriority::Human,
         preview: None,
         message: message.to_string(),

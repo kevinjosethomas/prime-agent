@@ -358,6 +358,7 @@ impl AgentSessionEngine {
                     // A plain turn admits a user prompt; an injected turn admits the
                     // custom row itself — ONE representation.
                     TurnPrompt::User {
+                        focused_reply,
                         text,
                         images,
                         batch,
@@ -365,6 +366,7 @@ impl AgentSessionEngine {
                         // The batched co-delivery rows ride the same admission: one run over
                         // the primary plus every batched row.
                         let options = pa_core::session_engine::PromptOptions {
+                            focused_reply: focused_reply.clone(),
                             batch: batch
                                 .iter()
                                 .map(|row| pa_core::session_engine::PromptBatchRow {

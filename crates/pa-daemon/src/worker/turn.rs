@@ -319,6 +319,7 @@ impl TurnRunner {
                 / 2
         };
         let request = PromptRequest {
+            focused_reply: first.focused_reply.clone(),
             batch: batched
                 .iter()
                 .map(|item| crate::engine::PromptBatchRow {
@@ -410,6 +411,7 @@ impl TurnRunner {
         let abort_gate_armed = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let abort_gate_armed_seen = Arc::clone(&abort_gate_armed);
         let turn = tokio::task::spawn_blocking(move || {
+            let mut pending_reply = request.focused_reply.clone();
             // The engine's own terminal `turn_end` frame keeps the
             // trailing `Done` fallback silent.
             let mut engine_turn_ended = false;
@@ -569,7 +571,7 @@ impl TurnRunner {
                         );
                     }
                 }
-                match &event {
+                match &mut event {
                     EngineEvent::ModelChange(change) => {
                         if let Some(Err(error)) = core.store.as_mut().map(|store| {
                             store.persist_entry(
@@ -584,11 +586,25 @@ impl TurnRunner {
                         }
                     }
                     // A `message` entry per row (TS's appendMessage path).
-                    EngineEvent::UserMessage(message)
-                    | EngineEvent::AssistantMessage(message)
+                    EngineEvent::UserMessage(message) => {
+                        if let Some(route) = pending_reply.take() {
+                            message["clientInputId"] = json!(route.client_input_id);
+                            message["replyToMessageId"] = json!(route.reply_to_message_id);
+                            message["replyContext"] = json!(route.reply_context);
+                        }
+                        if let Some(store) = core.store.as_mut() {
+                            match store.persist_entry("message", json!({ "message": &*message })) {
+                                Ok(id) => message["nativeMessageId"] = json!(id),
+                                Err(_) => return false,
+                            }
+                        }
+                    }
+                    EngineEvent::AssistantMessage(message)
                     | EngineEvent::ToolResultMessage(message) => {
                         if let Some(store) = core.store.as_mut() {
-                            let _ = store.persist_entry("message", json!({ "message": message }));
+                            if let Ok(id) = store.persist_entry("message", json!({ "message": &*message })) {
+                                message["nativeMessageId"] = json!(id);
+                            }
                         }
                     }
                     // The in-flight tool-call set, updated under the same core lock

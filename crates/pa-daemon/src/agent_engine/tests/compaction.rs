@@ -965,6 +965,7 @@ fn threshold_below_the_headroom_stays_silent() {
     engine.run_prompt(
         0,
         PromptRequest {
+            focused_reply: None,
             batch: Vec::new(),
             images: Vec::new(),
             message: "a small turn".to_string(),

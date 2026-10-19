@@ -486,6 +486,7 @@ mod tests {
         engine.run_prompt(
             0,
             PromptRequest {
+                focused_reply: None,
                 batch: Vec::new(),
                 images: one_image(),
                 message: "describe this".to_string(),
@@ -554,6 +555,7 @@ mod tests {
         engine.run_prompt(
             0,
             PromptRequest {
+                focused_reply: None,
                 batch: Vec::new(),
                 images: one_image(),
                 message: "describe this".to_string(),

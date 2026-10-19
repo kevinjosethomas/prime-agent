@@ -100,6 +100,7 @@ async fn compact_with_active_goal_and_parked_work_skips_the_mint() {
         let mut core = worker.core.lock().unwrap();
         core.queued_input_suspended = true;
         core.follow_up.push_back(QueuedItem {
+            focused_reply: None,
             priority: QueuePriority::Human,
             preview: None,
             message: "parked queued work".to_string(),

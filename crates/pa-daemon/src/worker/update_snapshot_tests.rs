@@ -37,6 +37,7 @@ async fn queue_action_rows_serve_the_labeled_preview() {
     {
         let mut core = worker.core.lock().unwrap();
         core.steering.push_back(QueuedItem {
+            focused_reply: None,
             priority: QueuePriority::Background,
             message: "[heartbeat: every 10m run#0]\n\nnudge the mission".to_string(),
             preview: Some(
@@ -53,6 +54,7 @@ async fn queue_action_rows_serve_the_labeled_preview() {
             forced_batch: false,
         });
         core.steering.push_back(QueuedItem {
+            focused_reply: None,
             priority: QueuePriority::Human,
             message: "plain queued prompt".to_string(),
             preview: None,
@@ -148,6 +150,7 @@ fn child_status_notice_wire(kind: &str) -> Value {
 
 fn queued_user_item(message: &str) -> QueuedItem {
     QueuedItem {
+        focused_reply: None,
         priority: QueuePriority::Human,
         message: message.to_string(),
         preview: None,
@@ -174,6 +177,7 @@ async fn the_action_snapshot_flags_parked_child_status_notices() {
         let mut core = worker.core.lock().unwrap();
         core.steering.push_back(queued_user_item("turn right"));
         core.steering.push_back(QueuedItem {
+            focused_reply: None,
             priority: QueuePriority::Background,
             message: notice_text.clone(),
             custom_message: Some(child_status_notice_wire("terminal")),
@@ -182,6 +186,7 @@ async fn the_action_snapshot_flags_parked_child_status_notices() {
         // A user-typed row with the exact notice text: unflagged.
         core.steering.push_back(queued_user_item(&notice_text));
         core.follow_up.push_back(QueuedItem {
+            focused_reply: None,
             priority: QueuePriority::Background,
             message: failure_text.clone(),
             custom_message: Some(child_status_notice_wire("failure")),
@@ -429,6 +434,7 @@ async fn injected_continuations_mark_their_own_rider_only() {
         // A user-typed prompt with the continuation's exact text parks
         // first: the rider must not flag it.
         core.follow_up.push_back(QueuedItem {
+            focused_reply: None,
             priority: QueuePriority::Human,
             message: continuation.clone(),
             preview: None,
@@ -444,6 +450,7 @@ async fn injected_continuations_mark_their_own_rider_only() {
         });
         // The engine-minted continuation: injected and queue-invisible.
         core.follow_up.push_back(QueuedItem {
+            focused_reply: None,
             priority: QueuePriority::Background,
             message: continuation,
             preview: None,
@@ -460,6 +467,7 @@ async fn injected_continuations_mark_their_own_rider_only() {
         // A visible injected row (the busy agent message shape) folds
         // by its TS label — the injected rider never flags it.
         core.follow_up.push_back(QueuedItem {
+            focused_reply: None,
             priority: QueuePriority::Background,
             message: "from the research child".to_string(),
             preview: Some("Agent message received: from the research child".to_string()),
@@ -492,6 +500,7 @@ async fn injected_continuations_mark_their_own_rider_only() {
     {
         let mut core = worker.core.lock().unwrap();
         core.follow_up.push_back(QueuedItem {
+            focused_reply: None,
             priority: QueuePriority::Background,
             message: "[child-exited: no-reply child:lane]".to_string(),
             preview: None,
@@ -529,6 +538,7 @@ async fn injected_continuations_still_project_their_lane_text() {
     {
         let mut core = worker.core.lock().unwrap();
         core.steering.push_back(QueuedItem {
+            focused_reply: None,
             priority: QueuePriority::Background,
             message: "[goal: continuation]\n\nKeep driving the goal.".to_string(),
             preview: None,
@@ -564,6 +574,8 @@ async fn restored_lane_rows_keep_the_child_status_provenance() {
         "target-session",
         &QueueLanes {
             steering: vec![crate::journal::WorkerQueueItemRecord {
+                focused_reply: None,
+                images: Vec::new(),
                 priority: Some(QueuePriority::Background),
                 message: content,
                 preview: None,

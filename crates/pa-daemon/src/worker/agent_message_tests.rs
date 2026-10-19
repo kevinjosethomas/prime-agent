@@ -279,6 +279,7 @@ async fn deliver_message_respects_the_pending_capacity() {
         let mut core = worker.core.lock().unwrap();
         for _ in 0..DEFAULT_AGENT_MESSAGE_MAX_PENDING_PER_SESSION {
             core.follow_up.push_back(QueuedItem {
+                focused_reply: None,
                 priority: QueuePriority::Human,
                 preview: None,
                 message: "occupied".to_string(),

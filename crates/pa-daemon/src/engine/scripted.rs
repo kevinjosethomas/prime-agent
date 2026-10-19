@@ -241,6 +241,7 @@ impl SessionEngine for ScriptedEngine {
         let goal = self.goal.as_ref()?;
         Some(crate::engine::GoalContinuation {
             request: crate::engine::PromptRequest {
+                focused_reply: None,
                 batch: Vec::new(),
                 message: goal.message.clone(),
                 images: Vec::new(),

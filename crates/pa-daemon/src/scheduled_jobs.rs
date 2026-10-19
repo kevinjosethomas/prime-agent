@@ -160,6 +160,7 @@ impl AgentCronSchedulerHooks for QueueHooks {
             crate::worker::enqueue_priority(
                 lane,
                 QueuedItem {
+                    focused_reply: None,
                     priority: crate::worker::QueuePriority::Background,
                     message,
                     preview,

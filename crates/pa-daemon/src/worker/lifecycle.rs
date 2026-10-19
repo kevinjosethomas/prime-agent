@@ -422,6 +422,7 @@ impl Worker {
                         {
                             let mut core = self.core.lock().unwrap();
                             core.follow_up.push_back(QueuedItem {
+                                focused_reply: None,
                                 priority: QueuePriority::Background,
                                 preview: None,
                                 message: continuation.request.message,

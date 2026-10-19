@@ -10,6 +10,7 @@ fn scripted_engine_replays_then_echoes() {
     )
     .unwrap();
     let request_for = |message: &str| PromptRequest {
+        focused_reply: None,
         batch: Vec::new(),
         images: Vec::new(),
         message: message.to_string(),
@@ -43,6 +44,7 @@ fn cancellation_stops_the_prompt() {
     engine.run_prompt(
         0,
         PromptRequest {
+            focused_reply: None,
             batch: Vec::new(),
             images: Vec::new(),
             message: "x".into(),

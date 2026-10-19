@@ -126,6 +126,7 @@ fn goal_start_keeps_the_prompt_images_on_the_context_row() {
     engine.run_prompt(
         0,
         PromptRequest {
+            focused_reply: None,
             batch: Vec::new(),
             images: vec![pa_agent::types::ImageContent {
                 data: "aGVsbG8gZ29hbA==".to_string(),
@@ -843,6 +844,7 @@ fn injected_custom_turn_holds_one_representation() {
     engine.run_prompt(
         0,
         PromptRequest {
+            focused_reply: None,
             batch: Vec::new(),
             images: Vec::new(),
             message: notice_text.to_string(),
@@ -1032,6 +1034,7 @@ fn active_goal_aborted_turn_row_broadcasts_and_goal_accounting_skips_it() {
         turn_engine.run_prompt(
             0,
             PromptRequest {
+                focused_reply: None,
                 batch: Vec::new(),
                 images: Vec::new(),
                 message: "held turn".to_string(),

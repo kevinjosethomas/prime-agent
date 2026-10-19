@@ -279,6 +279,7 @@ mod tests {
         {
             let mut core = worker.core.lock().unwrap();
             core.steering.push_back(crate::worker::QueuedItem {
+                focused_reply: None,
                 priority: crate::worker::QueuePriority::Background,
                 message: "[heartbeat: every 10m run#0]\n\nnudge the mission".to_string(),
                 preview: Some(
@@ -333,6 +334,7 @@ mod tests {
         {
             let mut core = worker.core.lock().unwrap();
             core.steering.push_back(crate::worker::QueuedItem {
+                focused_reply: None,
                 priority: crate::worker::QueuePriority::Background,
                 message: "[heartbeat: every 10m run#0]\n\nnudge the mission".to_string(),
                 preview: Some(
@@ -547,6 +549,7 @@ mod tests {
         {
             let mut core = worker.core.lock().unwrap();
             core.steering.push_back(crate::worker::QueuedItem {
+                focused_reply: None,
                 priority: crate::worker::QueuePriority::Human,
                 message: "waiting prompt".to_string(),
                 preview: None,
@@ -613,6 +616,7 @@ mod tests {
             .unwrap()
             .steering
             .push_back(crate::worker::QueuedItem {
+                focused_reply: None,
                 priority: crate::worker::QueuePriority::Human,
                 preview: None,
                 message: "plain prompt".to_string(),

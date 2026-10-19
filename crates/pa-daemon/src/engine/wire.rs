@@ -6,6 +6,7 @@ use super::{json, json_round_trip, Arc, SideQuestionTurn, Value};
 /// One user prompt accepted by the engine.
 #[derive(Debug, Clone)]
 pub struct PromptRequest {
+    pub focused_reply: Option<pa_types::daemon::FocusedThreadReply>,
     pub message: String,
     /// Images attached to the prompt (base64 payload plus mime type),
     /// admitted as multimodal content after the text block.
@@ -200,6 +201,9 @@ pub(crate) fn session_wire_value(agent_message: &pa_agent::types::AgentMessage) 
         // A custom row: the payload is the session-shape custom message and
         // the wire form is the tagged session message (payload plus role).
         pa_agent::types::AgentMessage::Custom(custom) => {
+            if custom.role == "focusedThreadUser" {
+                return custom.payload.get("message").cloned();
+            }
             let mut value = custom.payload.clone();
             let object = value.as_object_mut()?;
             object

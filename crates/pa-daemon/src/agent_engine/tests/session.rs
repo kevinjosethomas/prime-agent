@@ -351,6 +351,7 @@ fn run_skill_prompt_body(
     engine.run_prompt(
         0,
         PromptRequest {
+            focused_reply: None,
             batch: batch
                 .iter()
                 .map(|text| PromptBatchRow {

@@ -240,6 +240,7 @@ mod tests {
             let mut core = worker.core.lock().unwrap();
             core.queued_input_suspended = true;
             core.follow_up.push_back(crate::worker::QueuedItem {
+                focused_reply: None,
                 priority: crate::worker::QueuePriority::Human,
                 preview: None,
                 message: "held follow-up".to_string(),

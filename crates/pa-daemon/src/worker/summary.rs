@@ -88,6 +88,7 @@ impl Worker {
         let store = core.store.as_ref();
 
         AgentConnectionState {
+            input_capabilities: json!({"focusedThreadReplyV1": true}),
             is_streaming: core.busy,
             is_compacting: core.compacting,
             active_session_id: Some(core.active_session_id.clone()),

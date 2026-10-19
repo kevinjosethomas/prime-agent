@@ -202,6 +202,8 @@ pub struct SessionActionActive {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentConnectionState {
+    #[serde(default)]
+    pub input_capabilities: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_session_id: Option<String>,
     pub cwd: String,

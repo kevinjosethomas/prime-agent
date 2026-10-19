@@ -84,6 +84,7 @@ async fn turn_session_events(engine: Arc<dyn SessionEngine>) -> Vec<Value> {
         .run_turn(
             engine,
             vec![QueuedItem {
+                focused_reply: None,
                 priority: QueuePriority::Human,
                 preview: None,
                 message: "burst".to_string(),
@@ -209,6 +210,7 @@ async fn gate_sighting_events(
         .run_turn(
             engine,
             vec![QueuedItem {
+                focused_reply: None,
                 priority: QueuePriority::Human,
                 preview: None,
                 message: "gate".to_string(),
@@ -343,6 +345,7 @@ async fn model_transitions_reach_the_worker_owned_session_file() {
             .run_turn(
                 engine,
                 vec![QueuedItem {
+                    focused_reply: None,
                     priority: QueuePriority::Human,
                     preview: None,
                     message: "probe".to_string(),
@@ -420,6 +423,7 @@ async fn prompt_restore_boundary_is_supplied_only_for_file_backed_stores() {
             .run_turn(
                 dynamic,
                 vec![QueuedItem {
+                    focused_reply: None,
                     priority: QueuePriority::Human,
                     preview: None,
                     message: "go".to_string(),
@@ -455,4 +459,45 @@ async fn prompt_restore_boundary_is_supplied_only_for_file_backed_stores() {
             "boundary capture must match durable ownership (file_backed={file_backed})"
         );
     }
+}
+
+#[tokio::test]
+async fn focused_reply_materializes_one_exact_user_and_replays_the_same_native_id() {
+    let engine: Arc<dyn SessionEngine> = Arc::new(GateProbeEngine {
+        frames: vec![
+            EngineEvent::UserMessage(json!({"role":"user","content":"same","timestamp":1})),
+            EngineEvent::AssistantMessage(json!({"role":"assistant","content":[],"timestamp":2})),
+            EngineEvent::UserMessage(json!({"role":"user","content":"unrelated continuation","timestamp":3})),
+            EngineEvent::Done(Ok(())),
+        ],
+        boundaries: Mutex::new(Vec::new()),
+    });
+    let runner = burst_runner(Arc::clone(&engine));
+    let mut store = crate::session_store::SessionFile::create("/tmp", None, 0);
+    let parent = store.append_message(&json!({"role":"user","content":"A","timestamp":0}));
+    runner.core.lock().unwrap().store = Some(store);
+    let mut subscription = runner.events.subscribe();
+    runner.run_turn(engine, vec![QueuedItem {
+        focused_reply: Some(pa_types::daemon::FocusedThreadReply {
+            client_input_id:"input-a".to_string(), reply_to_message_id:parent.clone(), reply_context:vec![],
+        }),
+        priority:QueuePriority::Human, preview:None, message:"same".to_string(), custom_message:None,
+        agent_message:None, queue_key:None, admission_id:None, images:vec![], done:None,
+        queue_visible:true, policy:TurnPolicy::Queued, forced_batch:false,
+    }]).await;
+    let mut users = Vec::new();
+    while let Ok(frame) = subscription.try_recv() {
+        let value: Value = serde_json::from_slice(&frame.payload).unwrap();
+        if value["event"]["type"] == "message_end" && value["event"]["message"]["role"] == "user" {
+            users.push(value["event"]["message"].clone());
+        }
+    }
+    assert_eq!(users[0]["clientInputId"], "input-a");
+    assert_eq!(users[0]["replyToMessageId"], parent);
+    assert!(users[1].get("replyToMessageId").is_none());
+    let core = runner.core.lock().unwrap();
+    let snapshot = core.store.as_ref().unwrap().messages();
+    assert_eq!(snapshot[1]["nativeMessageId"], users[0]["nativeMessageId"]);
+    assert_eq!(snapshot[1]["clientInputId"], "input-a");
+    assert!(snapshot[2].get("replyToMessageId").is_none());
 }

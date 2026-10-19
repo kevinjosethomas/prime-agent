@@ -16,6 +16,7 @@ async fn the_waiting_prompt_resolves_only_after_the_turn_settles() {
             .run_turn(
                 engine,
                 vec![QueuedItem {
+                    focused_reply: None,
                     priority: QueuePriority::Human,
                     preview: None,
                     message: "burst".to_string(),
@@ -122,6 +123,7 @@ async fn roster_feed_publishes_live_tool_activity() {
         .run_turn(
             engine,
             vec![QueuedItem {
+                focused_reply: None,
                 priority: QueuePriority::Human,
                 preview: None,
                 message: "run the tool".to_string(),
