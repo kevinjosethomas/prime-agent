@@ -314,7 +314,7 @@ async fn run_stream(
     }
 
     let url = resolve_codex_url(&model.base_url);
-    let mut response: HttpResponse = send(RequestOptions {
+    let mut response: HttpResponse = inactivity::wait_for_activity(send(RequestOptions {
         method: reqwest::Method::POST,
         url,
         headers: sse_headers,
@@ -323,8 +323,9 @@ async fn run_stream(
         timeout_ms: options.base.timeout_ms,
         connection: crate::utils_inner::stream_failure::ConnectionErrorProfile::RawFetch,
         transport: crate::utils_inner::http::Transport::Http1,
-    })
-    .await?;
+    }))
+    .await
+    .map_err(CodexStreamError::into_provider_error)??;
 
     if let Some(on_response) = &options.base.on_response {
         on_response(
@@ -394,13 +395,13 @@ async fn run_websocket_attempt(
 ) -> Result<(), CodexStreamError> {
     let session_id = options.base.session_id.as_deref();
     let url = resolve_codex_websocket_url(&model.base_url);
-    let connection = acquire_websocket(
+    let connection = inactivity::wait_for_activity(acquire_websocket(
         &url,
         websocket_headers,
         session_id,
         options.base.signal.clone(),
-    )
-    .await?;
+    ))
+    .await??;
 
     let use_cached_context = matches!(
         options.base.transport,
@@ -431,9 +432,10 @@ async fn run_websocket_attempt(
         );
     }
 
-    let mut events = connection
-        .send_request(&request_body, options.base.signal.clone())
-        .await?;
+    let mut events = inactivity::wait_for_activity(
+        connection.send_request(&request_body, options.base.signal.clone()),
+    )
+    .await??;
 
     let mut keep_connection = true;
     let start_partial = output.clone();
@@ -564,7 +566,10 @@ async fn run_sse_stream(
     let stream_result: Result<(), ProviderError> = async {
         let mut decoder = SseDecoder::new();
         loop {
-            let Some(chunk) = response.next_text().await? else {
+            let Some(chunk) = inactivity::wait_for_activity(response.next_text())
+                .await
+                .map_err(CodexStreamError::into_provider_error)??
+            else {
                 break;
             };
             process_sse_chunk(&chunk, &mut decoder, model, &mut processor)?;

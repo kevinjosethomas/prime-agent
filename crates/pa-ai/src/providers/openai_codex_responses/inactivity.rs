@@ -9,23 +9,66 @@ use super::websocket::WorkerEvent;
 
 pub(super) const STREAM_INACTIVITY: Duration = Duration::from_secs(10 * 60);
 
+const PROBE_INTERVAL: Duration = Duration::from_secs(5);
+const PAUSE_GAP: Duration = Duration::from_secs(30);
+
 pub(super) async fn next_event(
     events: &mut mpsc::Receiver<WorkerEvent>,
 ) -> Result<Option<WorkerEvent>, CodexStreamError> {
-    tokio::time::timeout(STREAM_INACTIVITY, events.recv())
-        .await
-        .map_err(|_| {
-            // Non-transport error: the socket accepted this request. Falling back to
-            // SSE here could duplicate it; only the caller may authorize another attempt.
-            CodexStreamError::Api(CodexApiError {
-                message: "Model response timed out after 10 minutes without stream activity."
-                    .to_string(),
-                code: Some("response_stream_inactive".to_string()),
-                status: None,
-                retry_after_ms: None,
-                payload: None,
-            })
-        })
+    wait_for_activity(events.recv()).await
+}
+
+/// Bound one network wait, including a socket left silent across suspend/resume.
+/// An ambiguous accepted request is surfaced once; this guard never resends it.
+pub(super) async fn wait_for_activity<T>(
+    activity: impl std::future::Future<Output = T>,
+) -> Result<T, CodexStreamError> {
+    wait_with_clock(activity, std::time::SystemTime::now).await
+}
+
+async fn wait_with_clock<T>(
+    activity: impl std::future::Future<Output = T>,
+    mut wall_now: impl FnMut() -> std::time::SystemTime,
+) -> Result<T, CodexStreamError> {
+    tokio::pin!(activity);
+    let deadline = tokio::time::sleep(STREAM_INACTIVITY);
+    tokio::pin!(deadline);
+    let mut probe =
+        tokio::time::interval_at(tokio::time::Instant::now() + PROBE_INTERVAL, PROBE_INTERVAL);
+    probe.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut previous = wall_now();
+    loop {
+        tokio::select! {
+            // A real event already available after wake wins over a pause warning.
+            biased;
+            result = &mut activity => return Ok(result),
+            () = &mut deadline => return Err(interruption(
+                "response_stream_inactive",
+                "Model response timed out after 10 minutes without stream activity. Check activity before continuing.",
+            )),
+            _ = probe.tick() => {
+                let current = wall_now();
+                let paused = current.duration_since(previous).is_ok_and(|gap| gap >= PAUSE_GAP);
+                previous = current;
+                if paused {
+                    return Err(interruption(
+                        "response_stream_interrupted",
+                        "Model connection interrupted while this process was paused. Check activity before continuing.",
+                    ));
+                }
+            }
+        }
+    }
+}
+
+fn interruption(code: &str, message: &str) -> CodexStreamError {
+    CodexStreamError::Api(CodexApiError {
+        message: message.to_string(),
+        code: Some(code.to_string()),
+        status: None,
+        retry_after_ms: None,
+        payload: None,
+    })
 }
 
 #[cfg(test)]
@@ -47,7 +90,7 @@ mod tests {
         assert!(result.is_non_transport_error());
         assert_eq!(
             result.to_string(),
-            "Model response timed out after 10 minutes without stream activity."
+            "Model response timed out after 10 minutes without stream activity. Check activity before continuing."
         );
     }
 
@@ -71,6 +114,30 @@ mod tests {
         assert!(next_event(&mut receiver).await.is_err());
         assert_eq!(started.elapsed(), STREAM_INACTIVITY);
         drop(sender);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn codex_stream_inactivity_detects_suspend_without_transport_replay() {
+        let mut samples = 0;
+        let result = wait_with_clock(std::future::pending::<()>(), || {
+            samples += 1;
+            std::time::UNIX_EPOCH
+                + if samples == 1 {
+                    Duration::ZERO
+                } else {
+                    Duration::from_secs(60)
+                }
+        })
+        .await
+        .expect_err("suspended silent request must settle");
+        assert!(result.is_non_transport_error());
+        assert!(result.to_string().contains("process was paused"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn codex_stream_inactivity_keeps_a_ready_event_after_wake() {
+        let result = wait_with_clock(async { 42 }, || std::time::UNIX_EPOCH).await;
+        assert_eq!(result.unwrap(), 42);
     }
 
     #[tokio::test]

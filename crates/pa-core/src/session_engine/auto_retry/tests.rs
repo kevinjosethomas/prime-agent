@@ -882,3 +882,34 @@ async fn unsupported_tool_failures_surface_with_the_disclosure() {
         }]
     );
 }
+
+#[tokio::test]
+async fn codex_stream_inactivity_never_replays_ambiguous_requests() {
+    for code in ["response_stream_inactive", "response_stream_interrupted"] {
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let message = run_turn_with_auto_retry(
+            &fast_policy(),
+            0,
+            None,
+            || {
+                let attempts = Arc::clone(&attempts);
+                async move {
+                    attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let mut failed = error_message(Some("timeout"), None, None);
+                    failed.diagnostics.as_mut().unwrap()[0]
+                        .details
+                        .as_mut()
+                        .unwrap()["providerErrorType"] = serde_json::json!(code);
+                    Ok(failed)
+                }
+            },
+            |_| async { Ok(()) },
+            |_| async { panic!("ambiguous request must not enter retry delay") },
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(message.stop_reason, StopReason::Error);
+    }
+}

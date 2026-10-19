@@ -77,6 +77,20 @@ pub fn is_context_overflow_failure(message: &AssistantMessage, context_window: u
     pa_ai::is_context_overflow(&wire, (context_window > 0).then_some(context_window))
 }
 
+/// An accepted request with an ambiguous outcome requires an explicit continuation.
+/// Neither retries nor provider failover may silently replay it after sleep or silence.
+pub(super) fn is_ambiguous_provider_interruption(message: &AssistantMessage) -> bool {
+    provider_stream_failure_details(message)
+        .and_then(|details| details.get("providerErrorType"))
+        .and_then(Value::as_str)
+        .is_some_and(|code| {
+            matches!(
+                code,
+                "response_stream_inactive" | "response_stream_interrupted"
+            )
+        })
+}
+
 /// The model router's tool-use rejection marker, matched case-insensitively but
 /// only together with the classified 404 status: the text alone is
 /// provider-controllable and must never steer the retry policy on its own.
@@ -245,6 +259,7 @@ where
             || is_agent_lifecycle_failure(&message)
             || is_faux_provider_queue_exhausted(&message)
             || is_unsupported_tool_failure(&message)
+            || is_ambiguous_provider_interruption(&message)
         {
             return Ok(message);
         }

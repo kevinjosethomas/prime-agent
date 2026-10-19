@@ -12,10 +12,10 @@ use pa_types::ai::Model;
 use super::auto_retry::{run_turn_with_auto_retry, AutoRetryEvent, RetryStartReason};
 use super::provider_park::{is_quota_block_failure, ParkDecisionCallback};
 use super::provider_retry::{
-    has_provider_stream_failure, is_agent_lifecycle_failure, is_context_overflow_failure,
-    is_faux_provider_queue_exhausted, is_permanent_provider_failure_kind,
-    is_unsupported_tool_failure, jittered_delay_ms, provider_retry_delay,
-    provider_stream_failure_kind, provider_stream_failure_retry_after_ms,
+    has_provider_stream_failure, is_agent_lifecycle_failure, is_ambiguous_provider_interruption,
+    is_context_overflow_failure, is_faux_provider_queue_exhausted,
+    is_permanent_provider_failure_kind, is_unsupported_tool_failure, jittered_delay_ms,
+    provider_retry_delay, provider_stream_failure_kind, provider_stream_failure_retry_after_ms,
     provider_stream_failure_status, retry_jitter_rand01, ProviderRetryDelay, ProviderRetryPolicy,
 };
 
@@ -168,6 +168,7 @@ where
             // `_isRetryableError`): the recovery owns it.
             || is_context_overflow_failure(&message, context_window)
             || is_unsupported_tool_failure(&message)
+            || is_ambiguous_provider_interruption(&message)
             || is_permanent_provider_failure_kind(
                 provider_stream_failure_kind(&message).as_deref(),
                 total_retries,
