@@ -135,6 +135,7 @@ const READ_ONLY_DAEMON_COMMANDS: &[&str] = &[
     "get_resource_snapshot",
     "get_mcp_connections",
     "get_model_catalog",
+    "get_subagent_model_default",
     "get_available_models",
     "get_queue",
     "cron_list",

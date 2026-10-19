@@ -24,18 +24,33 @@ async fn resolve_child_model_allowlisted(
     let cwd = identity.cwd.clone().unwrap_or_else(|| "/".to_string());
     let load_cwd = cwd.clone();
     let agent_dir = this.agent_dir.clone();
-    let allowlist = tokio::task::spawn_blocking(move || {
-        crate::model_allowlist::load(Path::new(&load_cwd), &agent_dir)
+    let reference = reference.map(str::to_string);
+    let target = target.to_string();
+    let resolved = tokio::task::spawn_blocking(move || {
+        let allowlist = crate::model_allowlist::load(Path::new(&load_cwd), &agent_dir);
+        if surface == "spawn" {
+            crate::rlm_child_model::resolve_spawn_model_unchecked(
+                &agent_dir,
+                reference.as_deref(),
+                identity.model.as_deref(),
+            )
+            .and_then(|model| {
+                crate::model_allowlist::assert_allowed(&allowlist, &model)?;
+                Ok(model)
+            })
+        } else {
+            resolve_child_model(
+                &agent_dir,
+                reference.as_deref(),
+                identity.model.as_deref(),
+                &target,
+                &allowlist,
+            )
+        }
     })
     .await
-    .context("the allowlist load task join failed")?;
-    match resolve_child_model(
-        &this.agent_dir,
-        reference,
-        identity.model.as_deref(),
-        target,
-        &allowlist,
-    ) {
+    .context("the child model resolution task join failed")?;
+    match resolved {
         Ok(model) => Ok(model),
         Err(error) => {
             if let Some(refusal) = error.downcast_ref::<pa_core::models::ModelAllowlistRefusal>() {
