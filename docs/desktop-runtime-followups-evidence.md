@@ -6,10 +6,12 @@ Date: 2026-10-19. Combined source from base
 `cfdeda8c7fb15f83611ca4dfb82f7b2e64f1cf6e`, and mandatory readiness fix
 `3e8de09061f94b5aef8b7931c758349d7bbdc784`.
 
-The tested combined code commit is `b955eacce390b0e70d6a161d6bee6273296c4a0d`.
+The initially tested combined code commit is `b955eacce390b0e70d6a161d6bee6273296c4a0d`.
+Full source and canonical suites were rerun on CI/docs candidate
+`bf57a41e074f291484ffb782f9c1714ee7fb6ad4`, with the same passing results.
 Runtime tree: `2f5080f8048fd67c9c4a5807b5a39d3d8016e31b`.
 Readiness probe blob: `691d65d05470d4f8d9c6a2c33be6328790e7217d`.
-The subsequent CI/docs commit changes no runtime, test or native source.
+The CI/docs and evidence updates change no runtime, test or native source.
 
 ## Local results
 
@@ -42,9 +44,15 @@ Reporter argv:
 
 Existing installed Primer version: `0.1.2`. Artifact SHA-256:
 
-- `Contents/Resources/app.asar`: `d65bfac2b46207708860646446e330c041c3e71761091d7f201977353456e537`
+- `Contents/Resources/app.asar` during final candidate rerun: `2bf254b6f40108d2f41be4cc5bfc29f01793ef3b0dec04809be45b8f28cc287a`
 - `dist-electron/workstream-cli.cjs` inside that ASAR: `02e1c9ad2ec4f1911452bf3d89ab4f5132a438ae3460889f519c3c72ce12de0d`
 - `Contents/MacOS/Prime Agent Desktop`: `5a86f6e4fb5a8cebce3ebfb1b11279a3cbeba8f1708c44d43c9f254bbfdaf071`
+
+During preparation another actor updated the installed ASAR from
+`d65bfac2b46207708860646446e330c041c3e71761091d7f201977353456e537` to the final-run hash above.
+The reporter bytes remained identical, and the final ASAR hash was stable before
+and after the repeated 26-test canonical run. This worker did not install or
+replace any app payload.
 
 The reporter's bundled source map includes seven sources. All seven source
 contents byte-match the tracked files under `packages/desktop` at desktop commit
