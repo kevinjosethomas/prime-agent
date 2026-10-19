@@ -253,6 +253,10 @@ fn pathless_summary_usage_folds_the_in_memory_entries() {
     let core = SessionCore::test_core(Some(store), "/tmp".to_string());
     let summary = session_summary(&core, inputs());
     assert_eq!(
+        summary.last_user_prompt_at.as_deref(),
+        Some("1970-01-01T00:00:00.001Z")
+    );
+    assert_eq!(
         json!(summary.usage),
         json!({ "inputTokens": 100, "outputTokens": 10, "cost": 0.5 })
     );

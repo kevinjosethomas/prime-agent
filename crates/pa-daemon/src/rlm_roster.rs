@@ -196,6 +196,12 @@ pub fn passive_child_summary(child: &PassiveRlmChild) -> Value {
             .unwrap_or_else(|| edge.child_id.clone()),
     });
     let object = row.as_object_mut().expect("summary object");
+    if let Some(timestamp) = info.last_user_prompt_ms {
+        object.insert(
+            "lastUserPromptAt".to_string(),
+            json!(crate::util::iso_from_unix_ms(timestamp)),
+        );
+    }
     if let Some(parent_id) = parent_active_session_id {
         object.insert("parentActiveSessionId".to_string(), json!(parent_id));
     }

@@ -733,6 +733,9 @@ pub(super) fn saved_session_summary(info: &crate::session_store::SessionInfo) ->
         "firstMessage": info.first_message,
         "rlmDepth": info.rlm_depth,
     });
+    if let Some(timestamp) = info.last_user_prompt_ms {
+        row["lastUserPromptAt"] = json!(crate::util::iso_from_unix_ms(timestamp));
+    }
     // TS `summaryForInactiveSession` publishes the header binding: the
     // parent path only when one is recorded (TS's `undefined` is omitted).
     if let Some(parent) = &info.parent_session_path {
@@ -790,6 +793,12 @@ pub(super) fn saved_session_row(info: &crate::session_store::SessionInfo) -> Val
         "state": info.state.as_ref().map(|state| json!({ "status": state })),
     });
     let object = row.as_object_mut().expect("row object");
+    if let Some(timestamp) = info.last_user_prompt_ms {
+        object.insert(
+            "lastUserPromptAt".to_string(),
+            json!(crate::util::iso_from_unix_ms(timestamp)),
+        );
+    }
     if let Some(name) = &info.name {
         object.insert("name".to_string(), json!(name));
     }
@@ -830,6 +839,117 @@ mod tests {
     use crate::supervisor::SupervisorOptions;
     use crate::supervisor_roster::WorkerRosterDelta;
     use pa_types::daemon::DaemonWorkerDescriptor;
+
+    #[test]
+    fn last_user_prompt_metadata_matches_active_saved_catalog_and_passive_rows() {
+        use crate::rlm_ledger::RlmLedgerEdge;
+        use crate::rlm_roster::{passive_child_summary, PassiveRlmChild, RlmChildMetadata};
+        use crate::session_store::{read_session_info, SessionFile};
+        use crate::worker::{session_summary, SessionCore, SummaryInputs};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prompt.jsonl");
+        let lines = [
+            json!({"type":"session", "version":3, "id":"prompt", "cwd":"/tmp", "timestamp":"2026-10-19T00:00:00.000Z"}),
+            json!({"type":"message", "id":"u1", "parentId":null, "timestamp":"2026-10-19T00:00:00.000Z",
+                "message":{"role":"user", "content":"start", "timestamp":1000}}),
+            json!({"type":"message", "id":"a1", "parentId":"u1", "timestamp":"2026-10-19T00:00:00.000Z",
+                "message":{"role":"assistant", "content":[], "timestamp":9000}}),
+            json!({"type":"compaction", "id":"c1", "parentId":"a1", "timestamp":"2026-10-19T00:00:00.000Z",
+                "summary":"compacted", "firstKeptEntryId":"a1", "tokensBefore":100}),
+        ];
+        std::fs::write(
+            &path,
+            format!(
+                "{}\n",
+                lines
+                    .iter()
+                    .map(Value::to_string)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+        )
+        .unwrap();
+        let info = read_session_info(&path).unwrap();
+        let store = SessionFile::open_windowed(&path).unwrap();
+        assert_eq!(
+            store.windowed_messages(10).last_user_prompt_ms,
+            None,
+            "the prompt is outside the compacted attach window"
+        );
+        let core = SessionCore::test_core(Some(store), "/tmp".to_string());
+        let active = serde_json::to_value(session_summary(
+            &core,
+            SummaryInputs {
+                thinking_level: "default".to_string(),
+                model: None,
+                model_fallback_message: None,
+                bash_running: false,
+                quota_parked: false,
+                subagents_running: false,
+                progress_note: None,
+            },
+        ))
+        .unwrap();
+        let mut child = PassiveRlmChild {
+            edge: RlmLedgerEdge {
+                child_id: "child".to_string(),
+                parent: "/tmp/root.jsonl".to_string(),
+                child: path.to_string_lossy().to_string(),
+                depth: 1,
+                name: "worker".to_string(),
+                deleted: None,
+                deleted_usage: None,
+            },
+            info: info.clone(),
+            metadata: RlmChildMetadata::default(),
+            parent_active_session_id: None,
+        };
+        let saved = saved_session_summary(&info);
+        let catalog = saved_session_row(&info);
+        let passive = passive_child_summary(&child);
+        let typed_catalog: pa_types::daemon::DaemonSavedSessionInfo =
+            serde_json::from_value(catalog.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(typed_catalog).unwrap()["lastUserPromptAt"],
+            catalog["lastUserPromptAt"]
+        );
+        assert_eq!(
+            json!([
+                active["lastUserPromptAt"],
+                saved["lastUserPromptAt"],
+                catalog["lastUserPromptAt"],
+                passive["lastUserPromptAt"],
+            ]),
+            json!(vec!["1970-01-01T00:00:01.000Z"; 4])
+        );
+        assert_eq!(saved["modified"], "1970-01-01T00:00:09.000Z");
+        let mut unknown = info;
+        unknown.last_user_prompt_ms = None;
+        child.info = unknown.clone();
+        for row in [
+            saved_session_summary(&unknown),
+            saved_session_row(&unknown),
+            passive_child_summary(&child),
+        ] {
+            assert!(row.get("lastUserPromptAt").is_none());
+        }
+        let empty = SessionCore::test_core(None, "/tmp".to_string());
+        let empty = serde_json::to_value(session_summary(
+            &empty,
+            SummaryInputs {
+                thinking_level: "default".to_string(),
+                model: None,
+                model_fallback_message: None,
+                bash_running: false,
+                quota_parked: false,
+                subagents_running: false,
+                progress_note: None,
+            },
+        ))
+        .unwrap();
+        assert!(empty.get("lastUserPromptAt").is_none());
+    }
 
     fn resident(worker_id: &str, session_file: Option<&Path>) -> Arc<ResidentWorker> {
         let mut descriptor = json!({

@@ -1,7 +1,7 @@
 name: Desktop fork runtime
 on:
   push:
-    branches: [feat/root-desktop-runtime, primer/runtime-followups-candidate]
+    branches: [feat/root-desktop-runtime, primer/runtime-followups-candidate, primer/runtime-prompt-metadata]
   workflow_dispatch:
 permissions:
   contents: read
@@ -131,6 +131,12 @@ jobs:
         run: |
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-core --lib workstreams
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-core --lib kernel::bootstrap::venv
+      - name: Verify canonical last-user-prompt metadata and cache regressions
+        run: |
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib last_user_prompt_metadata
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib session_store::info_tests
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib summary_tests
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib windowed_attach_tests
       - name: Verify Slack MCP login, callback, and catalog regressions
         run: |
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-core --lib mcp::
