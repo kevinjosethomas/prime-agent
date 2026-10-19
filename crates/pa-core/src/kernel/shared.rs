@@ -9,6 +9,8 @@ use serde_json::Value;
 
 use crate::kernel::bootstrap::KernelPythonSkill;
 
+/// Per-cell stdout/stderr cap. `HeadTailBuffer` splits it between head and
+/// tail, so a long failing run keeps its printed verdict.
 pub const DEFAULT_MAX_OUTPUT_CHARS: usize = 65_536;
 pub const HOST_REQUEST_SHUTDOWN_TIMEOUT_MS: u64 = 5_000;
 pub const KERNEL_SHUTDOWN_TIMEOUT_MS: u64 = 5_000;
@@ -232,10 +234,8 @@ pub struct KernelBusyAfterInterruptError;
 /// A typed request from Python code running in the kernel to the host.
 #[derive(Debug, Clone)]
 pub struct HostRequestPayload {
-    /// The request payload with `cellSourceCode` merged in when known.
+    /// The request payload.
     pub data: Value,
-    /// Source of the cell that triggered the request, when attributable.
-    pub cell_source_code: Option<String>,
 }
 
 pub type HostHandlerFuture = Pin<Box<dyn Future<Output = anyhow::Result<Value>> + Send>>;

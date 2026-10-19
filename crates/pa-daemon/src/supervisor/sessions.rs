@@ -7,6 +7,7 @@ use super::{
     DaemonResponse, DaemonSessionLifecycle, NameScope, Outbound, Path, PathBuf, ResidentWorker,
     Result, RouteAdmission, Supervisor, Value, ROUTE_TIMEOUT_MS,
 };
+use crate::session_scan::list_sessions_with;
 
 /// One spawn-name reservation held across a fresh-launch create (TS #2396): the only
 /// cross-create serializer for a same-name admission.
@@ -125,7 +126,8 @@ impl Supervisor {
     }
 
     /// `list_saved_sessions`: stream `session_list_item`/`session_list_progress` events,
-    /// then a final response with the full saved-session rows.
+    /// then a final response with the walked rows, the files left after them
+    /// (`remaining`), and the `nextCursor` that resumes the walk.
     pub(super) async fn handle_saved_session_list(
         self: &Arc<Self>,
         command: &DaemonCommand,
@@ -137,6 +139,8 @@ impl Supervisor {
             session_dir,
             active_session_id,
             scope,
+            limit,
+            cursor,
             ..
         } = command
         else {
@@ -208,9 +212,11 @@ impl Supervisor {
         let scan_command_id = command_id.to_string();
         let scan_active_session_id = active_session_id.clone();
         let scan_cwd = cwd.clone();
+        let cursor = cursor.clone();
+        let limit = limit.map(|limit| limit as usize);
         let scan = tokio::task::spawn_blocking(move || {
             let mut file_total = 0usize;
-            let infos = crate::session_scan::list_sessions_with(&dir, |index, total, info| {
+            let page = list_sessions_with(&dir, cursor.as_deref(), limit, |index, total, info| {
                 file_total = total;
                 if scope_current && info.cwd != scan_cwd {
                     // The row is out of scope, but the scan itself goes on.
@@ -255,9 +261,9 @@ impl Supervisor {
                     }
                 }
             });
-            (infos, file_total)
+            (page, file_total)
         });
-        let (mut infos, file_total) = match scan.await {
+        let (page, file_total) = match scan.await {
             Ok(scanned) => scanned,
             Err(error) => {
                 return vec![response_line(&response_failure(
@@ -271,6 +277,11 @@ impl Supervisor {
         // The scan's parse trees folded and freed inside the blocking task; return their
         // arena high-water to the OS at the phase boundary (live cache untouched).
         pa_types::memory_release::trim_freed_heap();
+        let crate::session_scan::SessionPage {
+            mut infos,
+            remaining,
+            next_cursor,
+        } = page;
         // The current-cwd scope keeps only the session's own rows in the terminal
         // array: the response is the authoritative catalog.
         if scope_current {
@@ -373,10 +384,14 @@ impl Supervisor {
         // the authoritative array (the scan never re-orders after streaming).
         let mut lines = Vec::new();
         let sessions: Vec<Value> = infos.iter().map(saved_session_row).collect();
+        let mut data = json!({ "sessions": sessions, "remaining": remaining });
+        if let Some(next_cursor) = next_cursor {
+            data["nextCursor"] = json!(next_cursor);
+        }
         lines.push(response_line(&response_success(
             Some(command_id),
             "list_saved_sessions",
-            Some(json!({ "sessions": sessions })),
+            Some(data),
         )));
         // Telemetry: how many served rows carry a usage summary (a count only,
         // never session payload).
@@ -784,9 +799,6 @@ pub(super) fn saved_session_row(info: &crate::session_store::SessionInfo) -> Val
         "modified": info.modified,
         "messageCount": info.message_count,
         "firstMessage": info.first_message,
-        // The scan's capped transcript corpus (TS `allMessagesText`): the
-        // agents-view full-transcript search field.
-        "allMessagesText": info.all_messages_text,
         "state": info.state.as_ref().map(|state| json!({ "status": state })),
     });
     let object = row.as_object_mut().expect("row object");
