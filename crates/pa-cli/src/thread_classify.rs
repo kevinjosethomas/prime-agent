@@ -67,7 +67,13 @@ where
         .await,
         Ok(Err(_)) => return Err(std::io::Error::other("Thread request connection closed")),
     }
-    let request=match decode_thread_request(&line) {Ok(request)=>request,Err(_)=>return emit(&mut writer,json!({"type":"error","id":null,"code":"invalid_request","message":"Invalid thread context"})).await};
+    let Ok(request) = decode_thread_request(&line) else {
+        return emit(
+            &mut writer,
+            json!({"type":"error","id":null,"code":"invalid_request","message":"Invalid thread context"}),
+        )
+        .await;
+    };
     let id = request.id.clone();
     let target_id = request.target.id.clone();
     if request.candidates.is_empty() {
