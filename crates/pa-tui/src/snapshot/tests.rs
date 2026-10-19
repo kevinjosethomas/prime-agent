@@ -2335,3 +2335,25 @@ fn windowed_prompt_time_prefers_the_readable_tail_over_an_older_scalar() {
         );
     }
 }
+
+#[test]
+fn model_and_thinking_switches_decode_for_every_attached_client() {
+    let model = json!({ "provider": "anthropic", "id": "claude-opus-5-5", "reasoning": true });
+    assert_eq!(
+        event_to_update(&json!({
+            "type": "model_changed",
+            "model": model.clone(),
+            "thinkingLevel": "high",
+        })),
+        Some(TurnUpdate::ModelChanged {
+            model,
+            thinking_level: Some("high".to_string()),
+        })
+    );
+    assert_eq!(
+        event_to_update(&json!({ "type": "thinking_level_changed", "level": "low" })),
+        Some(TurnUpdate::ThinkingLevelChanged {
+            level: "low".to_string(),
+        })
+    );
+}

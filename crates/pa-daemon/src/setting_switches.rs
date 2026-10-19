@@ -215,6 +215,7 @@ impl Worker {
         self.clamp_service_tier_for_model();
         // The cycled model must reach the roster surfaces immediately.
         self.push_roster_delta();
+        self.emit_model_changed(&serde_json::to_value(&next_model).unwrap_or(Value::Null));
         let (thinking_level, service_tier) = {
             let core = self.core.lock().unwrap();
             (

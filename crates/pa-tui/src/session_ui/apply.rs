@@ -532,6 +532,30 @@ impl SessionUi {
                 view.chrome.service_tier.clone_from(&self.service_tier);
                 self.dirty = true;
             }
+            // The tray follows the model the session runs, whichever client switched it.
+            TurnUpdate::ModelChanged {
+                model,
+                thinking_level,
+            } => {
+                if let Some(id) = model.get("id").and_then(Value::as_str) {
+                    view.chrome.model_id = Some(id.to_string());
+                    view.chrome.model_provider = model
+                        .get("provider")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
+                    view.chrome.thinking_suffix = crate::chrome::tray_thinking_suffix(
+                        &serde_json::json!({ "model": model, "thinkingLevel": thinking_level }),
+                    );
+                    self.dirty = true;
+                }
+            }
+            // A model without reasoning shows no suffix and only ever clamps to `off`.
+            TurnUpdate::ThinkingLevelChanged { level } => {
+                if view.chrome.thinking_suffix.is_some() || level != "off" {
+                    view.chrome.thinking_suffix = Some(level);
+                    self.dirty = true;
+                }
+            }
             TurnUpdate::CustomRow(entry) => {
                 view.push_entry(entry);
             }
