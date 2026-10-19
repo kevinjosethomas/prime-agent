@@ -1186,8 +1186,7 @@ mod withdrawal;
 #[tokio::test]
 async fn human_follow_up_runs_before_background_steering_exactly_once() {
     let engine: Arc<dyn SessionEngine> = Arc::new(
-        ScriptedEngine::from_value(&json!({ "responses": ["answer human", "answer report"] }))
-            .unwrap_or_default(),
+        ScriptedEngine::from_value(&json!({ "responses": ["reply"] })).unwrap_or_default(),
     );
     let runner = burst_runner(engine);
     {
@@ -1211,9 +1210,9 @@ async fn human_follow_up_runs_before_background_steering_exactly_once() {
         rows,
         vec![
             ("user".to_string(), "human follow-up".to_string()),
-            ("assistant".to_string(), "answer human".to_string()),
+            ("assistant".to_string(), "reply".to_string()),
             ("user".to_string(), "background report".to_string()),
-            ("assistant".to_string(), "answer report".to_string()),
+            ("assistant".to_string(), "reply".to_string()),
         ]
     );
 }
