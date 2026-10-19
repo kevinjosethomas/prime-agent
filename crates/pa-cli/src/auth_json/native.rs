@@ -38,10 +38,17 @@ pub(super) async fn options(cwd: PathBuf, agent_dir: PathBuf) -> Value {
     let auth = crate::provider_login::ProviderAuth::new(cwd, agent_dir.clone());
     let providers = auth.login_options().await;
     let logout = auth.logout_options().await;
-    let traces = logout
+    let stored = logout
         .iter()
         .any(|provider| provider.id == PRIME_AGENT_TRACES_PROVIDER_ID);
-    json!({"providers":providers.iter().map(row).collect::<Vec<_>>(),"logoutProviders":logout.iter().filter(|provider| !provider.id.starts_with("mcp:") && provider.id != pa_core::auth::SERPER_CREDENTIAL_ID).map(|provider| &provider.id).collect::<Vec<_>>(),"traces":{"configured":traces}})
+    // The upload credential may also come from the environment or the Prime Inference key.
+    let label = tokio::task::spawn_blocking(move || {
+        pa_core::agent_traces::trace_credential(&agent_dir).map(|credential| credential.label)
+    })
+    .await
+    .ok()
+    .flatten();
+    json!({"providers":providers.iter().map(row).collect::<Vec<_>>(),"logoutProviders":logout.iter().filter(|provider| !provider.id.starts_with("mcp:") && provider.id != pa_core::auth::SERPER_CREDENTIAL_ID && provider.id != PRIME_AGENT_TRACES_PROVIDER_ID).map(|provider| &provider.id).collect::<Vec<_>>(),"traces":{"configured":label.is_some(),"stored":stored,"label":label}})
 }
 pub(super) async fn flow(
     cwd: PathBuf,

@@ -283,34 +283,35 @@ async fn auth_url_without_instructions_still_emits_a_string() {
     task.await.unwrap().unwrap();
 }
 
+async fn exchange(dir: &std::path::Path, request: Value) -> Value {
+    let (server, client) = tokio::io::duplex(65536);
+    let (reader, writer) = tokio::io::split(server);
+    let task = tokio::spawn(serve(
+        BufReader::new(reader),
+        writer,
+        dir.to_path_buf(),
+        dir.to_path_buf(),
+    ));
+    let (reader, mut writer) = tokio::io::split(client);
+    let mut reader = BufReader::new(reader);
+    let ready = event(&mut reader).await;
+    assert!(ready["capabilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|value| value == "traces_login"));
+    send(&mut writer, request).await;
+    let reply = event(&mut reader).await;
+    task.await.unwrap().unwrap();
+    reply
+}
+
 #[tokio::test]
 async fn traces_catalog_state_and_logout_use_the_native_store_in_a_temporary_home() {
     let temp = tempfile::tempdir().unwrap();
-    async fn exchange(dir: &std::path::Path, request: Value) -> Value {
-        let (server, client) = tokio::io::duplex(65536);
-        let (reader, writer) = tokio::io::split(server);
-        let task = tokio::spawn(serve(
-            BufReader::new(reader),
-            writer,
-            dir.to_path_buf(),
-            dir.to_path_buf(),
-        ));
-        let (reader, mut writer) = tokio::io::split(client);
-        let mut reader = BufReader::new(reader);
-        let ready = event(&mut reader).await;
-        assert!(ready["capabilities"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|value| value == "traces_login"));
-        send(&mut writer, request).await;
-        let reply = event(&mut reader).await;
-        task.await.unwrap().unwrap();
-        reply
-    }
     let list = json!({"type":"list","id":"flow"});
     assert_eq!(
-        exchange(temp.path(), list.clone()).await["traces"]["configured"],
+        exchange(temp.path(), list.clone()).await["traces"]["stored"],
         false
     );
     let mut auth = pa_core::auth::AuthStorage::create(temp.path());
@@ -321,10 +322,10 @@ async fn traces_catalog_state_and_logout_use_the_native_store_in_a_temporary_hom
             prime_team: None,
         },
     );
-    assert_eq!(
-        exchange(temp.path(), list.clone()).await["traces"]["configured"],
-        true
-    );
+    let listed = exchange(temp.path(), list.clone()).await;
+    assert_eq!(listed["traces"]["stored"], true);
+    assert_eq!(listed["traces"]["configured"], true);
+    assert!(!listed.to_string().contains("fixture-traces-key"));
     let settled = exchange(
         temp.path(),
         json!({"type":"begin","id":"flow","target":"traces","key":"prime-agent-traces","action":"logout"}),
@@ -332,7 +333,7 @@ async fn traces_catalog_state_and_logout_use_the_native_store_in_a_temporary_hom
     .await;
     assert_eq!(settled["status"], "success");
     assert_eq!(
-        exchange(temp.path(), list).await["traces"]["configured"],
+        exchange(temp.path(), list).await["traces"]["stored"],
         false
     );
 }

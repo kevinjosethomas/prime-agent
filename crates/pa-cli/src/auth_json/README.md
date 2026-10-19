@@ -33,7 +33,10 @@ protocol version 1. `{ "type": "begin", "id": "flow", "target": "traces",
 flow (Prime CLI key reuse, then the browser challenge raced against a pasted key)
 through the same event and reply loop as provider login. `logout` removes the
 stored `prime-agent-traces` credential. Only `login` and `logout` are valid, and
-`methodId` is rejected. The `options` reply adds `"traces": { "configured": bool }`
-for the stored credential. Desktop clients use this instead of opening a terminal.
+`methodId` is rejected. The `options` reply adds `"traces": { "configured", "stored", "label" }`:
+`configured` means any upload credential resolves (environment, the stored traces key,
+or the Prime Inference key), `stored` means a `prime-agent-traces` key can be signed
+out, and `label` names the credential source (never the key). The traces key is not
+listed in `logoutProviders`. Desktop clients use this instead of opening a terminal.
 
 `auth_url.instructions` is always a string; a flow without instructions sends `""`.
