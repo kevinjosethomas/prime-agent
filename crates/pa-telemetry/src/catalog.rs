@@ -937,6 +937,7 @@ const DAEMON_EVENT: EventRule = EventRule {
         ("root_identity_persist_failed_count", optional(count())),
         ("workstream_classified_count", optional(count())),
         ("subagent_model_default_changed_count", optional(count())),
+        ("global_harness_defaults_changed_count", optional(count())),
         ("saved_sessions_list_count", optional(count())),
         ("saved_sessions_usage_rows_max", optional(count())),
     ],

@@ -637,6 +637,46 @@ impl Supervisor {
                 };
                 (vec![response_line(&response)], false)
             }
+            DaemonCommand::GetGlobalHarnessDefaults { rest, .. }
+            | DaemonCommand::SetGlobalHarnessDefaults { rest, .. } => {
+                if !rest.is_empty() {
+                    return (
+                        vec![response_line(&response_failure(
+                            Some(&command_id),
+                            &type_name,
+                            "Global defaults do not accept session selectors or extra fields",
+                            None,
+                        ))],
+                        false,
+                    );
+                }
+                let agent_dir = self.options.agent_dir.clone();
+                let patch = match command {
+                    DaemonCommand::SetGlobalHarnessDefaults { patch, .. } => Some(patch.clone()),
+                    _ => None,
+                };
+                let result = tokio::task::spawn_blocking(move || match patch {
+                    Some(patch) => crate::global_harness_defaults::set(&agent_dir, &patch, app_version()),
+                    None => crate::global_harness_defaults::get(&agent_dir, app_version()),
+                })
+                .await;
+                let response = match result {
+                    Ok(Ok(data)) => {
+                        if type_name == "set_global_harness_defaults" {
+                            self.note_daemon_event("global_harness_defaults_changed", None);
+                        }
+                        response_success(Some(&command_id), &type_name, Some(json!(data)))
+                    }
+                    Ok(Err(error)) => response_failure(
+                        Some(&command_id), &type_name, &format!("{error:#}"), None,
+                    ),
+                    Err(error) => response_failure(
+                        Some(&command_id), &type_name,
+                        &format!("Global settings task failed: {error}"), None,
+                    ),
+                };
+                (vec![response_line(&response)], false)
+            }
             DaemonCommand::GetSubagentModelDefault { rest, .. }
             | DaemonCommand::SetSubagentModelDefault { rest, .. } => {
                 if !rest.is_empty() {
@@ -1183,6 +1223,9 @@ mod tests {
         let connection = Arc::new(crate::input_pause_lease::ClientConnectionState::new());
         let (dispatch_tx, _dispatch_rx) = tokio::sync::mpsc::channel(1);
         for (command, expected_success) in [
+            (json!({"type":"get_global_harness_defaults"}), true),
+            (json!({"type":"set_global_harness_defaults","patch":{"maxDepth":0,"autoCompactionEnabled":false}}), true),
+            (json!({"type":"set_global_harness_defaults","patch":{"maxDepth":9},"activeSessionId":"root"}), false),
             (json!({"type":"get_subagent_model_default"}), true),
             (json!({"type":"set_subagent_model_default","model":null}), true),
             (json!({"type":"set_subagent_model_default","model":null,"activeSessionId":"root"}), false),

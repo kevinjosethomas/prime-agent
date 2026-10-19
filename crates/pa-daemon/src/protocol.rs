@@ -98,6 +98,8 @@ pub const KNOWN_COMMAND_TYPES: &[&str] = &[
     "get_commands",
     "get_resource_snapshot",
     "replace_acp_mcp_servers",
+    "get_global_harness_defaults",
+    "set_global_harness_defaults",
     "get_subagent_model_default",
     "set_subagent_model_default",
     "get_model_catalog",
@@ -337,6 +339,7 @@ pub fn default_server_capabilities() -> Vec<DaemonServerCapability> {
                 "heartbeat_management",
                 "model_catalog",
                 "subagent_model_defaults",
+                "global_harness_defaults",
                 "workstream_classification",
                 "side_question_transcript",
                 "transient_bash",
@@ -918,7 +921,9 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
             active_session_id, ..
         } => active_session_id.as_deref(),
         // Control-plane commands carry no session selector.
-        DaemonCommand::GetSubagentModelDefault { .. }
+        DaemonCommand::GetGlobalHarnessDefaults { .. }
+        | DaemonCommand::SetGlobalHarnessDefaults { .. }
+        | DaemonCommand::GetSubagentModelDefault { .. }
         | DaemonCommand::SetSubagentModelDefault { .. }
         | DaemonCommand::List { .. }
         | DaemonCommand::ClassifyWorkstream { .. }
@@ -943,6 +948,8 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
 pub fn command_type_name(command: &DaemonCommand) -> &'static str {
     match command {
         DaemonCommand::ClassifyWorkstream { .. } => "classify_workstream",
+        DaemonCommand::GetGlobalHarnessDefaults { .. } => "get_global_harness_defaults",
+        DaemonCommand::SetGlobalHarnessDefaults { .. } => "set_global_harness_defaults",
         DaemonCommand::GetSubagentModelDefault { .. } => "get_subagent_model_default",
         DaemonCommand::SetSubagentModelDefault { .. } => "set_subagent_model_default",
         DaemonCommand::List { .. } => "list",
@@ -1072,6 +1079,21 @@ pub fn command_type_name(command: &DaemonCommand) -> &'static str {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn global_harness_patch_is_control_plane_and_strictly_typed() {
+        for command in [
+            json!({"type":"get_global_harness_defaults"}),
+            json!({"type":"set_global_harness_defaults","patch":{"maxDepth":0}}),
+        ] {
+            let parsed = parse_daemon_command_line(&command.to_string()).unwrap();
+            assert_eq!(command_active_session_id(&parsed.command), None);
+            assert!(!pa_types::daemon::is_session_plane_daemon_command(command_type_name(&parsed.command)));
+        }
+        for patch in [json!({"activeSessionId":"root"}), json!({"maxDepth":null}), json!({"steeringMode":"bad"})] {
+            assert!(parse_daemon_command_line(&json!({"type":"set_global_harness_defaults","patch":patch}).to_string()).is_err());
+        }
+    }
 
     #[test]
     fn subagent_default_commands_are_control_plane_and_reset_requires_model() {
