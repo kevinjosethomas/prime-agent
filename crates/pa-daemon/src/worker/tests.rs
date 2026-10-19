@@ -1,6 +1,42 @@
 //! Worker tests.
 use super::*;
 
+#[tokio::test]
+async fn bounded_idle_wait_expires_without_aborting_the_live_turn() {
+    let worker = created_dispatch_worker().await;
+    worker.core.lock().unwrap().busy = true;
+    let response = tokio::time::timeout(
+        Duration::from_millis(250),
+        worker.dispatch("wait_for_idle", &json!({ "timeoutMs": 1 })),
+    )
+    .await
+    .expect("a bounded observation must expire even while the turn keeps running");
+    assert!(response.success);
+    assert_eq!(response.data.unwrap()["idle"], false);
+    let core = worker.core.lock().unwrap();
+    assert!(core.busy, "observation expiry must not stop the model");
+    assert!(
+        !core.abort_requested,
+        "observation expiry must not request an abort"
+    );
+}
+
+#[tokio::test]
+async fn bounded_idle_wait_reports_an_idle_worker_and_preserves_unbounded_contract() {
+    let worker = created_dispatch_worker().await;
+    let bounded = worker
+        .dispatch("wait_for_idle", &json!({ "timeoutMs": 0 }))
+        .await;
+    assert!(bounded.success);
+    assert_eq!(bounded.data.unwrap()["idle"], true);
+    let legacy = worker.dispatch("wait_for_idle", &json!({})).await;
+    assert!(legacy.success);
+    assert!(
+        legacy.data.is_none(),
+        "unbounded clients retain their response shape"
+    );
+}
+
 /// A created worker over the scripted engine.
 async fn created_dispatch_worker() -> std::sync::Arc<Worker> {
     let dir = std::env::temp_dir().join(format!("pa-worker-susp-{}", uuid::Uuid::new_v4()));

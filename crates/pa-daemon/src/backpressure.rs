@@ -7,7 +7,7 @@
 
 use pa_types::daemon::DaemonErrorInfo;
 
-use crate::protocol::{response_failure, DaemonResponse};
+use crate::protocol::{DaemonResponse, response_failure};
 
 /// In-flight requests one worker accepts before its route saturates; also the
 /// bound of the supervisor-to-worker command channel (admission precedes
@@ -64,6 +64,26 @@ mod tests {
     use crate::registry::{ResidentWorker, WorkerRequest};
     use crate::supervisor::{Supervisor, SupervisorOptions};
     use pa_types::daemon::{DaemonErrorInfo, DaemonWorkerDescriptor};
+
+    #[test]
+    fn bounded_idle_wait_uses_the_observers_budget_instead_of_a_day() {
+        let command: pa_types::daemon::DaemonCommand = serde_json::from_value(
+            serde_json::json!({"type":"wait_for_idle", "activeSessionId":"busy", "timeoutMs":10}),
+        )
+        .unwrap();
+        assert_eq!(
+            super::super::supervisor::client_route_timeout(&command),
+            5_010
+        );
+        let legacy: pa_types::daemon::DaemonCommand = serde_json::from_value(
+            serde_json::json!({"type":"wait_for_idle", "activeSessionId":"busy"}),
+        )
+        .unwrap();
+        assert_eq!(
+            super::super::supervisor::client_route_timeout(&legacy),
+            86_400_000
+        );
+    }
 
     fn resident(worker_id: &str) -> Arc<ResidentWorker> {
         let descriptor: DaemonWorkerDescriptor = serde_json::from_value(serde_json::json!({
