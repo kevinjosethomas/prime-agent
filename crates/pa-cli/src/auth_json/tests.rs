@@ -332,8 +332,5 @@ async fn traces_catalog_state_and_logout_use_the_native_store_in_a_temporary_hom
     )
     .await;
     assert_eq!(settled["status"], "success");
-    assert_eq!(
-        exchange(temp.path(), list).await["traces"]["stored"],
-        false
-    );
+    assert_eq!(exchange(temp.path(), list).await["traces"]["stored"], false);
 }
