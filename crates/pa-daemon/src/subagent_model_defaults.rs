@@ -110,6 +110,18 @@ mod tests {
         assert_eq!(raw, json!({"defaultModel":"root-model", "unrelated":{"kept":true}}));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn missing_settings_inherit_but_metadata_errors_refuse() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(get(dir.path()).is_ok());
+        let path = dir.path().join("settings.json");
+        std::os::unix::fs::symlink("settings.json", &path).unwrap();
+        assert!(get(dir.path()).is_err());
+        assert!(set(dir.path(), None).is_err());
+        assert!(std::fs::symlink_metadata(path).unwrap().file_type().is_symlink());
+    }
+
     #[test]
     fn allowlist_or_corrupt_settings_refuse_without_false_success() {
         let dir = tempfile::TempDir::new().unwrap();

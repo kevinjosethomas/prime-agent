@@ -166,6 +166,26 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn missing_settings_use_defaults_but_metadata_errors_refuse() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(get(dir.path(), "test-version").is_ok());
+        let path = dir.path().join("settings.json");
+        std::os::unix::fs::symlink("settings.json", &path).unwrap();
+        assert!(get(dir.path(), "test-version").is_err());
+        assert!(set(
+            dir.path(),
+            &GlobalHarnessDefaultsPatch {
+                max_depth: Some(0),
+                ..GlobalHarnessDefaultsPatch::default()
+            },
+            "test-version",
+        )
+        .is_err());
+        assert!(std::fs::symlink_metadata(path).unwrap().file_type().is_symlink());
+    }
+
     #[test]
     fn unreadable_documents_fail_without_replacing_them() {
         let dir = tempfile::tempdir().unwrap();

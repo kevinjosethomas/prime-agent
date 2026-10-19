@@ -183,12 +183,13 @@ impl SettingsStorage for FileSettingsStorage {
     fn read(&self, scope: SettingsScope) -> Result<Option<String>> {
         let path = self.path(scope);
         let _process_guard = process_lock(path);
-        let now_identity = fs::metadata(path)
-            .ok()
-            .and_then(|metadata| stat_identity(&metadata));
-        // No file: `with_lock`'s read arm delivers `None` without a lock
-        // protocol, and so does this.
-        let Some(identity) = now_identity else {
+        let metadata = match fs::metadata(path) {
+            Ok(metadata) => metadata,
+            // Missing settings are unset; an unreadable path is not an absent preference.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let Some(identity) = stat_identity(&metadata) else {
             return Ok(None);
         };
         {
@@ -453,6 +454,24 @@ mod tests {
             storage.read(SettingsScope::Global).unwrap().as_deref(),
             Some(r#"{ "theme": "ink" }"#)
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_distinguishes_missing_settings_from_metadata_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let agent = dir.path().join("agent");
+        fs::create_dir_all(&agent).unwrap();
+        let storage = FileSettingsStorage::new(dir.path().join("cwd"), &agent);
+        assert_eq!(storage.read(SettingsScope::Global).unwrap(), None);
+        let settings = agent.join("settings.json");
+        // A loop deterministically fails metadata even when tests run with elevated privileges.
+        std::os::unix::fs::symlink("settings.json", &settings).unwrap();
+        let expected = fs::metadata(&settings).unwrap_err().kind();
+        assert_ne!(expected, std::io::ErrorKind::NotFound);
+        let error = storage.read(SettingsScope::Global).unwrap_err();
+        assert_eq!(error.downcast_ref::<std::io::Error>().unwrap().kind(), expected);
+        assert!(fs::symlink_metadata(settings).unwrap().file_type().is_symlink());
     }
 
     #[test]
