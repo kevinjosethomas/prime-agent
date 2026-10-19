@@ -5,6 +5,8 @@ use pa_tui::client_auth::ClientAuthCommands;
 use pa_tui::provider_auth::{
     AuthFlow, AuthStatusStyle, AuthType, ProviderAuthCommands, ProviderAuthOutcome, ProviderRow,
 };
+use pa_core::auth::PRIME_AGENT_TRACES_PROVIDER_ID;
+use pa_tui::traces::TraceLoginOutcome;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
@@ -33,10 +35,13 @@ fn row(value: &ProviderRow) -> Value {
     json!({"id":value.id,"methodId":method(value),"name":value.name,"authType":match value.auth_type { AuthType::Oauth => "oauth", AuthType::ApiKey => "api_key" },"flow":match value.flow { AuthFlow::ApiKeyPrompt => "api_key", AuthFlow::TerminalFlow => "browser" },"configured":value.configured,"available":value.available,"status":value.status.as_ref().map(|status| json!({"style":match status.style {AuthStatusStyle::Success=>"success",AuthStatusStyle::Warning=>"warning",AuthStatusStyle::Muted=>"muted"},"label":status.label}))})
 }
 pub(super) async fn options(cwd: PathBuf, agent_dir: PathBuf) -> Value {
-    let auth = crate::provider_login::ProviderAuth::new(cwd, agent_dir);
+    let auth = crate::provider_login::ProviderAuth::new(cwd, agent_dir.clone());
     let providers = auth.login_options().await;
     let logout = auth.logout_options().await;
-    json!({"providers":providers.iter().map(row).collect::<Vec<_>>(),"logoutProviders":logout.iter().filter(|provider| !provider.id.starts_with("mcp:") && provider.id != pa_core::auth::SERPER_CREDENTIAL_ID).map(|provider| &provider.id).collect::<Vec<_>>()})
+    let traces = logout
+        .iter()
+        .any(|provider| provider.id == PRIME_AGENT_TRACES_PROVIDER_ID);
+    json!({"providers":providers.iter().map(row).collect::<Vec<_>>(),"logoutProviders":logout.iter().filter(|provider| !provider.id.starts_with("mcp:") && provider.id != pa_core::auth::SERPER_CREDENTIAL_ID).map(|provider| &provider.id).collect::<Vec<_>>(),"traces":{"configured":traces}})
 }
 pub(super) async fn flow(
     cwd: PathBuf,
@@ -84,6 +89,28 @@ pub(super) async fn flow(
                 }
             }
         }
+        Target::Traces => match action {
+            Action::Login => {
+                match crate::traces_login::run_traces_login(&agent_dir, panel.clone()).await {
+                    TraceLoginOutcome::Status(note) => ProviderAuthOutcome::Status(note),
+                    TraceLoginOutcome::Error(error) => ProviderAuthOutcome::Error(error),
+                    TraceLoginOutcome::Cancelled => ProviderAuthOutcome::Cancelled,
+                }
+            }
+            Action::Logout => tokio::task::spawn_blocking(move || {
+                let mut auth = pa_core::auth::AuthStorage::create(&agent_dir);
+                auth.logout(PRIME_AGENT_TRACES_PROVIDER_ID);
+                match auth.drain_errors().pop() {
+                    Some(error) => ProviderAuthOutcome::Error(format!("Logout failed: {error}")),
+                    None => ProviderAuthOutcome::Status("Logged out of Prime Agent Traces".into()),
+                }
+            })
+            .await
+            .unwrap_or_else(|_| ProviderAuthOutcome::Error("Logout failed".to_string())),
+            Action::Paste | Action::Key => {
+                ProviderAuthOutcome::Error("Traces action unavailable".to_string())
+            }
+        },
         Target::Mcp => {
             let auth = crate::mcp_login::TerminalMcpAuth::new(cwd, agent_dir);
             let result = match action {

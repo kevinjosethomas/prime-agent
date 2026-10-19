@@ -37,6 +37,8 @@ pub(super) enum Request {
 pub(super) enum Target {
     Provider,
     Mcp,
+    /// The Prime Agent Traces credential: login and logout only.
+    Traces,
 }
 #[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

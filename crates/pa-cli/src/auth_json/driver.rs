@@ -59,7 +59,7 @@ where
                     Some(AuthPanelRequest::Progress { .. } | AuthPanelRequest::Waiting { .. }) => emit(writer,json!({"type":"progress","id":id,"message":"Waiting for sign-in…"})).await?,
                     Some(AuthPanelRequest::AuthUrl { url, instructions }) => {
                         if !(url.starts_with("https://") || url.starts_with("http://localhost:") || url.starts_with("http://127.0.0.1:")) || url.len() > 8192 { return emit(writer,json!({"type":"settled","id":id,"status":"error","message":"The sign-in URL is unavailable."})).await; }
-                        emit(writer,json!({"type":"auth_url","id":id,"url":url,"instructions":instructions,"openedByNative":true})).await?;
+                        emit(writer,json!({"type":"auth_url","id":id,"url":url,"instructions":instructions.unwrap_or_default(),"openedByNative":true})).await?;
                     }
                     Some(AuthPanelRequest::PastePrompt { prompt, allow_empty, reply, .. }) => {
                         sequence += 1; let request_id=format!("input:{sequence}");
