@@ -42,7 +42,8 @@ mod tests {
         )
         .await
         .expect("inactive stream must settle before the outer deadline")
-        .expect_err("silent live channel must fail");
+        .err()
+        .expect("silent live channel must fail");
         assert!(result.is_non_transport_error());
         assert_eq!(
             result.to_string(),
