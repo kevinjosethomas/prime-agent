@@ -164,7 +164,7 @@ impl AgentSession {
                 } else {
                     row.text.clone()
                 };
-                prompt_messages.push(user_prompt_message(&row_text, &row.images));
+                prompt_messages.push(super::user_prompt_message(&row_text, &row.images));
             }
             if options.return_after_accepted {
                 // `returnAfterAccepted`: this prompt never started, so its
