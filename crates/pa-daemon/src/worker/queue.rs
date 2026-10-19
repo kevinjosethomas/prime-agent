@@ -164,6 +164,15 @@ pub(crate) struct QueuedItem {
     /// Membership of the one-shot forced steering batch: armed items co-deliver as
     /// one batched turn even under "one-at-a-time". Never journaled.
     pub(crate) forced_batch: bool,
+    /// The stable queued-input id of a plain human `steer`/`follow_up`/busy `prompt`
+    /// row: `list_queued_inputs` and `mutate_queued_input` address the row by it.
+    /// `None` for every injected, agent, notice, or legacy-restored row.
+    pub(crate) input_id: Option<String>,
+}
+
+/// Mint the stable id of one queued human input.
+pub(crate) fn new_queued_input_id() -> String {
+    format!("qi_{}", uuid::Uuid::new_v4())
 }
 
 /// Parse the wire `images` array: entries without payload data or a
@@ -308,6 +317,7 @@ pub(crate) fn queue_lanes(core: &SessionCore) -> QueueLanes {
                 queue_key: item.queue_key.clone(),
                 queue_visible: item.queue_visible,
                 policy: item.policy.journal_value().to_string(),
+                input_id: item.input_id.clone(),
             })
             .collect()
     }
@@ -422,6 +432,7 @@ pub(crate) fn restore_queue_snapshot(
                     queue_visible: record.queue_visible,
                     policy,
                     forced_batch: false,
+                    input_id: record.input_id,
                 }
             })
             .collect()
@@ -462,6 +473,7 @@ pub(crate) fn admit_autonomous_follow_up(
             queue_visible: false,
             policy: TurnPolicy::Injected,
             forced_batch: false,
+            input_id: None,
         });
     }
     // The admission checkpoint: a continuation admitted while idle is undelivered
@@ -518,6 +530,7 @@ pub(crate) fn admit_goal_follow_up(
             queue_visible: false,
             policy: TurnPolicy::Injected,
             forced_batch: false,
+            input_id: None,
         };
         match lane {
             Lane::Steering => enqueue_priority(&mut core.steering, item),
@@ -593,6 +606,7 @@ pub(crate) fn admit_bash_completion_notice(
             queue_visible,
             policy,
             forced_batch: false,
+            input_id: None,
         });
     }
     // The checkpoint re-locks the core (documented order: recovery lock

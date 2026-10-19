@@ -520,6 +520,14 @@ const WIRE_FIXTURES: &[(&str, &str)] = &[
         "mark_anthropic_warning_shown",
         r#"{"type": "mark_anthropic_warning_shown", "activeSessionId": "sess"}"#,
     ),
+    (
+        "list_queued_inputs",
+        r#"{"type": "list_queued_inputs", "activeSessionId": "sess"}"#,
+    ),
+    (
+        "mutate_queued_input",
+        r#"{"type": "mutate_queued_input", "activeSessionId": "sess", "inputId": "qi_1", "action": "remove"}"#,
+    ),
 ];
 
 /// The accept list is the TS list, in TS order, then the Rust-native supervisor/worker frames.
@@ -553,6 +561,8 @@ fn known_command_types_match_the_ts_list() {
                     | "set_global_harness_defaults"
                     | "get_subagent_model_default"
                     | "set_subagent_model_default"
+                    | "list_queued_inputs"
+                    | "mutate_queued_input"
             ),
             "unexpected non-TS command type: {extra}"
         );

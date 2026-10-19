@@ -99,6 +99,7 @@ async fn turn_session_events(engine: Arc<dyn SessionEngine>) -> Vec<Value> {
                 queue_visible: true,
                 policy: TurnPolicy::Queued,
                 forced_batch: false,
+                input_id: None,
             }],
         )
         .await;
@@ -225,6 +226,7 @@ async fn gate_sighting_events(
                 queue_visible: true,
                 policy: TurnPolicy::Queued,
                 forced_batch: false,
+                input_id: None,
             }],
         )
         .await;
@@ -360,6 +362,7 @@ async fn model_transitions_reach_the_worker_owned_session_file() {
                     queue_visible: true,
                     policy: TurnPolicy::Queued,
                     forced_batch: false,
+                    input_id: None,
                 }],
             )
             .await;
@@ -438,6 +441,7 @@ async fn prompt_restore_boundary_is_supplied_only_for_file_backed_stores() {
                     queue_visible: true,
                     policy: TurnPolicy::Queued,
                     forced_batch: false,
+                    input_id: None,
                 }],
             )
             .await;
@@ -502,6 +506,7 @@ async fn focused_reply_materializes_one_exact_user_and_replays_the_same_native_i
                 queue_visible: true,
                 policy: TurnPolicy::Queued,
                 forced_batch: false,
+                input_id: None,
             }],
         )
         .await;
@@ -558,6 +563,7 @@ async fn ownership_event_fixture(
                 queue_visible: true,
                 policy: TurnPolicy::Queued,
                 forced_batch: false,
+                input_id: None,
             }],
         )
         .await;

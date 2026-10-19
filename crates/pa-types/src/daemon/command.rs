@@ -793,6 +793,21 @@ pub enum DaemonCommand {
         #[serde(flatten)]
         rest: JsonMap,
     },
+    ListQueuedInputs {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        active_session_id: String,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
+    /// `inputId`, `action` and `text` ride `rest`.
+    MutateQueuedInput {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        active_session_id: String,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
     ClearQueue {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,

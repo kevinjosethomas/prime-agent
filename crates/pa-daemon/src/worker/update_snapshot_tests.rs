@@ -52,6 +52,7 @@ async fn queue_action_rows_serve_the_labeled_preview() {
             queue_visible: true,
             policy: TurnPolicy::Injected,
             forced_batch: false,
+            input_id: None,
         });
         core.steering.push_back(QueuedItem {
             focused_reply: None,
@@ -67,6 +68,7 @@ async fn queue_action_rows_serve_the_labeled_preview() {
             queue_visible: true,
             policy: TurnPolicy::Queued,
             forced_batch: false,
+            input_id: None,
         });
     }
     let response = worker.dispatch("update_snapshot", &json!({})).await;
@@ -163,6 +165,7 @@ fn queued_user_item(message: &str) -> QueuedItem {
         queue_visible: true,
         policy: TurnPolicy::Queued,
         forced_batch: false,
+        input_id: None,
     }
 }
 
@@ -449,6 +452,7 @@ async fn injected_continuations_mark_their_own_rider_only() {
             queue_visible: true,
             policy: TurnPolicy::Queued,
             forced_batch: false,
+            input_id: None,
         });
         // The engine-minted continuation: injected and queue-invisible.
         core.follow_up.push_back(QueuedItem {
@@ -465,6 +469,7 @@ async fn injected_continuations_mark_their_own_rider_only() {
             queue_visible: false,
             policy: TurnPolicy::Injected,
             forced_batch: false,
+            input_id: None,
         });
         // A visible injected row (the busy agent message shape) folds
         // by its TS label — the injected rider never flags it.
@@ -482,6 +487,7 @@ async fn injected_continuations_mark_their_own_rider_only() {
             queue_visible: true,
             policy: TurnPolicy::Injected,
             forced_batch: false,
+            input_id: None,
         });
     }
     let snapshot = {
@@ -515,6 +521,7 @@ async fn injected_continuations_mark_their_own_rider_only() {
             queue_visible: false,
             policy: TurnPolicy::Injected,
             forced_batch: false,
+            input_id: None,
         });
     }
     let snapshot = {
@@ -553,6 +560,7 @@ async fn injected_continuations_still_project_their_lane_text() {
             queue_visible: false,
             policy: TurnPolicy::Injected,
             forced_batch: false,
+            input_id: None,
         });
     }
     let snapshot = {
@@ -585,6 +593,7 @@ async fn restored_lane_rows_keep_the_child_status_provenance() {
                 queue_key: None,
                 queue_visible: true,
                 policy: "queued".to_string(),
+                input_id: None,
             }],
             follow_up: Vec::new(),
         },

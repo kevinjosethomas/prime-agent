@@ -25,6 +25,7 @@ async fn suspended_runner_parks_a_queued_item_until_resumed() {
             queue_visible: true,
             policy: TurnPolicy::Queued,
             forced_batch: false,
+            input_id: None,
         });
     }
     let parked = std::sync::Arc::clone(&runner.core);
@@ -81,6 +82,7 @@ fn queued_prompt(message: &str, policy: TurnPolicy) -> QueuedItem {
         queue_visible: true,
         policy,
         forced_batch: false,
+        input_id: None,
     }
 }
 

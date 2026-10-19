@@ -253,6 +253,7 @@ mod tests {
                 queue_visible: true,
                 policy: crate::worker::TurnPolicy::Queued,
                 forced_batch: false,
+                input_id: None,
             });
         }
         // Clear a create-time permit so acquisition must wake this waiter.

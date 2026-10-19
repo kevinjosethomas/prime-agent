@@ -16,6 +16,7 @@ fn priority_test_item(message: &str, policy: TurnPolicy) -> QueuedItem {
         queue_visible: true,
         policy,
         forced_batch: false,
+        input_id: None,
     }
 }
 
@@ -334,6 +335,7 @@ fn queue_snapshot_round_trips_through_the_recovery_journal() {
         queue_key: Some("heartbeat:hb-1".to_string()),
         queue_visible: true,
         policy: "injected".to_string(),
+        input_id: None,
     };
     let plain = crate::journal::WorkerQueueItemRecord {
         focused_reply: None,
@@ -345,6 +347,7 @@ fn queue_snapshot_round_trips_through_the_recovery_journal() {
         queue_key: None,
         queue_visible: true,
         policy: "queued".to_string(),
+        input_id: None,
     };
     journal
         .record_queue_snapshot(
@@ -427,6 +430,7 @@ async fn forced_batch_arming_classifies_the_visible_plain_rows() {
             queue_visible: true,
             policy: TurnPolicy::Queued,
             forced_batch: false,
+            input_id: None,
         });
         core.steering.push_back(QueuedItem {
             focused_reply: None,
@@ -442,6 +446,7 @@ async fn forced_batch_arming_classifies_the_visible_plain_rows() {
             queue_visible: true,
             policy: TurnPolicy::Injected,
             forced_batch: false,
+            input_id: None,
         });
         core.steering.push_back(QueuedItem {
             focused_reply: None,
@@ -457,6 +462,7 @@ async fn forced_batch_arming_classifies_the_visible_plain_rows() {
             queue_visible: true,
             policy: TurnPolicy::Injected,
             forced_batch: false,
+            input_id: None,
         });
         core.steering.push_back(QueuedItem {
             focused_reply: None,
@@ -472,6 +478,7 @@ async fn forced_batch_arming_classifies_the_visible_plain_rows() {
             queue_visible: true,
             policy: TurnPolicy::Queued,
             forced_batch: false,
+            input_id: None,
         });
     }
     assert!(
