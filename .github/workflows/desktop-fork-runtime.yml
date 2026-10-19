@@ -91,6 +91,8 @@ jobs:
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-ai --lib codex_stream_inactivity
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-ai --lib openai_codex_responses
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-core --lib codex_stream_inactivity
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib human_follow_up_runs_before_background
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib queue_priority
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib update_restore
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib update_restart
       - name: Verify native desktop auth broker and reused login flows

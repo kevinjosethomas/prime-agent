@@ -360,6 +360,19 @@ pub(crate) fn gather_delivery_batch(core: &mut SessionCore, lane: Lane) -> Vec<Q
     batch
 }
 
+/// Select priority across lane fronts, preserving FIFO and explicit order inside each lane.
+/// A human follow-up must not starve behind a continuing stream of background steering.
+pub(crate) fn next_delivery_lane(core: &SessionCore) -> Option<Lane> {
+    match (core.steering.front(), core.follow_up.front()) {
+        (Some(steer), Some(follow)) if follow.priority.rank() > steer.priority.rank() => {
+            Some(Lane::FollowUp)
+        }
+        (Some(_), _) => Some(Lane::Steering),
+        (None, Some(_)) => Some(Lane::FollowUp),
+        (None, None) => None,
+    }
+}
+
 /// Queue snapshot restore from the worker recovery journal (crash/respawn
 /// recovery): the latest persisted lanes for this session.
 pub(crate) fn restore_queue_snapshot(

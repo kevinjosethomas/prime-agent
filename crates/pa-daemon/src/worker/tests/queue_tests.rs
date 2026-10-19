@@ -139,20 +139,16 @@ fn queue_priority_drains_four_tiers_and_pinned_front() {
     }
     let mut delivered = Vec::new();
     while !core.steering.is_empty() || !core.follow_up.is_empty() {
-        let lane = if core.steering.is_empty() {
-            Lane::FollowUp
-        } else {
-            Lane::Steering
-        };
+        let lane = next_delivery_lane(&core).expect("queued work");
         delivered.push(gather_delivery_batch(&mut core, lane).remove(0).message);
     }
     assert_eq!(
         delivered,
         [
-            "human steer",
-            "machine steer",
             "pinned follow",
+            "human steer",
             "human follow",
+            "machine steer",
             "machine follow"
         ]
     );

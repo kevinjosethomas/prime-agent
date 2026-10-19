@@ -1182,3 +1182,38 @@ async fn an_aborted_run_never_exposes_an_idle_summary_with_its_old_note() {
 }
 
 mod withdrawal;
+
+#[tokio::test]
+async fn human_follow_up_runs_before_background_steering_exactly_once() {
+    let engine: Arc<dyn SessionEngine> = Arc::new(
+        ScriptedEngine::from_value(&json!({ "responses": ["answer human", "answer report"] }))
+            .unwrap_or_default(),
+    );
+    let runner = burst_runner(engine);
+    {
+        let mut core = runner.core.lock().unwrap();
+        core.steering_mode = "one-at-a-time".to_string();
+        core.follow_up_mode = "one-at-a-time".to_string();
+        let mut background = queued_prompt("background report", TurnPolicy::Queued);
+        background.priority = QueuePriority::Background;
+        core.steering.push_back(background);
+        core.follow_up
+            .push_back(queued_prompt("human follow-up", TurnPolicy::Queued));
+    }
+    let mut subscription = runner.events.subscribe();
+    let core = Arc::clone(&runner.core);
+    let work_notify = Arc::clone(&runner.work_notify);
+    let running = tokio::spawn(async move { runner.run().await });
+    drain_pump(&core, &work_notify).await;
+    running.abort();
+    let rows = delivered_rows(&runner_events(&mut subscription));
+    assert_eq!(
+        rows,
+        vec![
+            ("user".to_string(), "human follow-up".to_string()),
+            ("assistant".to_string(), "answer human".to_string()),
+            ("user".to_string(), "background report".to_string()),
+            ("assistant".to_string(), "answer report".to_string()),
+        ]
+    );
+}

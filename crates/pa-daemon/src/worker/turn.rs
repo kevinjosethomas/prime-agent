@@ -2,11 +2,11 @@
 //! engine, and settles the result.
 use super::{
     checkpoint_queue_recovery, compact_action_label, create_daemon_event_meta,
-    emit_refinement_event_for_session, emit_refinement_row, gather_delivery_batch, json, oneshot,
-    session_snapshot, AssistantSnapshot, DaemonOutbound, EngineEvent, EventPump, Lane, Map, Notify,
-    OutboundFrame, PromptRequest, QueueCheckpoint, QueuedItem, Result, SessionActionSnapshot,
-    SessionCore, SessionEngine, TurnSettle, Value, WorkerRecoveryJournal,
-    ABORTED_TURN_SETTLE_ERROR,
+    emit_refinement_event_for_session, emit_refinement_row, gather_delivery_batch, json,
+    next_delivery_lane, oneshot, session_snapshot, AssistantSnapshot, DaemonOutbound, EngineEvent,
+    EventPump, Lane, Map, Notify, OutboundFrame, PromptRequest, QueueCheckpoint, QueuedItem,
+    Result, SessionActionSnapshot, SessionCore, SessionEngine, TurnSettle, Value,
+    WorkerRecoveryJournal, ABORTED_TURN_SETTLE_ERROR,
 };
 
 use std::sync::{Arc, Mutex};
@@ -59,19 +59,8 @@ impl TurnRunner {
                 if self.input_pauses.paused() || core.queued_input_suspended || core.compacting {
                     core.busy = false;
                     None
-                } else if core.steering.front().is_some() {
-                    let items = gather_delivery_batch(&mut core, Lane::Steering);
-                    core.running_admission_ids = items
-                        .iter()
-                        .filter_map(|item| item.admission_id.clone())
-                        .collect();
-                    core.busy = true;
-                    core.abort_requested = false;
-                    core.retry_abort_requested = false;
-                    core.running_tool_calls.clear();
-                    Some(items)
-                } else if core.follow_up.front().is_some() {
-                    let items = gather_delivery_batch(&mut core, Lane::FollowUp);
+                } else if let Some(lane) = next_delivery_lane(&core) {
+                    let items = gather_delivery_batch(&mut core, lane);
                     core.running_admission_ids = items
                         .iter()
                         .filter_map(|item| item.admission_id.clone())
