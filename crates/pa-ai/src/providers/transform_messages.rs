@@ -81,7 +81,10 @@ pub fn transform_messages_with_normalizer(
     normalize_tool_call_id: &Normalizer<'_>,
 ) -> Vec<Message> {
     let mut tool_call_id_map: HashMap<String, String> = HashMap::new();
-    let image_aware = downgrade_unsupported_images(messages, model);
+    let image_aware = super::image_limits::fit_images_to_limits(
+        downgrade_unsupported_images(messages, model),
+        super::image_limits::limits_for(model),
+    );
 
     let transformed: Vec<Message> = image_aware
         .iter()

@@ -8,6 +8,7 @@ pub mod google;
 pub mod google_shared;
 pub mod google_stream;
 pub mod google_vertex;
+mod image_limits;
 pub mod mistral;
 pub mod openai_codex_responses;
 pub mod openai_completions;
