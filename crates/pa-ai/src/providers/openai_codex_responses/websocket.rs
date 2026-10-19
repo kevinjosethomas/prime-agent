@@ -844,6 +844,42 @@ mod ws_wire_tests {
     }
 
     #[tokio::test]
+    async fn codex_stream_inactivity_releases_a_silent_socket_worker() {
+        for signal in [None, Some(CancellationToken::new())] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.expect("mock bind");
+            let url = format!("ws://{}/codex/responses", listener.local_addr().unwrap());
+            let (accepted, ready) = tokio::sync::oneshot::channel();
+            let server = tokio::spawn(async move {
+                let (socket, _) = listener.accept().await.expect("mock accept");
+                let mut websocket = tokio_tungstenite::accept_async(socket)
+                    .await
+                    .expect("mock handshake");
+                assert!(matches!(websocket.next().await, Some(Ok(Message::Text(_)))));
+                accepted.send(()).expect("request consumer stays alive");
+                // Keep the response silent. Dropping its consumer must release the socket
+                // without waiting for another provider event or a cancellation signal.
+                assert!(matches!(
+                    websocket.next().await,
+                    Some(Ok(Message::Close(_))) | None
+                ));
+            });
+            let connection = acquire_websocket(&url, &[], None, None)
+                .await
+                .expect("handshake succeeds");
+            let events = connection
+                .send_request(&json!({ "model": "gpt" }), signal)
+                .await
+                .expect("request sent");
+            ready.await.expect("provider received request");
+            drop(events);
+            tokio::time::timeout(Duration::from_secs(2), server)
+                .await
+                .expect("silent worker must close its socket")
+                .expect("server task");
+        }
+    }
+
+    #[tokio::test]
     async fn refused_connect_text() {
         let url = "ws://127.0.0.1:1/codex/responses".to_string();
         let error = match acquire_websocket(&url, &[], None, None).await {
