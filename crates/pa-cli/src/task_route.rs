@@ -95,7 +95,11 @@ where
         Ok(Ok(0)) => return Ok(()),
         Ok(Ok(_)) => {}
         Err(_) => {
-            return emit(&mut writer, error(None, "timeout", "Task route request timed out")).await
+            return emit(
+                &mut writer,
+                error(None, "timeout", "Task route request timed out"),
+            )
+            .await
         }
         Ok(Err(_)) => return Err(std::io::Error::other("Task route connection closed")),
     }

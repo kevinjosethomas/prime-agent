@@ -39,7 +39,10 @@ async fn ready_probe_with_eof_never_evaluates() {
     })
     .await
     .unwrap();
-    assert_eq!(rows(output), vec![json!({"type": "ready", "protocolVersion": 1})]);
+    assert_eq!(
+        rows(output),
+        vec![json!({"type": "ready", "protocolVersion": 1})]
+    );
 }
 
 #[tokio::test]
@@ -79,9 +82,11 @@ async fn invalid_requests_never_evaluate() {
     long["state"]["pad"] = json!("x".repeat(MAX_REQUEST_BYTES));
     for value in [extra, no_questions, one_option, scalar_state, long] {
         let mut output = Vec::new();
-        serve(BufReader::new(line(&value).as_slice()), &mut output, |_| async {
-            panic!("invalid request must not evaluate")
-        })
+        serve(
+            BufReader::new(line(&value).as_slice()),
+            &mut output,
+            |_| async { panic!("invalid request must not evaluate") },
+        )
         .await
         .unwrap();
         let last = rows(output).pop().unwrap();
@@ -94,9 +99,11 @@ async fn invalid_requests_never_evaluate() {
 #[tokio::test]
 async fn evaluation_errors_are_fixed_messages_with_the_request_id() {
     let mut output = Vec::new();
-    serve(BufReader::new(line(&request()).as_slice()), &mut output, |_| async {
-        Err("Task route evaluation is unavailable")
-    })
+    serve(
+        BufReader::new(line(&request()).as_slice()),
+        &mut output,
+        |_| async { Err("Task route evaluation is unavailable") },
+    )
     .await
     .unwrap();
     assert_eq!(
