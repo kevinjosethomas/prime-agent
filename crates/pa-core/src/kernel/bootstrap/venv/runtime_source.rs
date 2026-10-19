@@ -67,9 +67,9 @@ pub(in crate::kernel::bootstrap) fn hash_runtime_source(
     let mut files = vec![source_dir.join("pyproject.toml")];
     collect_python_files(&rlm_dir, &mut files)?;
     // Older sidecars and minimal test fixtures need not contain the optional package.
-    let workstreams_dir = source_dir.join("src").join("workstreams");
-    if workstreams_dir.is_dir() {
-        collect_python_files(&workstreams_dir, &mut files)?;
+    let tasks_dir = source_dir.join("src").join("tasks");
+    if tasks_dir.is_dir() {
+        collect_python_files(&tasks_dir, &mut files)?;
     }
     collect_package_data_files(&rlm_dir.join("machines"), &mut files)?;
     files.sort();
@@ -231,21 +231,21 @@ version: 2
     }
 
     #[test]
-    fn workstreams_source_changes_invalidate_the_runtime_identity() -> anyhow::Result<()> {
+    fn tasks_package_source_changes_invalidate_the_runtime_identity() -> anyhow::Result<()> {
         let temp = tempfile::tempdir()?;
         runtime_fixture(temp.path(), "machine")?;
-        let without_workstreams = hash_runtime_source(temp.path())?;
-        let workstreams = temp.path().join("src").join("workstreams");
-        std::fs::create_dir_all(&workstreams)?;
-        let client = workstreams.join("__init__.py");
+        let without_tasks = hash_runtime_source(temp.path())?;
+        let tasks = temp.path().join("src").join("tasks");
+        std::fs::create_dir_all(&tasks)?;
+        let client = tasks.join("__init__.py");
         std::fs::write(&client, "VERSION = 1\n")?;
         let initial = hash_runtime_source(temp.path())?;
-        assert_ne!(without_workstreams, initial);
+        assert_ne!(without_tasks, initial);
         std::fs::write(&client, "VERSION = 2\n")?;
         let changed = hash_runtime_source(temp.path())?;
         assert_ne!(initial, changed);
-        std::fs::remove_dir_all(&workstreams)?;
-        assert_eq!(without_workstreams, hash_runtime_source(temp.path())?);
+        std::fs::remove_dir_all(&tasks)?;
+        assert_eq!(without_tasks, hash_runtime_source(temp.path())?);
         Ok(())
     }
 }

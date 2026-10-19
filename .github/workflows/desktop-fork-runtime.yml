@@ -52,7 +52,7 @@ jobs:
           python-version: '3.12'
       # This repository does not stage the separately owned desktop reporter.
       # Full discovery includes the exact readiness probe; canonical SQLite tests
-      # skip without WORKSTREAM_DESKTOP_REPORTER. See docs/desktop-runtime-verification.md.
+      # skip without TASKS_DESKTOP_REPORTER. See docs/desktop-runtime-verification.md.
       - name: Verify complete Python source and readiness suite (not desktop interop)
         run: PYTHONPATH=prime-agent-runtime/src python -m unittest discover -s prime-agent-runtime/tests -v
       - name: Verify session and subagent runtime regressions
@@ -70,7 +70,7 @@ jobs:
           python - <<'PYW'
           import glob, zipfile
           with zipfile.ZipFile(glob.glob('prime-agent-runtime/dist/*.whl')[0]) as wheel:
-              assert 'workstreams/__init__.py' in wheel.namelist()
+              assert 'tasks/__init__.py' in wheel.namelist()
           PYW
   macos:
     needs: [audit, format, python]
@@ -139,9 +139,9 @@ jobs:
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-ai --lib systemone
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib workstream_classification
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib workstream_classifier_round_trips
-      - name: Verify workstream runtime identity and readiness
+      - name: Verify tasks runtime identity and readiness
         run: |
-          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-core --lib workstreams
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-core --lib tasks_package
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-core --lib kernel::bootstrap::venv
       - name: Verify canonical last-user-prompt metadata and cache regressions
         run: |
