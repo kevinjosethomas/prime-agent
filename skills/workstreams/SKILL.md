@@ -10,10 +10,21 @@ supplies the trusted local reporter configuration once per kernel. If the packag
 says it is unconfigured, surface that setup problem; do not invent database paths
 or create a second store.
 
-Group by the user's outcome, not by chat, agent, repository, or individual reply.
-Reuse existing IDs: Lighthouse intake and judging applications can be subtasks of
-one O1 case. Use concrete titles such as “Parse JSON in Prime CLI logs”. Read the
-existing workstreams before creating a new one.
+Group by the user's product or independently owned feature, not by chat, worker,
+repository, PR, or individual reply. Read existing workstreams before creating one,
+including archived entries when checking for an older matching outcome. Reuse its
+stable ID; restore it if the user resumes it. Related fixes are milestones, not new
+workstreams. Create a new workstream only for an independently owned feature or product.
+
+Examples:
+- “Fix Primer's layout”, “group Primer threads”, “rename the agent”, and “drop files
+  into Primer” all belong to the existing **Primer** product workstream. Record
+  each change as a milestone there. A new chat, worker, or PR does not split it.
+- “Finish Lighthouse intake” and “prepare judging applications” belong to the same
+  **O1 case** workstream. Track intake and judging as milestones, not separate
+  workstreams or subtasks.
+- A separately owned product or feature with its own outcome can have a new
+  workstream. A related bug fix or implementation step cannot justify one by itself.
 
 ```python
 import workstreams
@@ -46,6 +57,12 @@ broader context or authorize different work.
 - `needs_input` is a real question or approval that blocks continuation. `ready`
   means a concrete result is available for review. `todo` is not started, `active`
   is being worked on, and `backlog` is deferred. Age alone does not prove activity.
+- Archive duplicate or dropped workstreams with `task = await task.archive()`;
+  use `task = await task.restore()` to bring one back. Archive is not completion:
+  it preserves status, milestones, and timestamps. `list()` hides archived entries;
+  use `list(archived=True)` for only archived entries or `list(archived=None)` for all.
+  `get(id)` still returns an archived workstream. Archiving does not merge its history
+  or move milestones; carry any useful milestones into the existing product first.
 - Progress is completed explicit milestones out of total milestones. No plan means
   unknown progress. Do not manufacture steps or percentages to fill the sidebar.
   Completion refuses unfinished steps. A parent does not receive invented progress

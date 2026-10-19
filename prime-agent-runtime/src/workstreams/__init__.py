@@ -18,8 +18,8 @@ from ._models import Link, Status, Step, Workstream
 from ._transport import AssignmentError, DeliveryError, Report
 
 __all__ = ["AssignmentError", "Client", "DeliveryError", "Link", "Report", "Status", "Step", "Workstream",
-           "assign", "associate", "classify", "configuration", "configure", "context", "create", "get", "list",
-           "retry", "spawn", "start_agent", "sync_agents", "update", "upsert"]
+           "archive", "assign", "associate", "classify", "configuration", "configure", "context", "create", "get", "list",
+           "restore", "retry", "spawn", "start_agent", "sync_agents", "update", "upsert"]
 
 _client: Client | None = None
 
@@ -48,9 +48,10 @@ async def context() -> dict[str, Any]:
     return await _configured().context()
 
 
-async def list(*, status: Status | None = None, parent_id: str | None = None) -> tuple[Workstream, ...]:
-    """List workstreams, optionally by status or parent."""
-    return await _configured().list(status=status, parent_id=parent_id)
+async def list(*, status: Status | None = None, parent_id: str | None = None,
+               archived: bool | None = False) -> tuple[Workstream, ...]:
+    """List visible workstreams; archived=True selects hidden ones, None includes all."""
+    return await _configured().list(status=status, parent_id=parent_id, archived=archived)
 
 
 async def get(id: str) -> Workstream:
@@ -71,6 +72,16 @@ async def upsert(id: str, title: str, **fields: Any) -> Workstream:
 async def update(id: str, **changes: Any) -> Workstream:
     """Update named fields without resetting unrelated fields."""
     return await _configured().update(id, **changes)
+
+
+async def archive(id: str) -> Workstream:
+    """Hide a workstream without changing its status or timestamps."""
+    return await _configured().archive(id)
+
+
+async def restore(id: str) -> Workstream:
+    """Show a workstream again without changing its status or timestamps."""
+    return await _configured().restore(id)
 
 
 async def associate(workstream_id: str, session_id: str, *, name: str, role: str = "worker") -> Any:

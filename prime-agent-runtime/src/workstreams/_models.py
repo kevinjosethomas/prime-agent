@@ -45,6 +45,7 @@ class Workstream:
     description: str = ""
     parent_id: str | None = None
     links: tuple[Link, ...] = ()
+    archived: bool = False
 
     @property
     def progress(self) -> tuple[int, int] | None:
@@ -57,6 +58,14 @@ class Workstream:
     async def update(self, **changes: Any) -> Workstream:
         """Update named fields, preserving the latest unrelated state."""
         return await self._client.update(self.id, **changes)
+
+    async def archive(self) -> Workstream:
+        """Hide this workstream without changing its status or timestamps."""
+        return await self._client.archive(self.id)
+
+    async def restore(self) -> Workstream:
+        """Show this workstream again without changing its status or timestamps."""
+        return await self._client.restore(self.id)
 
     async def milestone(self, id: str, title: str, *, done: bool = False) -> Workstream:
         """Add or replace a named, explicit milestone."""
