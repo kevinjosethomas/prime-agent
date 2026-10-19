@@ -778,7 +778,7 @@ fn handle_event(
             });
         }
         AgentEvent::MessageStart { message } => {
-            if message.role() == "user" {
+            if matches!(message.role(), "user" | "focusedThreadUser") {
                 state.totals.prompt_count += 1;
                 // A prompt-run's user message lands right after
                 // `AgentStart`: the run's trigger is a fresh prompt.

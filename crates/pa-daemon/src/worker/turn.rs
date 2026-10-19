@@ -61,6 +61,9 @@ impl TurnRunner {
                     None
                 } else if let Some(lane) = next_delivery_lane(&core) {
                     let items = gather_delivery_batch(&mut core, lane);
+                    core.running_client_input_ids = items.iter()
+                        .filter_map(|item| item.focused_reply.as_ref().map(|route| route.client_input_id.clone()))
+                        .collect();
                     core.running_admission_ids = items
                         .iter()
                         .filter_map(|item| item.admission_id.clone())
@@ -306,6 +309,11 @@ impl TurnRunner {
         let Some((first, batched)) = items.split_first() else {
             return;
         };
+        {
+            let mut core = self.core.lock().unwrap();
+            core.running_client_input_ids.extend(items.iter().filter_map(|item|
+                item.focused_reply.as_ref().map(|route| route.client_input_id.clone())));
+        }
         self.emit_turn_event(json!({ "type": "agent_start" }));
         self.emit_turn_event(json!({ "type": "turn_start" }));
         // The pane reporter's run boundary (TS `agent_start`): working.
@@ -587,7 +595,7 @@ impl TurnRunner {
                     }
                     // A `message` entry per row (TS's appendMessage path).
                     EngineEvent::UserMessage(message) => {
-                        if let Some(route) = pending_reply.take() {
+                        if let Some(route) = if emitting_prefix_rows.get() { None } else { pending_reply.take() } {
                             message["clientInputId"] = json!(route.client_input_id);
                             message["replyToMessageId"] = json!(route.reply_to_message_id);
                             message["replyContext"] = json!(route.reply_context);
@@ -1070,6 +1078,7 @@ impl TurnRunner {
             core.busy = false;
             core.active_action = None;
             core.running_admission_ids.clear();
+            core.running_client_input_ids.clear();
             more_queued
         };
         self.push_roster_delta();

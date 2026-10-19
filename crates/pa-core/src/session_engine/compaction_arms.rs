@@ -30,8 +30,7 @@ impl AgentSession {
         let messages: Vec<SessionAgentMessage> = state
             .messages
             .iter()
-            .filter_map(|message| serde_json::to_value(message).ok())
-            .filter_map(|value| serde_json::from_value(value).ok())
+            .filter_map(super::loop_message_to_session)
             .collect();
         compaction::threshold_compaction_due(
             &messages,

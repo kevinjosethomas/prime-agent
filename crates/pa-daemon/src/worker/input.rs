@@ -38,7 +38,8 @@ fn parse_focused_reply(
     if parent.and_then(|message| message.get("role")).and_then(Value::as_str) != Some("user") {
         return Err("Reply parent is not a loaded user message in this session".to_string());
     }
-    if branch.iter().any(|entry| entry.fields.get("message")
+    if core.running_client_input_ids.contains(&route.client_input_id)
+        || branch.iter().any(|entry| entry.fields.get("message")
         .and_then(|message| message.get("clientInputId")).and_then(Value::as_str)
             == Some(route.client_input_id.as_str()))
         || core.steering.iter().chain(&core.follow_up).any(|item| item.focused_reply.as_ref()
@@ -502,8 +503,11 @@ mod focused_reply_tests {
 
     #[test]
     fn reply_validation_rejects_cross_session_and_oversized_utf8() {
-        let (core, mut payload) = core_and_payload();
+        let (mut core, mut payload) = core_and_payload();
         assert!(parse_focused_reply(&payload, &core).unwrap().is_some());
+        core.running_client_input_ids.insert("input-a".to_string());
+        assert!(parse_focused_reply(&payload, &core).is_err());
+        core.running_client_input_ids.clear();
         payload["replyContext"][0]["text"] = json!("é".repeat(501));
         assert!(parse_focused_reply(&payload, &core).is_err());
         payload["replyContext"] = json!([]);

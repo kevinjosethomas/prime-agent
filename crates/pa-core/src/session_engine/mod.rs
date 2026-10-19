@@ -432,7 +432,7 @@ async fn persist_event(
 }
 
 /// Custom rows persist as session custom messages.
-fn loop_message_to_session(message: &AgentMessage) -> Option<SessionAgentMessage> {
+pub fn loop_message_to_session(message: &AgentMessage) -> Option<SessionAgentMessage> {
     match message {
         AgentMessage::Standard(inner) => {
             serde_json::from_value(serde_json::to_value(inner).ok()?).ok()
@@ -497,7 +497,7 @@ pub(crate) fn session_message_to_loop(message: &SessionAgentMessage) -> Option<A
 }
 
 /// Rows that fail the conversion drop.
-pub(crate) fn rebuilt_loop_messages(rebuilt: Vec<SessionAgentMessage>) -> Vec<AgentMessage> {
+pub fn rebuilt_loop_messages(rebuilt: Vec<SessionAgentMessage>) -> Vec<AgentMessage> {
     rebuilt
         .into_iter()
         .filter_map(|message| session_message_to_loop(&message))
@@ -542,7 +542,7 @@ mod focused_reply_tests {
         assert_eq!(value["content"][0]["text"], "normal text");
         assert_eq!(value["content"][1]["data"], "image");
         assert_eq!(value["clientInputId"], "input-a");
-        let restored = session_message_to_loop(&persisted).unwrap();
+        let restored = rebuilt_loop_messages(vec![persisted]).remove(0);
         let llm = messages::loop_convert_to_llm(vec![restored]);
         let model = serde_json::to_value(&llm[0]).unwrap();
         assert!(model["content"][0]["text"].as_str().unwrap().contains("quoted prior request"));

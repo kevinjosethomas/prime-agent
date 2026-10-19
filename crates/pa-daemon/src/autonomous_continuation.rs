@@ -191,7 +191,7 @@ impl AgentSessionEngine {
         let messages: Vec<pa_types::session::AgentMessage> = state
             .messages
             .iter()
-            .filter_map(json_round_trip::<_, pa_types::session::AgentMessage>)
+            .filter_map(pa_core::session_engine::loop_message_to_session)
             .collect();
         let Some(session) = mirror.session.upgrade() else {
             return false;

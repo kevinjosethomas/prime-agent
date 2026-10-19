@@ -383,8 +383,7 @@ pub(crate) fn restore_queue_snapshot(
     active_session_id: &str,
 ) -> (VecDeque<QueuedItem>, VecDeque<QueuedItem>) {
     fn pending(lanes: Vec<crate::journal::WorkerQueueItemRecord>) -> VecDeque<QueuedItem> {
-        // Images on a queued prompt do not survive the restart; the
-        // delivery rows ride the item record without them.
+        // Text, images and immutable reply evidence recover as one input.
         lanes
             .into_iter()
             .map(|record| {

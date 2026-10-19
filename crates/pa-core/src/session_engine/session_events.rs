@@ -118,7 +118,11 @@ fn thinking_block_text(
 /// Serialize one loop event to the TS `session_event` wire shape.
 pub fn agent_event_json(event: &AgentEvent) -> Option<serde_json::Value> {
     fn message_value(value: &pa_agent::types::AgentMessage) -> serde_json::Value {
-        serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
+        match value {
+            pa_agent::types::AgentMessage::Custom(custom) if custom.role == "focusedThreadUser" =>
+                custom.payload.get("message").cloned().unwrap_or(serde_json::Value::Null),
+            _ => serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
+        }
     }
     let value = match event {
         AgentEvent::AgentStart => serde_json::json!({ "type": "agent_start" }),

@@ -575,6 +575,13 @@ impl super::AgentSession {
             .iter()
             .filter_map(|message| match message {
                 AgentMessage::Standard(Message::User(user)) => Some(loop_user_text(&user.content)),
+                AgentMessage::Custom(custom) if custom.role == "focusedThreadUser" => {
+                    let value = custom.payload.get("message")?.clone();
+                    match serde_json::from_value::<pa_agent::types::Message>(value).ok()? {
+                        Message::User(user) => Some(loop_user_text(&user.content)),
+                        _ => None,
+                    }
+                }
                 AgentMessage::Standard(Message::Assistant(assistant)) => {
                     let text = assistant
                         .content

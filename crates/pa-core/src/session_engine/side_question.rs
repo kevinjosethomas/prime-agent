@@ -190,6 +190,7 @@ pub async fn run_side_question(
             tools: Some(parent_state.tools.clone()),
             messages: Some(messages),
         },
+        convert_to_llm: Some(super::messages::engine_convert_to_llm()),
         stream_fn: Some(stream_fn),
         before_tool_call: Some(before_tool_call),
         should_stop_after_turn: Some(should_stop_after_turn),
