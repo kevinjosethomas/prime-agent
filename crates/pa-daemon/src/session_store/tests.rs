@@ -1338,3 +1338,17 @@ fn listing_and_frozen_usage_agree_on_duplicate_attribution_ids() {
     );
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn reserved_assistant_identity_and_ownership_survive_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionFile::create(dir.path().to_str().unwrap(),None,0);
+    let path = dir.path().join("session.jsonl");
+    store.set_path(path.clone());
+    let id = uuid::Uuid::new_v4().to_string();
+    let message = json!({"role":"assistant","content":[],"timestamp":2,"nativeMessageId":id,
+        "replyOwnership":{"state":"known","inputIds":["input-a"],"replyToMessageIds":["parent-a"]}});
+    store.persist_message_with_id(&id,&message).unwrap();
+    let reopened = SessionFile::open(&path).unwrap();
+    assert_eq!(reopened.messages()[0],message);
+}

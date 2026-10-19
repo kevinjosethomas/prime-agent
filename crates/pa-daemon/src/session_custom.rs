@@ -159,6 +159,7 @@ impl Worker {
                 let lane_follow_up =
                     action.get("delivery").and_then(Value::as_str) != Some("next_turn_boundary");
                 let item = crate::worker::QueuedItem {
+                    focused_reply: None,
                     priority: match action.get("priority").and_then(Value::as_str) {
                         Some("pinned") => crate::worker::QueuePriority::Pinned,
                         Some("user") => crate::worker::QueuePriority::Human,

@@ -458,6 +458,7 @@ impl AgentSessionEngine {
 /// the injected custom message.
 fn goal_prompt_request(message: &pa_types::session::CustomMessage) -> PromptRequest {
     PromptRequest {
+        focused_reply: None,
         message: message.content.text(),
         images: Vec::new(),
         source: "user".to_string(),

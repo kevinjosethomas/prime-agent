@@ -41,6 +41,44 @@ pub(super) struct PassivationContext {
     pub(super) worker_token: String,
 }
 
+/// Actual accepted rows, not request text or focus, authorize output ownership.
+#[derive(Default)]
+pub(super) struct MaterializedInputOwnership {
+    input_ids: Vec<String>,
+    reply_to_message_ids: Vec<String>,
+    unknown: bool,
+}
+
+impl MaterializedInputOwnership {
+    pub(super) fn observe(&mut self, message: &Value) {
+        let input = message.get("clientInputId").and_then(Value::as_str);
+        let parent = message.get("replyToMessageId").and_then(Value::as_str);
+        let durable = message.get("nativeMessageId").and_then(Value::as_str);
+        let (Some(input), Some(parent), Some(durable)) = (input, parent, durable) else {
+            self.unknown = true;
+            return;
+        };
+        if input.trim().is_empty() || input.len() > 128 || parent.trim().is_empty() || parent.len() > 512
+            || durable.is_empty() || durable.len() > 512
+        {
+            self.unknown = true;
+            return;
+        }
+        if !self.input_ids.iter().any(|id| id == input) { self.input_ids.push(input.to_string()); }
+        if !self.reply_to_message_ids.iter().any(|id| id == parent) { self.reply_to_message_ids.push(parent.to_string()); }
+        self.unknown |= self.input_ids.len() > 64 || self.reply_to_message_ids.len() > 64;
+    }
+
+    pub(super) fn ownership(&self) -> pa_types::daemon::ReplyOwnership {
+        if self.unknown || self.input_ids.is_empty() || self.reply_to_message_ids.is_empty() {
+            return Default::default();
+        }
+        pa_types::daemon::ReplyOwnership::Known {
+            input_ids: self.input_ids.clone(), reply_to_message_ids: self.reply_to_message_ids.clone(),
+        }
+    }
+}
+
 impl TurnRunner {
     pub(super) async fn run(self) {
         loop {
@@ -61,11 +99,15 @@ impl TurnRunner {
                     None
                 } else if let Some(lane) = next_delivery_lane(&core) {
                     let items = gather_delivery_batch(&mut core, lane);
+                    core.running_client_input_ids = items.iter()
+                        .filter_map(|item| item.focused_reply.as_ref().map(|route| route.client_input_id.clone()))
+                        .collect();
                     core.running_admission_ids = items
                         .iter()
                         .filter_map(|item| item.admission_id.clone())
                         .collect();
                     core.busy = true;
+                    core.active_input_ownership = Default::default();
                     core.abort_requested = false;
                     core.retry_abort_requested = false;
                     core.running_tool_calls.clear();
@@ -306,6 +348,12 @@ impl TurnRunner {
         let Some((first, batched)) = items.split_first() else {
             return;
         };
+        {
+            let mut core = self.core.lock().unwrap();
+            core.active_input_ownership = Default::default();
+            core.running_client_input_ids.extend(items.iter().filter_map(|item|
+                item.focused_reply.as_ref().map(|route| route.client_input_id.clone())));
+        }
         self.emit_turn_event(json!({ "type": "agent_start" }));
         self.emit_turn_event(json!({ "type": "turn_start" }));
         // The pane reporter's run boundary (TS `agent_start`): working.
@@ -319,6 +367,7 @@ impl TurnRunner {
                 / 2
         };
         let request = PromptRequest {
+            focused_reply: first.focused_reply.clone(),
             batch: batched
                 .iter()
                 .map(|item| crate::engine::PromptBatchRow {
@@ -410,6 +459,15 @@ impl TurnRunner {
         let abort_gate_armed = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let abort_gate_armed_seen = Arc::clone(&abort_gate_armed);
         let turn = tokio::task::spawn_blocking(move || {
+            let mut pending_reply = request.focused_reply.clone();
+            let mut admitted_ownership = MaterializedInputOwnership::default();
+            let mut ownership_ready = false;
+            let mut assistant_native_id: Option<String> = None;
+            let mut assistant_ownership: Option<pa_types::daemon::ReplyOwnership> = None;
+            let mut completed_assistant: Option<Value> = None;
+            let mut completed_tools: Vec<Value> = Vec::new();
+            let mut tool_ownership = std::collections::HashMap::<String, pa_types::daemon::ReplyOwnership>::new();
+            let mut aggregate_rows: Vec<Value> = Vec::new();
             // The engine's own terminal `turn_end` frame keeps the
             // trailing `Done` fallback silent.
             let mut engine_turn_ended = false;
@@ -569,7 +627,25 @@ impl TurnRunner {
                         );
                     }
                 }
-                match &event {
+                let previous_ownership = core.active_input_ownership.clone();
+                match &mut event {
+                    EngineEvent::InputOwnershipReady => {
+                        if !ownership_ready {
+                            core.active_input_ownership = admitted_ownership.ownership();
+                            ownership_ready = true;
+                        }
+                    }
+                    EngineEvent::InputOwnershipUnknown => {
+                        ownership_ready = true;
+                        core.active_input_ownership = Default::default();
+                    }
+                    EngineEvent::AssistantUpdate { message, .. } => {
+                        let id = assistant_native_id.get_or_insert_with(|| uuid::Uuid::new_v4().to_string()).clone();
+                        *message = AssistantSnapshot::Decorated {
+                            message: Box::new(message.clone()), native_message_id: id,
+                            ownership: assistant_ownership.get_or_insert_with(|| core.active_input_ownership.clone()).clone(),
+                        };
+                    }
                     EngineEvent::ModelChange(change) => {
                         if let Some(Err(error)) = core.store.as_mut().map(|store| {
                             store.persist_entry(
@@ -584,17 +660,50 @@ impl TurnRunner {
                         }
                     }
                     // A `message` entry per row (TS's appendMessage path).
-                    EngineEvent::UserMessage(message)
-                    | EngineEvent::AssistantMessage(message)
-                    | EngineEvent::ToolResultMessage(message) => {
-                        if let Some(store) = core.store.as_mut() {
-                            let _ = store.persist_entry("message", json!({ "message": message }));
+                    EngineEvent::UserMessage(message) => {
+                        if let Some(route) = if emitting_prefix_rows.get() { None } else { pending_reply.take() } {
+                            message["clientInputId"] = json!(route.client_input_id);
+                            message["replyToMessageId"] = json!(route.reply_to_message_id);
+                            message["replyContext"] = json!(route.reply_context);
                         }
+                        if let Some(store) = core.store.as_mut() {
+                            match store.persist_entry("message", json!({ "message": &*message })) {
+                                Ok(id) => message["nativeMessageId"] = json!(id),
+                                Err(_) => return false,
+                            }
+                        }
+                        if ownership_ready {
+                            core.active_input_ownership = Default::default();
+                        } else if !emitting_prefix_rows.get() {
+                            admitted_ownership.observe(message);
+                        }
+                    }
+                    EngineEvent::AssistantMessage(message) => {
+                        let id = assistant_native_id.take().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                        message["nativeMessageId"] = json!(id);
+                        message["replyOwnership"] = json!(assistant_ownership.take().unwrap_or_else(|| core.active_input_ownership.clone()));
+                        if let Some(store) = core.store.as_mut() {
+                            if store.persist_message_with_id(&id, message).is_err() { return false; }
+                        }
+                        completed_assistant = Some(message.clone());
+                    }
+                    EngineEvent::ToolResultMessage(message) => {
+                        let ownership = message.get("toolCallId").and_then(Value::as_str)
+                            .and_then(|id| tool_ownership.remove(id)).unwrap_or_default();
+                        message["replyOwnership"] = json!(ownership);
+                        if let Some(store) = core.store.as_mut() {
+                            match store.persist_entry("message", json!({ "message": &*message })) {
+                                Ok(id) => message["nativeMessageId"] = json!(id),
+                                Err(_) => return false,
+                            }
+                        }
+                        completed_tools.push(message.clone());
                     }
                     // The in-flight tool-call set, updated under the same core lock
                     // the frames sequence under: the roster feed never reads a
                     // half-applied transition.
                     EngineEvent::ToolExecutionStart { tool_call_id, .. } => {
+                        tool_ownership.insert(tool_call_id.clone(), core.active_input_ownership.clone());
                         core.running_tool_calls.insert(tool_call_id.clone());
                     }
                     EngineEvent::ToolExecutionEnd { tool_call_id, .. } => {
@@ -642,7 +751,8 @@ impl TurnRunner {
                     _ => {}
                 }
                 // The `committing`/`running` transitions ride the events that mark the moments.
-                let mut action_frame: Option<SessionActionSnapshot> = None;
+                let mut action_frame: Option<SessionActionSnapshot> =
+                    (previous_ownership != core.active_input_ownership).then(|| session_snapshot(&core));
                 if !emitting_prefix_rows.get()
                     && !active_committed
                     && matches!(
@@ -691,9 +801,24 @@ impl TurnRunner {
                     }
                     _ => None,
                 };
+                match &mut event {
+                    EngineEvent::AgentStart => aggregate_rows.clear(),
+                    EngineEvent::UserMessage(message) | EngineEvent::AssistantMessage(message)
+                    | EngineEvent::ToolResultMessage(message) | EngineEvent::CustomMessage(message) => aggregate_rows.push(message.clone()),
+                    EngineEvent::TurnEnd { message, tool_results } => {
+                        if let Some(completed) = completed_assistant.take() { *message = completed; }
+                        // This accumulator contains only results emitted since the prior TurnEnd.
+                        *tool_results = std::mem::take(&mut completed_tools);
+                    }
+                    EngineEvent::AgentEnd { messages } => { *messages = aggregate_rows.clone(); }
+                    _ => {}
+                }
                 // One event may map to several wire frames (a custom row
                 // is a message_start + message_end pair).
                 let mut frames: Vec<Value> = match event {
+                    EngineEvent::InputOwnershipReady | EngineEvent::InputOwnershipUnknown => {
+                        vec![json!({"type":"input_ownership", "ownership": core.active_input_ownership})]
+                    }
                     EngineEvent::UserMessage(message) => {
                         vec![
                             json!({ "type": "message_start", "message": message }),
@@ -934,6 +1059,11 @@ impl TurnRunner {
                         ]
                     }
                 };
+                if previous_ownership != core.active_input_ownership
+                    && !frames.iter().any(|frame| frame.get("type").and_then(Value::as_str) == Some("input_ownership"))
+                {
+                    frames.insert(0, json!({"type":"input_ownership", "ownership":core.active_input_ownership}));
+                }
                 // The phase flip's queue-update frame rides the same batch,
                 // after the row frames it follows; an unchanged projection
                 // stays silent.
@@ -1054,8 +1184,11 @@ impl TurnRunner {
             core.busy = false;
             core.active_action = None;
             core.running_admission_ids.clear();
+            core.running_client_input_ids.clear();
+            core.active_input_ownership = Default::default();
             more_queued
         };
+        self.emit_turn_event(json!({"type":"input_ownership", "ownership": pa_types::daemon::ReplyOwnership::default()}));
         self.push_roster_delta();
         // The fallback `agent_end` for runs that ended without a model
         // turn (session commands, pre-model failures): the engine's own

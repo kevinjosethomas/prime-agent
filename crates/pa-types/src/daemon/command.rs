@@ -49,10 +49,56 @@ pub enum DaemonSessionLifecycle {
     ClientOwned,
 }
 
+/// Exhaustive ownership of the currently driving, materialized input set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum ReplyOwnership {
+    Known {
+        #[serde(rename = "inputIds")]
+        input_ids: Vec<String>,
+        #[serde(rename = "replyToMessageIds")]
+        reply_to_message_ids: Vec<String>,
+    },
+    Unknown {
+        #[serde(rename = "inputIds", default)]
+        input_ids: Vec<String>,
+        #[serde(rename = "replyToMessageIds", default)]
+        reply_to_message_ids: Vec<String>,
+    },
+}
+
+impl Default for ReplyOwnership {
+    fn default() -> Self {
+        Self::Unknown { input_ids: Vec::new(), reply_to_message_ids: Vec::new() }
+    }
+}
+
+/// Immutable explicit reply route. IDs name entries in the receiving session, not UI IDs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FocusedThreadReply {
+    pub client_input_id: String,
+    pub reply_to_message_id: String,
+    pub reply_context: Vec<FocusedThreadContextRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FocusedThreadContextRow {
+    pub id: String,
+    pub role: String,
+    pub text: String,
+}
+
 /// `prompt`/`steer`/`follow_up`-family input payload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_input_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to_message_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_context: Option<Vec<FocusedThreadContextRow>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

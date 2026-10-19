@@ -71,6 +71,7 @@ async fn turn_session_events_with_custom_message(
         .run_turn(
             engine,
             vec![QueuedItem {
+                focused_reply: None,
                 priority: QueuePriority::Background,
                 preview: None,
                 message: "[child-exited: no-reply child:lane]".to_string(),

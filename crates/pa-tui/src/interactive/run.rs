@@ -134,6 +134,9 @@ async fn settled_sequence(
         custom_message: None,
         queue_key: None,
         prefix_messages: None,
+        client_input_id: None,
+        reply_to_message_id: None,
+        reply_context: None,
         admission_id: None,
         rlm_notice_nonce: None,
     };

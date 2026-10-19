@@ -628,7 +628,7 @@ impl AgentSessionEngine {
                 built
                     .session
                     .agent()
-                    .set_messages(messages.iter().filter_map(json_round_trip).collect())
+                    .set_messages(pa_core::session_engine::rebuilt_loop_messages(messages))
                     .await;
             }
             // A moved branch restores its own park (the early return would leave the previous
@@ -665,7 +665,7 @@ impl AgentSessionEngine {
             built
                 .session
                 .agent()
-                .set_messages(messages.iter().filter_map(json_round_trip).collect())
+                .set_messages(pa_core::session_engine::rebuilt_loop_messages(messages))
                 .await;
         }
         self.restore_quota_park(built).await;
@@ -1215,8 +1215,7 @@ impl AgentSessionEngine {
                             .context
                             .messages
                             .iter()
-                            .filter_map(|message| serde_json::to_value(message).ok())
-                            .filter_map(|value| serde_json::from_value(value).ok())
+                            .filter_map(pa_core::session_engine::loop_message_to_session)
                             .collect::<Vec<_>>();
                         let due = pa_core::session_engine::compaction::threshold_compaction_due(
                             &messages,

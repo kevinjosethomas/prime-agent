@@ -407,6 +407,7 @@ impl AgentSessionEngine {
             sink(crate::engine::GoalTurnEndWork::Continuation(
                 crate::engine::GoalContinuation {
                     request: crate::engine::PromptRequest {
+                        focused_reply: None,
                         message: pa_core::session_engine::provider_park::QUOTA_RESUME_MARKER_TEXT
                             .to_string(),
                         images: Vec::new(),

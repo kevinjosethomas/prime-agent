@@ -217,6 +217,11 @@ fn mutate_lane(
             let Some(text) = mutation.get("text").and_then(Value::as_str) else {
                 return "rejected";
             };
+            if item.focused_reply.is_some()
+                && crate::session_commands::parse_prompt_session_command(text).is_some()
+            {
+                return "rejected";
+            }
             item.message = text.to_string();
             // The edited row loses its labeled preview: the client's
             // own text becomes the preview.
@@ -279,6 +284,7 @@ mod tests {
         {
             let mut core = worker.core.lock().unwrap();
             core.steering.push_back(crate::worker::QueuedItem {
+                focused_reply: None,
                 priority: crate::worker::QueuePriority::Background,
                 message: "[heartbeat: every 10m run#0]\n\nnudge the mission".to_string(),
                 preview: Some(
@@ -333,6 +339,7 @@ mod tests {
         {
             let mut core = worker.core.lock().unwrap();
             core.steering.push_back(crate::worker::QueuedItem {
+                focused_reply: None,
                 priority: crate::worker::QueuePriority::Background,
                 message: "[heartbeat: every 10m run#0]\n\nnudge the mission".to_string(),
                 preview: Some(
@@ -547,6 +554,7 @@ mod tests {
         {
             let mut core = worker.core.lock().unwrap();
             core.steering.push_back(crate::worker::QueuedItem {
+                focused_reply: None,
                 priority: crate::worker::QueuePriority::Human,
                 message: "waiting prompt".to_string(),
                 preview: None,
@@ -613,6 +621,7 @@ mod tests {
             .unwrap()
             .steering
             .push_back(crate::worker::QueuedItem {
+                focused_reply: None,
                 priority: crate::worker::QueuePriority::Human,
                 preview: None,
                 message: "plain prompt".to_string(),
@@ -730,4 +739,26 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn focused_queue_mutations_preserve_route_and_reject_session_commands() {
+        let route = pa_types::daemon::FocusedThreadReply {
+            client_input_id:"input-a".to_string(),reply_to_message_id:"parent-a".to_string(),reply_context:vec![],
+        };
+        let item = |message: &str, focused_reply| crate::worker::QueuedItem {
+            focused_reply, priority:crate::worker::QueuePriority::Human, preview:None,
+            message:message.to_string(), custom_message:None, agent_message:None,
+            queue_key:None, admission_id:None, images:vec![], done:None,queue_visible:true,
+            policy:crate::worker::TurnPolicy::Queued,forced_batch:false,
+        };
+        let mut lane = std::collections::VecDeque::from([item("same",Some(route.clone())),item("same",None)]);
+        assert_eq!(mutate_lane(&mut lane,0,"same",&json!({"text":"/clear"}),"replace","deleted"),"rejected");
+        assert_eq!(lane[0].focused_reply.as_ref(),Some(&route));
+        assert_ne!(mutate_lane(&mut lane,0,"same",&json!({"text":"edited"}),"replace","deleted"),"rejected");
+        assert_eq!(lane[0].focused_reply.as_ref(),Some(&route));
+        assert_ne!(mutate_lane(&mut lane,0,"edited",&json!({"direction":1}),"move","deleted"),"rejected");
+        assert_eq!(lane[1].focused_reply.as_ref(),Some(&route));
+        assert_ne!(mutate_lane(&mut lane,1,"edited",&json!({}),"delete","deleted"),"rejected");
+        assert!(lane[0].focused_reply.is_none());
+    }
+
 }

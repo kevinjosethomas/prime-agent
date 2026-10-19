@@ -35,6 +35,7 @@ pub(crate) enum TurnPrompt {
     /// A user prompt: text plus images, with the batched co-delivery
     /// rows riding the same run after the primary.
     User {
+        focused_reply: Option<pa_types::daemon::FocusedThreadReply>,
         text: String,
         images: Vec<pa_agent::types::ImageContent>,
         batch: Vec<crate::engine::PromptBatchRow>,

@@ -133,6 +133,7 @@ pub(crate) fn enqueue_priority(lane: &mut VecDeque<QueuedItem>, item: QueuedItem
 
 #[derive(Debug)]
 pub(crate) struct QueuedItem {
+    pub(crate) focused_reply: Option<pa_types::daemon::FocusedThreadReply>,
     pub(crate) message: String,
     pub(crate) priority: QueuePriority,
     /// The labeled queue-strip row (the snapshot and the active-action
@@ -298,6 +299,8 @@ pub(crate) fn queue_lanes(core: &SessionCore) -> QueueLanes {
     fn items(lane: &VecDeque<QueuedItem>) -> Vec<crate::journal::WorkerQueueItemRecord> {
         lane.iter()
             .map(|item| crate::journal::WorkerQueueItemRecord {
+                focused_reply: item.focused_reply.clone(),
+                images: item.images.clone(),
                 message: item.message.clone(),
                 priority: Some(item.priority),
                 preview: item.preview.clone(),
@@ -336,7 +339,7 @@ pub(crate) fn gather_delivery_batch(core: &mut SessionCore, lane: Lane) -> Vec<Q
     {
         core.forced_all_steering = false;
     }
-    if first.custom_message.is_some()
+    if first.focused_reply.is_some() || first.custom_message.is_some()
         || first.policy == TurnPolicy::Direct
         || crate::session_commands::parse_prompt_session_command(&first.message).is_some()
     {
@@ -347,7 +350,7 @@ pub(crate) fn gather_delivery_batch(core: &mut SessionCore, lane: Lane) -> Vec<Q
     batch.push(items.pop_front().expect("front checked"));
     if forced || mode == "all" {
         while let Some(next) = items.front() {
-            if next.policy != first_policy
+            if next.focused_reply.is_some() || next.policy != first_policy
                 || next.custom_message.is_some()
                 || (forced && !next.forced_batch)
                 || crate::session_commands::parse_prompt_session_command(&next.message).is_some()
@@ -380,8 +383,7 @@ pub(crate) fn restore_queue_snapshot(
     active_session_id: &str,
 ) -> (VecDeque<QueuedItem>, VecDeque<QueuedItem>) {
     fn pending(lanes: Vec<crate::journal::WorkerQueueItemRecord>) -> VecDeque<QueuedItem> {
-        // Images on a queued prompt do not survive the restart; the
-        // delivery rows ride the item record without them.
+        // Text, images and immutable reply evidence recover as one input.
         lanes
             .into_iter()
             .map(|record| {
@@ -399,6 +401,7 @@ pub(crate) fn restore_queue_snapshot(
                         .flatten()
                 });
                 QueuedItem {
+                    focused_reply: record.focused_reply,
                     preview: record.preview,
                     message: record.message,
                     priority: record.priority.unwrap_or_else(|| {
@@ -412,7 +415,7 @@ pub(crate) fn restore_queue_snapshot(
                     agent_message,
                     queue_key: record.queue_key,
                     admission_id: None,
-                    images: Vec::new(),
+                    images: record.images,
                     done: None,
                     queue_visible: record.queue_visible,
                     policy,
@@ -444,6 +447,7 @@ pub(crate) fn admit_autonomous_follow_up(
     {
         let mut core = core.lock().unwrap();
         core.follow_up.push_back(QueuedItem {
+            focused_reply: None,
             priority: QueuePriority::Background,
             preview: None,
             message: text,
@@ -499,6 +503,7 @@ pub(crate) fn admit_goal_follow_up(
     {
         let mut core = core.lock().unwrap();
         let item = QueuedItem {
+            focused_reply: None,
             priority: QueuePriority::Background,
             preview: None,
             message: follow_up.request.message,
@@ -569,6 +574,7 @@ pub(crate) fn admit_bash_completion_notice(
     };
     {
         core_guard.steering.push_back(QueuedItem {
+            focused_reply: None,
             priority: QueuePriority::Background,
             // The queue strip's labeled preview (TS `previewLabel`).
             preview: Some(format!(

@@ -108,6 +108,7 @@ fn autonomous_gate_pass_and_failure_drive_the_loop() {
         engine.run_prompt(
             0,
             PromptRequest {
+                focused_reply: None,
                 batch: Vec::new(),
                 images: Vec::new(),
                 message: prompt.to_string(),
@@ -230,6 +231,7 @@ fn the_turn_loop_is_driven_by_the_driver_trait() {
     engine.run_prompt(
         0,
         PromptRequest {
+            focused_reply: None,
             batch: Vec::new(),
             images: Vec::new(),
             message: "go".to_string(),
@@ -264,4 +266,33 @@ fn the_turn_loop_is_driven_by_the_driver_trait() {
         driver.accounted.load(std::sync::atomic::Ordering::SeqCst),
         2
     );
+}
+
+#[test]
+fn focused_actual_loop_admission_ready_then_autonomous_boundary_unknown() {
+    let _faux = FAUX_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = tempfile::TempDir::new().unwrap();
+    let engine = std::sync::Arc::new(AgentSessionEngine::new(AgentEngineConfig {
+        cwd:dir.path().to_path_buf(), agent_dir:dir.path().join("agent"), provider:None, model:None,
+        api_key:None,thinking:None,session_dir:None,session_file:None,
+        faux_script:Some(serde_json::json!({"responses":["first","second"]}).to_string()),
+        supervisor_link:None,telemetry_disabled:None,cron_store:None,queued_steering_probe:None,
+    }).unwrap());
+    engine.register_arc();
+    let mut ignored = Vec::new();
+    admit(&engine,"/autonomous on --max-continuations 1 --max-turns 5".to_string(),&mut ignored);
+    let mut events = Vec::new();
+    engine.run_prompt(0,PromptRequest {
+        focused_reply:Some(pa_types::daemon::FocusedThreadReply {
+            client_input_id:"input-a".to_string(),reply_to_message_id:"parent-a".to_string(),reply_context:vec![],
+        }),
+        batch:vec![],images:vec![],message:"same".to_string(),source:"user".to_string(),
+        agent_message_id:None,custom_message:None,
+    },&|| false,&mut |event| {events.push(event);true});
+    let ready = events.iter().position(|event| matches!(event,EngineEvent::InputOwnershipReady)).unwrap();
+    let unknown = events.iter().position(|event| matches!(event,EngineEvent::InputOwnershipUnknown)).unwrap();
+    let assistants:Vec<_> = events.iter().enumerate().filter(|(_,event)| matches!(event,EngineEvent::AssistantMessage(_))).map(|(index,_)|index).collect();
+    assert!(ready < assistants[0]);
+    assert!(assistants[0] < unknown && unknown < assistants[1]);
+    assert_eq!(events.iter().filter(|event| matches!(event,EngineEvent::InputOwnershipReady)).count(),1);
 }

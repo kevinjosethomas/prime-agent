@@ -11,6 +11,7 @@ fn prompt_images_ride_the_user_message_content() {
     engine.run_prompt(
         0,
         PromptRequest {
+            focused_reply: None,
             batch: Vec::new(),
             images: vec![pa_agent::types::ImageContent {
                 data: "QUJD".to_string(),
@@ -84,6 +85,7 @@ fn assistant_updates_stream_live_while_the_turn_runs() {
     engine.run_prompt(
         0,
         PromptRequest {
+            focused_reply: None,
             batch: Vec::new(),
             images: Vec::new(),
             message: "hi".to_string(),
@@ -158,6 +160,7 @@ fn agent_engine_streams_updates_and_final_message() {
     engine.run_prompt(
         0,
         PromptRequest {
+            focused_reply: None,
             batch: Vec::new(),
             images: Vec::new(),
             message: "hi".to_string(),
@@ -235,6 +238,7 @@ fn lazy_build_restores_only_the_pre_admission_prompt_context() {
         engine.run_prompt(
             prompt_index,
             PromptRequest {
+                focused_reply: None,
                 batch: Vec::new(),
                 images: vec![pa_agent::types::ImageContent {
                     data: "QUJD".to_string(),

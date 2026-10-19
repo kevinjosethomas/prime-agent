@@ -999,6 +999,7 @@ fn agent_engine_reports_model_resolution_failures() {
     engine.run_prompt(
         0,
         PromptRequest {
+            focused_reply: None,
             batch: Vec::new(),
             images: Vec::new(),
             message: "hi".to_string(),

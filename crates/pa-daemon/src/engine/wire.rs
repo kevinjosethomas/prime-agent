@@ -6,6 +6,7 @@ use super::{json, json_round_trip, Arc, SideQuestionTurn, Value};
 /// One user prompt accepted by the engine.
 #[derive(Debug, Clone)]
 pub struct PromptRequest {
+    pub focused_reply: Option<pa_types::daemon::FocusedThreadReply>,
     pub message: String,
     /// Images attached to the prompt (base64 payload plus mime type),
     /// admitted as multimodal content after the text block.
@@ -56,6 +57,10 @@ pub struct EngineModelSelection {
 /// emit callback cancels the prompt.
 #[derive(Debug, Clone, PartialEq)]
 pub enum EngineEvent {
+    /// Accepted primary and batch user rows have all materialized; no provider call precedes this.
+    InputOwnershipReady,
+    /// An actual new untraced driving row entered the loop (not a historical/prefix row).
+    InputOwnershipUnknown,
     /// A session model transition: the worker owns the durable `model_change`
     /// row; this internal event adds no client-facing protocol frame.
     ModelChange(pa_types::session::ModelChangeEntry),
@@ -171,6 +176,7 @@ pub enum EngineEvent {
 /// partial, converted only when a frame is built.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AssistantSnapshot {
+    Decorated { message: Box<AssistantSnapshot>, native_message_id: String, ownership: pa_types::daemon::ReplyOwnership },
     Wire(Value),
     Loop(Arc<pa_agent::types::AgentMessage>),
 }
@@ -178,6 +184,12 @@ pub enum AssistantSnapshot {
 impl AssistantSnapshot {
     pub(crate) fn into_wire(self) -> Option<Value> {
         match self {
+            Self::Decorated { message, native_message_id, ownership } => {
+                let mut value = message.into_wire()?;
+                value["nativeMessageId"] = json!(native_message_id);
+                value["replyOwnership"] = json!(ownership);
+                Some(value)
+            }
             Self::Wire(value) => Some(value),
             Self::Loop(message) => session_wire_value(&message),
         }
@@ -200,6 +212,9 @@ pub(crate) fn session_wire_value(agent_message: &pa_agent::types::AgentMessage) 
         // A custom row: the payload is the session-shape custom message and
         // the wire form is the tagged session message (payload plus role).
         pa_agent::types::AgentMessage::Custom(custom) => {
+            if custom.role == "focusedThreadUser" {
+                return custom.payload.get("message").cloned();
+            }
             let mut value = custom.payload.clone();
             let object = value.as_object_mut()?;
             object

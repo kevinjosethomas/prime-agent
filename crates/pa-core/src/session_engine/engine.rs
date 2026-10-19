@@ -619,15 +619,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     let initial_messages = if existing_messages.is_empty() {
         None
     } else {
-        Some(
-            existing_messages
-                .into_iter()
-                .filter_map(|message| {
-                    let value = serde_json::to_value(&message).ok()?;
-                    serde_json::from_value(value).ok()
-                })
-                .collect(),
-        )
+        Some(super::rebuilt_loop_messages(existing_messages))
     };
 
     // One wiring per session owns the flag probe, the JSONL log, and the prompt-build

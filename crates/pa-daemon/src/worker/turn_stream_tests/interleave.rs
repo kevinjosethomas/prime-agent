@@ -443,6 +443,7 @@ async fn lane_work_parking_at_the_gate_cancels_the_stop() {
     let (runner, dir) = interleave_runner(&gate, &probe);
     let seam = drive_the_fire_to_the_gate(runner, dir, &gate).await;
     let parked_steer = QueuedItem {
+        focused_reply: None,
         priority: QueuePriority::Human,
         preview: None,
         message: "the racing steer".to_string(),

@@ -213,6 +213,10 @@ fn parse_worker_records(path: &Path) -> Result<HashMap<String, WorkerRecoveryRec
 /// a plain user message.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkerQueueItemRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focused_reply: Option<pa_types::daemon::FocusedThreadReply>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<pa_agent::types::ImageContent>,
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority: Option<crate::worker::QueuePriority>,
@@ -593,6 +597,8 @@ fn parse_snapshot_lane(value: Option<&Value>) -> Vec<WorkerQueueItemRecord> {
                 .iter()
                 .filter_map(|entry| match entry {
                     Value::String(message) => Some(WorkerQueueItemRecord {
+                        focused_reply: None,
+                        images: Vec::new(),
                         message: message.clone(),
                         priority: None,
                         preview: None,
@@ -678,6 +684,8 @@ mod tests {
         let mut sequential = WorkerRecoveryJournal::open(&sequential_path).unwrap();
         let mut batched = WorkerRecoveryJournal::open(&batched_path).unwrap();
         let item = WorkerQueueItemRecord {
+            focused_reply: None,
+            images: Vec::new(),
             message: "steer me".to_string(),
             priority: Some(crate::worker::QueuePriority::Human),
             preview: Some("preview".to_string()),
@@ -812,6 +820,8 @@ mod tests {
     fn worker_journal_batched_settle_compacts_and_restores() {
         let path = temp_path("batched-settle.recovery.jsonl");
         let item = WorkerQueueItemRecord {
+            focused_reply: None,
+            images: Vec::new(),
             message: "steer me".to_string(),
             priority: Some(crate::worker::QueuePriority::Human),
             preview: Some("preview".to_string()),
@@ -909,6 +919,8 @@ mod tests {
     fn worker_journal_open_skips_torn_utf8_tail() {
         let path = temp_path("torn-utf8-tail.recovery.jsonl");
         let item = WorkerQueueItemRecord {
+            focused_reply: None,
+            images: Vec::new(),
             message: "steer ünïcode".to_string(),
             priority: Some(crate::worker::QueuePriority::Human),
             preview: Some("preview".to_string()),
@@ -1000,6 +1012,8 @@ mod tests {
             let path = temp_path("corrupt-complete-queue.recovery.jsonl");
             let mut journal = WorkerRecoveryJournal::open(&path).unwrap();
             let item = WorkerQueueItemRecord {
+                focused_reply: None,
+                images: Vec::new(),
                 message: "safeXinstruction".to_string(),
                 priority: None,
                 preview: None,

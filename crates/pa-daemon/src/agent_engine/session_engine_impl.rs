@@ -138,6 +138,7 @@ impl SessionEngine for AgentSessionEngine {
             self.cancel_goal_backoff_wake();
             Some((
                 crate::engine::PromptRequest {
+                    focused_reply: None,
                     batch: Vec::new(),
                     message: message.content.text(),
                     images: Vec::new(),
@@ -1436,6 +1437,7 @@ impl SessionEngine for AgentSessionEngine {
         let turn_prompt = match injected {
             Some(custom) => TurnPrompt::Injected(custom),
             None => TurnPrompt::User {
+                focused_reply: request.focused_reply.clone(),
                 text: request.message.clone(),
                 images: request.images.clone(),
                 batch: request.batch,

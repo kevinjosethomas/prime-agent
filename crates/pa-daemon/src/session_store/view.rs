@@ -323,11 +323,16 @@ impl SessionFile {
     ) {
         let entry_message = |entry: &'a SessionEntry| -> Option<std::borrow::Cow<'a, Value>> {
             match entry.type_.as_str() {
-                "message" => entry.fields.get("message").map(std::borrow::Cow::Borrowed),
+                "message" => entry.fields.get("message").map(|message| {
+                    let mut message = message.clone();
+                    message["nativeMessageId"] = Value::String(entry.id.clone());
+                    std::borrow::Cow::Owned(message)
+                }),
                 "custom_message" => {
                     let mut message = entry.fields.clone();
                     if let Some(object) = message.as_object_mut() {
                         object.insert("role".to_string(), Value::String("custom".to_string()));
+                        object.insert("nativeMessageId".to_string(), Value::String(entry.id.clone()));
                         object.insert(
                             "timestamp".to_string(),
                             Value::String(entry.timestamp.clone()),

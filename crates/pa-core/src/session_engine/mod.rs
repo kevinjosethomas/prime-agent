@@ -80,6 +80,7 @@ pub enum PromptOutcome {
 /// Options for `AgentSession::prompt`.
 #[derive(Debug, Default)]
 pub struct PromptOptions {
+    pub focused_reply: Option<pa_types::daemon::FocusedThreadReply>,
     pub streaming_behavior: Option<StreamingBehavior>,
     pub expand_prompt_templates: Option<bool>,
     /// Queue instead of erroring when the session is busy (agent messages).
@@ -431,10 +432,13 @@ async fn persist_event(
 }
 
 /// Custom rows persist as session custom messages.
-fn loop_message_to_session(message: &AgentMessage) -> Option<SessionAgentMessage> {
+pub fn loop_message_to_session(message: &AgentMessage) -> Option<SessionAgentMessage> {
     match message {
         AgentMessage::Standard(inner) => {
             serde_json::from_value(serde_json::to_value(inner).ok()?).ok()
+        }
+        AgentMessage::Custom(custom) if custom.role == "focusedThreadUser" => {
+            serde_json::from_value(custom.payload.get("message")?.clone()).ok()
         }
         AgentMessage::Custom(_) => serde_json::from_value(serde_json::to_value(message).ok()?).ok(),
     }
@@ -460,14 +464,40 @@ fn user_prompt_message(text: &str, images: &[pa_agent::types::ImageContent]) -> 
     ))
 }
 
+fn focused_user_prompt_message(
+    text: &str,
+    images: &[pa_agent::types::ImageContent],
+    route: Option<&pa_types::daemon::FocusedThreadReply>,
+) -> AgentMessage {
+    let message = user_prompt_message(text, images);
+    let Some(route) = route else { return message; };
+    let mut message = serde_json::to_value(message).expect("user message serializes");
+    message["clientInputId"] = serde_json::json!(route.client_input_id);
+    message["replyToMessageId"] = serde_json::json!(route.reply_to_message_id);
+    message["replyContext"] = serde_json::json!(route.reply_context);
+    AgentMessage::Custom(pa_agent::types::CustomAgentMessage {
+        role: "focusedThreadUser".to_string(),
+        payload: serde_json::json!({"message": message, "replyContext": route.reply_context}),
+    })
+}
+
 /// Custom rows ride the loop's custom variant and are filtered out of
 /// the provider request.
 pub(crate) fn session_message_to_loop(message: &SessionAgentMessage) -> Option<AgentMessage> {
-    serde_json::from_value(serde_json::to_value(message).ok()?).ok()
+    let value = serde_json::to_value(message).ok()?;
+    if value.get("role").and_then(serde_json::Value::as_str) == Some("user")
+        && value.get("replyToMessageId").is_some()
+    {
+        return Some(AgentMessage::Custom(pa_agent::types::CustomAgentMessage {
+            role: "focusedThreadUser".to_string(),
+            payload: serde_json::json!({"message": value, "replyContext": value.get("replyContext")}),
+        }));
+    }
+    serde_json::from_value(value).ok()
 }
 
 /// Rows that fail the conversion drop.
-pub(crate) fn rebuilt_loop_messages(rebuilt: Vec<SessionAgentMessage>) -> Vec<AgentMessage> {
+pub fn rebuilt_loop_messages(rebuilt: Vec<SessionAgentMessage>) -> Vec<AgentMessage> {
     rebuilt
         .into_iter()
         .filter_map(|message| session_message_to_loop(&message))
@@ -491,3 +521,34 @@ mod compaction_outcome_tests;
 
 #[cfg(test)]
 mod compaction_unblocked_tests;
+
+#[cfg(test)]
+mod focused_reply_tests {
+    use super::*;
+
+    #[test]
+    fn quote_context_is_input_local_and_normal_user_content_round_trips() {
+        let route = pa_types::daemon::FocusedThreadReply {
+            client_input_id:"input-a".to_string(), reply_to_message_id:"parent-a".to_string(),
+            reply_context: vec![pa_types::daemon::FocusedThreadContextRow {
+                id:"parent-a".to_string(), role:"user".to_string(), text:"quoted prior request".to_string(),
+            }],
+        };
+        let images = vec![pa_agent::types::ImageContent {data:"image".to_string(),mime_type:"image/png".to_string()}];
+        let input = focused_user_prompt_message("normal text", &images, Some(&route));
+        let persisted = loop_message_to_session(&input).unwrap();
+        let value = serde_json::to_value(&persisted).unwrap();
+        assert_eq!(value["role"], "user");
+        assert_eq!(value["content"][0]["text"], "normal text");
+        assert_eq!(value["content"][1]["data"], "image");
+        assert_eq!(value["clientInputId"], "input-a");
+        let restored = rebuilt_loop_messages(vec![persisted]).remove(0);
+        let llm = messages::loop_convert_to_llm(vec![restored]);
+        let model = serde_json::to_value(&llm[0]).unwrap();
+        assert!(model["content"][0]["text"].as_str().unwrap().contains("quoted prior request"));
+        assert_eq!(model["content"][1]["text"], "normal text");
+        let ordinary = user_prompt_message("ordinary", &[]);
+        let ordinary = messages::loop_convert_to_llm(vec![ordinary]);
+        assert!(!serde_json::to_string(&ordinary).unwrap().contains("quoted prior request"));
+    }
+}
