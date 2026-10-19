@@ -432,6 +432,7 @@ async fn persist_event(
 }
 
 /// Custom rows persist as session custom messages.
+#[must_use]
 pub fn loop_message_to_session(message: &AgentMessage) -> Option<SessionAgentMessage> {
     match message {
         AgentMessage::Standard(inner) => {
@@ -499,6 +500,7 @@ pub(crate) fn session_message_to_loop(message: &SessionAgentMessage) -> Option<A
 }
 
 /// Rows that fail the conversion drop.
+#[must_use]
 pub fn rebuilt_loop_messages(rebuilt: Vec<SessionAgentMessage>) -> Vec<AgentMessage> {
     rebuilt
         .into_iter()
