@@ -384,6 +384,7 @@ fn the_rider_serializes_only_when_a_notice_is_parked() {
         "a notice-free projection stays the TS wire shape: {wire}"
     );
     let parked = SessionActionSnapshot {
+        active_input_ownership: Default::default(),
         queued_count: 1,
         steering: vec!["[child-exited: no-reply child:lane]".to_string()],
         follow_ups: Vec::new(),
@@ -406,6 +407,7 @@ fn the_rider_serializes_only_when_a_notice_is_parked() {
     );
     // The injected-prompt rider serializes with the same shape.
     let parked_continuation = SessionActionSnapshot {
+        active_input_ownership: Default::default(),
         queued_count: 1,
         steering: Vec::new(),
         follow_ups: vec!["[goal: continuation]\n\nKeep driving the goal.".to_string()],

@@ -36,6 +36,7 @@ pub(crate) struct SessionCore {
     /// handoff and owned cancellation both inspect this under the core lock.
     pub(crate) running_admission_ids: std::collections::HashSet<String>,
     pub(crate) running_client_input_ids: std::collections::HashSet<String>,
+    pub(crate) active_input_ownership: pa_types::daemon::ReplyOwnership,
     /// TS `autoCompactionEnabled` (settings default: on).
     pub(crate) auto_compaction_enabled: bool,
     /// The last broadcast queue snapshot (TS `_lastSessionActionSnapshot`):
@@ -126,6 +127,7 @@ impl SessionCore {
             running_tool_calls: std::collections::HashSet::new(),
             running_admission_ids: std::collections::HashSet::new(),
             running_client_input_ids: std::collections::HashSet::new(),
+            active_input_ownership: Default::default(),
             auto_compaction_enabled: true,
             last_action_snapshot: Some(SessionActionSnapshot::default()),
             rlm_depth: 0,

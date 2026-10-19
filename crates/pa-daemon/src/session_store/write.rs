@@ -67,6 +67,16 @@ impl SessionFile {
         id
     }
 
+    /// Commit a worker-reserved UUID so streaming and durable message identity agree.
+    pub(crate) fn persist_message_with_id(&mut self, id: &str, message: &Value) -> Result<String> {
+        anyhow::ensure!(!self.by_id.contains_key(id), "message ID already persisted");
+        let entry = SessionEntry {
+            type_: "message".to_string(), id: id.to_string(), parent_id: self.leaf_id.clone(),
+            timestamp: crate::util::now_iso(), fields: json!({"message": message}),
+        };
+        self.persist_built_entry(entry)
+    }
+
     pub fn append_message(&mut self, message: &Value) -> String {
         self.append_entry("message", serde_json::json!({ "message": message }))
     }

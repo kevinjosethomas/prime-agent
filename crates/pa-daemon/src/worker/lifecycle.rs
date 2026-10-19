@@ -350,7 +350,9 @@ impl Worker {
             // only for the didCompact + active-goal branch.
             let mut core = self.core.lock().unwrap();
             core.queued_input_suspended = true;
+            core.active_input_ownership = Default::default();
         }
+        self.emit_worker_event(json!({"type":"input_ownership", "ownership":pa_types::daemon::ReplyOwnership::default()}));
         let outcome = self
             .compaction
             .run(custom_instructions, &self.idle_notify)

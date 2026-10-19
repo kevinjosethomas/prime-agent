@@ -54,6 +54,7 @@ fn burst_runner(engine: Arc<dyn SessionEngine>) -> TurnRunner {
         running_tool_calls: std::collections::HashSet::new(),
         running_admission_ids: std::collections::HashSet::new(),
         running_client_input_ids: std::collections::HashSet::new(),
+        active_input_ownership: Default::default(),
     }));
     TurnRunner {
         core,
@@ -501,4 +502,130 @@ async fn focused_reply_materializes_one_exact_user_and_replays_the_same_native_i
     assert_eq!(snapshot[1]["nativeMessageId"], users[0]["nativeMessageId"]);
     assert_eq!(snapshot[1]["clientInputId"], "input-a");
     assert!(snapshot[2].get("replyToMessageId").is_none());
+}
+
+async fn ownership_event_fixture(frames: Vec<EngineEvent>, route: bool) -> (Vec<Value>, Vec<Value>) {
+    let engine: Arc<dyn SessionEngine> = Arc::new(GateProbeEngine { frames, boundaries: Mutex::new(Vec::new()) });
+    let runner = burst_runner(Arc::clone(&engine));
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = crate::session_store::SessionFile::create("/tmp", None, 0);
+    store.set_path(dir.path().join("session.jsonl"));
+    let parent = store.append_message(&json!({"role":"user","content":"parent","timestamp":0}));
+    runner.core.lock().unwrap().store = Some(store);
+    let mut subscription = runner.events.subscribe();
+    runner.run_turn(engine, vec![QueuedItem {
+        focused_reply: route.then(|| pa_types::daemon::FocusedThreadReply {
+            client_input_id:"input-a".to_string(), reply_to_message_id:parent, reply_context:vec![],
+        }),
+        priority:QueuePriority::Human, preview:None, message:"same".to_string(), custom_message:None,
+        agent_message:None, queue_key:None, admission_id:None, images:vec![], done:None,
+        queue_visible:true, policy:TurnPolicy::Queued, forced_batch:false,
+    }]).await;
+    let mut events = Vec::new();
+    while let Ok(frame) = subscription.try_recv() {
+        let value: Value = serde_json::from_slice(&frame.payload).unwrap();
+        if value["type"] == "session_event" { events.push(value["event"].clone()); }
+    }
+    let core = runner.core.lock().unwrap();
+    assert_eq!(core.active_input_ownership, Default::default());
+    (events, core.store.as_ref().unwrap().messages())
+}
+
+fn owned_user() -> EngineEvent {
+    EngineEvent::UserMessage(json!({"role":"user","content":"same","timestamp":1}))
+}
+
+fn owned_assistant(timestamp: u64) -> EngineEvent {
+    EngineEvent::AssistantMessage(json!({"role":"assistant","content":[],"timestamp":timestamp}))
+}
+
+#[tokio::test]
+async fn ownership_stream_final_aggregate_snapshot_and_settle_agree() {
+    let (events, snapshot) = ownership_event_fixture(vec![
+        owned_user(), EngineEvent::InputOwnershipReady,
+        EngineEvent::AssistantUpdate {message:AssistantSnapshot::Wire(json!({"role":"assistant","content":[],"timestamp":2})),stream_event:Some(json!({"type":"start"}))},
+        EngineEvent::AssistantUpdate {message:AssistantSnapshot::Wire(json!({"role":"assistant","content":[],"timestamp":2})),stream_event:Some(json!({"type":"text_delta","delta":"x"}))},
+        owned_assistant(2),
+        EngineEvent::TurnEnd {message:json!({"role":"assistant"}),tool_results:vec![]},
+        EngineEvent::AgentEnd {messages:vec![]}, EngineEvent::Done(Ok(())),
+    ],true).await;
+    let assistant = &snapshot[2];
+    assert_eq!(assistant["replyOwnership"]["state"], "known");
+    assert_eq!(assistant["replyOwnership"]["inputIds"], json!(["input-a"]));
+    for event in events.iter().filter(|event| event["message"]["role"] == "assistant") {
+        assert_eq!(event["message"]["nativeMessageId"], assistant["nativeMessageId"]);
+        assert_eq!(event["message"]["replyOwnership"], assistant["replyOwnership"]);
+    }
+    let aggregate = events.iter().find(|event| event["type"] == "agent_end").unwrap();
+    assert_eq!(aggregate["messages"][1], *assistant);
+    let changes: Vec<_> = events.iter().filter(|event| event["type"] == "input_ownership").collect();
+    assert_eq!(changes.first().unwrap()["ownership"]["state"], "known");
+    assert_eq!(changes.last().unwrap()["ownership"]["state"], "unknown");
+}
+
+#[tokio::test]
+async fn ownership_survives_tools_and_retry_but_not_autonomous_input() {
+    let (events, snapshot) = ownership_event_fixture(vec![
+        owned_user(),EngineEvent::InputOwnershipReady,owned_assistant(2),
+        EngineEvent::ToolExecutionStart {tool_call_id:"tool".to_string(),tool_name:"test".to_string(),args:json!({})},
+        EngineEvent::ToolResultMessage(json!({"role":"toolResult","toolCallId":"tool","content":[],"timestamp":3})),
+        EngineEvent::TurnStart,EngineEvent::AgentStart,owned_assistant(4),
+        EngineEvent::InputOwnershipUnknown,
+        EngineEvent::UserMessage(json!({"role":"user","content":"autonomous","timestamp":5})),
+        EngineEvent::InputOwnershipReady,owned_assistant(6),EngineEvent::Done(Ok(())),
+    ],true).await;
+    assert_eq!(snapshot[2]["replyOwnership"]["state"], "known");
+    assert_eq!(snapshot[3]["replyOwnership"]["state"], "known");
+    assert_eq!(snapshot[4]["replyOwnership"]["state"], "known");
+    assert_eq!(snapshot[6]["replyOwnership"], json!({"state":"unknown","inputIds":[],"replyToMessageIds":[]}));
+    assert!(events.iter().any(|event| event["type"] == "session_action_update"
+        && event["actions"]["activeInputOwnership"]["state"] == "known"));
+}
+
+#[tokio::test]
+async fn ownership_unrouted_or_contaminated_input_is_unknown() {
+    for (route, frames) in [
+        (false,vec![owned_user(),EngineEvent::InputOwnershipReady,owned_assistant(2),EngineEvent::Done(Ok(()))]),
+        (true,vec![owned_user(),EngineEvent::InputOwnershipUnknown,EngineEvent::InputOwnershipReady,owned_assistant(2),EngineEvent::Done(Ok(()))]),
+    ] {
+        let (_, snapshot) = ownership_event_fixture(frames,route).await;
+        assert_eq!(snapshot[2]["replyOwnership"]["state"], "unknown");
+    }
+}
+
+#[test]
+fn ownership_set_is_exhaustive_bounded_and_deduplicated() {
+    let mut ownership = super::turn::MaterializedInputOwnership::default();
+    for (input,parent) in [("a","A"),("b","B"),("a","A")] {
+        ownership.observe(&json!({"nativeMessageId":format!("native-{input}"),"clientInputId":input,"replyToMessageId":parent}));
+    }
+    assert_eq!(serde_json::to_value(ownership.ownership()).unwrap(),json!({"state":"known","inputIds":["a","b"],"replyToMessageIds":["A","B"]}));
+    ownership.observe(&json!({"nativeMessageId":"unrouted"}));
+    assert_eq!(ownership.ownership(), Default::default());
+    let mut blank = super::turn::MaterializedInputOwnership::default();
+    blank.observe(&json!({"nativeMessageId":"id","clientInputId":" ","replyToMessageId":"A"}));
+    assert_eq!(blank.ownership(), Default::default());
+    let mut bounded = super::turn::MaterializedInputOwnership::default();
+    for index in 0..65 {
+        bounded.observe(&json!({"nativeMessageId":format!("n{index}"),"clientInputId":format!("c{index}"),"replyToMessageId":"A"}));
+    }
+    assert_eq!(bounded.ownership(), Default::default());
+}
+
+#[tokio::test]
+async fn ownership_activity_clear_does_not_rewrite_streaming_message_proof() {
+    let (events,snapshot) = ownership_event_fixture(vec![
+        owned_user(),EngineEvent::InputOwnershipReady,
+        EngineEvent::AssistantUpdate {message:AssistantSnapshot::Wire(json!({"role":"assistant","content":[],"timestamp":2})),stream_event:Some(json!({"type":"start"}))},
+        EngineEvent::InputOwnershipUnknown,
+        EngineEvent::AssistantUpdate {message:AssistantSnapshot::Wire(json!({"role":"assistant","content":[],"timestamp":2})),stream_event:Some(json!({"type":"text_delta","delta":"x"}))},
+        owned_assistant(2),EngineEvent::DoneAborted,
+    ],true).await;
+    let assistant = &snapshot[2];
+    assert_eq!(assistant["replyOwnership"]["state"],"known");
+    for event in events.iter().filter(|event|event["message"]["role"]=="assistant") {
+        assert_eq!(event["message"]["nativeMessageId"],assistant["nativeMessageId"]);
+        assert_eq!(event["message"]["replyOwnership"],assistant["replyOwnership"]);
+    }
+    assert_eq!(events.iter().rev().find(|event|event["type"]=="input_ownership").unwrap()["ownership"]["state"],"unknown");
 }

@@ -331,6 +331,7 @@ impl SessionEngine for ScriptedEngine {
                 return;
             }
         }
+        if !emit(EngineEvent::InputOwnershipReady) { return; }
         // The fixture's mid-turn goal announcement (the real engine's
         // `goal_update` path).
         if let Some(goal) = self.goal.as_ref().filter(|goal| goal.emit_update_on_prompt) {

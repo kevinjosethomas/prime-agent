@@ -151,6 +151,8 @@ pub struct SessionSummary {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionActionSnapshot {
+    #[serde(default)]
+    pub active_input_ownership: pa_types::daemon::ReplyOwnership,
     pub queued_count: u32,
     pub steering: Vec<String>,
     pub follow_ups: Vec<String>,
@@ -202,6 +204,8 @@ pub struct SessionActionActive {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentConnectionState {
+    #[serde(default)]
+    pub active_input_ownership: pa_types::daemon::ReplyOwnership,
     #[serde(default)]
     pub input_capabilities: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]

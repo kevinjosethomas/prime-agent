@@ -87,6 +87,11 @@ impl AgentSessionEngine {
         // item's first run; this subscription forwards them only once a
         // boundary frame already passed.
         let boundary_passed = std::sync::Arc::clone(boundary_passed);
+        let expected_focused = match prompt {
+            TurnPrompt::User { focused_reply, .. } => focused_reply.clone(),
+            TurnPrompt::Injected(_) => None,
+        };
+        let actual_focused_seen = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let subscription = {
             let tx = tx.clone();
             let pending_model_changes = pending_model_changes.clone();
@@ -107,6 +112,8 @@ impl AgentSessionEngine {
                     let autonomous_driver = std::sync::Arc::clone(&autonomous_driver);
                     let goal_runtime = goal_runtime.clone();
                     let goal_budget_crossed = goal_budget_crossed.clone();
+                    let expected_focused = expected_focused.clone();
+                    let actual_focused_seen = std::sync::Arc::clone(&actual_focused_seen);
                     Box::pin(async move {
                         use pa_agent::types::AgentEvent;
                         if let AgentEvent::MessageEnd {
@@ -164,6 +171,32 @@ impl AgentSessionEngine {
                             AgentEvent::MessageStart {
                                 message: agent_message,
                             } => {
+                                // The primary/batch rows were persisted before this subscription.
+                                // Later actual driving rows replace their ownership; tool/retry turns do not.
+                                let focused_match = match (agent_message, expected_focused.as_ref()) {
+                                    (pa_agent::types::AgentMessage::Custom(custom), Some(route))
+                                        if custom.role == "focusedThreadUser" && first_attempt
+                                            && !boundary_passed.load(std::sync::atomic::Ordering::SeqCst)
+                                            && !actual_focused_seen.load(std::sync::atomic::Ordering::SeqCst) => {
+                                        custom.payload.get("message").is_some_and(|message|
+                                            message.get("clientInputId").and_then(Value::as_str) == Some(route.client_input_id.as_str())
+                                            && message.get("replyToMessageId").and_then(Value::as_str) == Some(route.reply_to_message_id.as_str()))
+                                    }
+                                    _ => false,
+                                };
+                                if focused_match {
+                                    actual_focused_seen.store(true, std::sync::atomic::Ordering::SeqCst);
+                                } else if matches!(agent_message.role(), "user" | "focusedThreadUser")
+                                    || matches!(agent_message, pa_agent::types::AgentMessage::Custom(custom)
+                                        if custom.role == "custom" && !matches!(
+                                            custom.payload.get("customType").and_then(Value::as_str),
+                                            Some("harness_digest" | "ipython_state_restored" | "python_skills_unavailable"
+                                                | "refinement_notice" | "refinement_outcome" | "provider_retry_outcome"
+                                                | "compaction_outcome" | "ipython_state")
+                                        ))
+                                {
+                                    let _ = tx.send(EngineEvent::InputOwnershipUnknown);
+                                }
                                 if matches!(
                                     agent_message,
                                     pa_agent::types::AgentMessage::Standard(
@@ -171,6 +204,10 @@ impl AgentSessionEngine {
                                     )
                                 ) {
                                     if let Some(value) = session_wire_value(agent_message) {
+                                        if first_attempt && !boundary_passed.load(std::sync::atomic::Ordering::SeqCst)
+                                            && (expected_focused.is_none() || actual_focused_seen.load(std::sync::atomic::Ordering::SeqCst)) {
+                                            let _ = tx.send(EngineEvent::InputOwnershipReady);
+                                        }
                                         let _ = tx.send(EngineEvent::AssistantUpdate {
                                             message: AssistantSnapshot::Wire(value),
                                             stream_event: Some(json!({ "type": "start" })),

@@ -88,7 +88,8 @@ impl Worker {
         let store = core.store.as_ref();
 
         AgentConnectionState {
-            input_capabilities: json!({"focusedThreadReplyV1": true}),
+            active_input_ownership: core.active_input_ownership.clone(),
+            input_capabilities: json!({"focusedThreadReplyV1": true, "focusedThreadOutputV1": true}),
             is_streaming: core.busy,
             is_compacting: core.compacting,
             active_session_id: Some(core.active_session_id.clone()),
@@ -635,6 +636,7 @@ pub(crate) fn session_snapshot(core: &SessionCore) -> SessionActionSnapshot {
     let injected_prompts =
         |items: &std::collections::VecDeque<QueuedItem>| indices(items, is_injected_prompt_item);
     SessionActionSnapshot {
+        active_input_ownership: core.active_input_ownership.clone(),
         queued_count: (core.steering.len() + core.follow_up.len()) as u32,
         steering: lane(&core.steering),
         follow_ups: lane(&core.follow_up),

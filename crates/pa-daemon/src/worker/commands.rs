@@ -353,7 +353,9 @@ impl Worker {
             // The queue parks and a plain prompt is rejected until a
             // resume site fires.
             core.queued_input_suspended = true;
+            core.active_input_ownership = Default::default();
         }
+        self.emit_worker_event(json!({"type":"input_ownership", "ownership":pa_types::daemon::ReplyOwnership::default()}));
         // Queue-INVISIBLE turn actions cancel: a direct prompt admitted on an idle
         // session never became a queue row, so the abort must resolve its waiting
         // response, not park it behind the suspension forever. Queue-visible lanes
@@ -412,7 +414,8 @@ impl Worker {
         let (core, inputs) = self.summary_inputs();
         let summary = self.summary_locked(&core, inputs);
         let mut state = serde_json::to_value(&summary).unwrap_or(Value::Null);
-        state["inputCapabilities"] = json!({"focusedThreadReplyV1": true});
+        state["inputCapabilities"] = json!({"focusedThreadReplyV1": true, "focusedThreadOutputV1": true});
+        state["activeInputOwnership"] = json!(core.active_input_ownership);
         response_success(None, "get_state", Some(state))
     }
 
@@ -622,7 +625,9 @@ impl Worker {
         core.abort_requested = true;
         // The same TS `requestAbort()` suspension as the bare `abort`.
         core.queued_input_suspended = true;
+        core.active_input_ownership = Default::default();
         drop(core);
+        self.emit_worker_event(json!({"type":"input_ownership", "ownership":pa_types::daemon::ReplyOwnership::default()}));
         // And the same eager agent abort.
         self.engine.abort_in_flight_turn();
         response_success(None, "abort_and_clear_queue", cleared.data)
