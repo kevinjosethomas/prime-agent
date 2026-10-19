@@ -1,0 +1,20 @@
+name: Codex stream inactivity regression
+on:
+  push:
+    branches: [fix/codex-stream-idle-deadline]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - run: cargo fmt --all --check
+      - run: cargo test --locked -p pa-ai --lib codex_stream_inactivity
+      - run: cargo test --locked -p pa-ai --lib openai_codex_responses

@@ -281,10 +281,14 @@ async fn read_request_events(
             Some(signal) => {
                 tokio::select! {
                     () = signal.cancelled() => return Err(CodexStreamError::Aborted),
+                    () = events.closed() => return Err(CodexStreamError::Aborted),
                     message = next => message,
                 }
             }
-            None => next.await,
+            None => tokio::select! {
+                () = events.closed() => return Err(CodexStreamError::Aborted),
+                message = next => message,
+            },
         };
         match message {
             // Peer EOF without a close frame: the runtime fires a close event with code 1006

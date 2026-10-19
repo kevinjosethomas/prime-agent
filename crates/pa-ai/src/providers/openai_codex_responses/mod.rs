@@ -44,6 +44,7 @@ use crate::utils_inner::sse::SseDecoder;
 use crate::utils_inner::stream_failure::{record_stream_failure, ProviderError};
 
 mod errors;
+mod inactivity;
 pub(crate) mod request;
 pub(crate) mod session;
 pub(crate) mod websocket;
@@ -449,7 +450,7 @@ async fn run_websocket_attempt(
         let mut processor = ResponsesStreamProcessor::new(model, output, writer, hooks);
         // The TS catch settles partial tool calls before the error event carries the message.
         let streamed: Result<(), CodexStreamError> = async {
-            while let Some(event) = events.recv().await {
+            while let Some(event) = inactivity::next_event(&mut events).await? {
                 match event {
                     websocket::WorkerEvent::Event(event) => {
                         // Codex can emit lifecycle, telemetry, or vendor metadata before rejecting
@@ -485,6 +486,8 @@ async fn run_websocket_attempt(
     }
     .await;
 
+    // Release a silent socket worker before asking it to close its cached connection.
+    drop(events);
     match process {
         Ok(()) => {
             if options
