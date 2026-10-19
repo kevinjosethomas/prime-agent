@@ -21,6 +21,7 @@ pub(super) enum Request {
         target: Target,
         key: String,
         action: Action,
+        method_id: Option<Method>,
     },
     Reply {
         id: String,
@@ -44,6 +45,14 @@ pub(super) enum Action {
     Logout,
     Paste,
     Key,
+}
+
+/// Stable method selectors are scoped to a provider, never encoded into its id.
+#[derive(Clone, Copy, Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Method {
+    Oauth,
+    ApiKey,
 }
 
 fn valid_id(value: &str) -> bool {
@@ -70,11 +79,14 @@ impl Request {
                     target,
                     key,
                     action,
+                    method_id,
                     ..
                 } => {
                     valid_id(key)
                         && (*target == Target::Mcp
                             || matches!(action, Action::Login | Action::Logout))
+                        && (method_id.is_none()
+                            || (*target == Target::Provider && *action == Action::Login))
                 }
                 Self::Reply {
                     request_id, value, ..

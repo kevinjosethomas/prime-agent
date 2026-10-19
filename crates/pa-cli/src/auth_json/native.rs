@@ -1,5 +1,5 @@
 //! Adapt the existing CLI auth services; no new credential storage or OAuth implementation.
-use super::protocol::{Action, Target};
+use super::protocol::{Action, Method, Target};
 use pa_tui::auth_panel::{AuthPanelHandle, PastePromptTone, PasteStyle};
 use pa_tui::client_auth::ClientAuthCommands;
 use pa_tui::provider_auth::{
@@ -8,8 +8,29 @@ use pa_tui::provider_auth::{
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
+fn method(provider: &ProviderRow) -> Method {
+    match provider.auth_type {
+        AuthType::Oauth => Method::Oauth,
+        AuthType::ApiKey => Method::ApiKey,
+    }
+}
+
+fn select_provider(
+    rows: Vec<ProviderRow>,
+    key: &str,
+    method_id: Option<Method>,
+) -> Option<ProviderRow> {
+    rows.into_iter().find(|provider| {
+        provider.id == key
+            && provider.available
+            && !provider.id.starts_with("mcp:")
+            && provider.id != pa_core::auth::SERPER_CREDENTIAL_ID
+            && method_id.is_none_or(|selected| method(provider) == selected)
+    })
+}
+
 fn row(value: &ProviderRow) -> Value {
-    json!({"id":value.id,"name":value.name,"authType":match value.auth_type { AuthType::Oauth => "oauth", AuthType::ApiKey => "api_key" },"flow":match value.flow { AuthFlow::ApiKeyPrompt => "api_key", AuthFlow::TerminalFlow => "browser" },"configured":value.configured,"available":value.available,"status":value.status.as_ref().map(|status| json!({"style":match status.style {AuthStatusStyle::Success=>"success",AuthStatusStyle::Warning=>"warning",AuthStatusStyle::Muted=>"muted"},"label":status.label}))})
+    json!({"id":value.id,"methodId":method(value),"name":value.name,"authType":match value.auth_type { AuthType::Oauth => "oauth", AuthType::ApiKey => "api_key" },"flow":match value.flow { AuthFlow::ApiKeyPrompt => "api_key", AuthFlow::TerminalFlow => "browser" },"configured":value.configured,"available":value.available,"status":value.status.as_ref().map(|status| json!({"style":match status.style {AuthStatusStyle::Success=>"success",AuthStatusStyle::Warning=>"warning",AuthStatusStyle::Muted=>"muted"},"label":status.label}))})
 }
 pub(super) async fn options(cwd: PathBuf, agent_dir: PathBuf) -> Value {
     let auth = crate::provider_login::ProviderAuth::new(cwd, agent_dir);
@@ -23,6 +44,7 @@ pub(super) async fn flow(
     target: Target,
     action: Action,
     key: String,
+    method_id: Option<Method>,
     panel: AuthPanelHandle,
 ) -> ProviderAuthOutcome {
     match target {
@@ -33,12 +55,7 @@ pub(super) async fn flow(
             } else {
                 auth.login_options().await
             };
-            let Some(provider) = rows.into_iter().find(|provider| {
-                provider.id == key
-                    && provider.available
-                    && !provider.id.starts_with("mcp:")
-                    && provider.id != pa_core::auth::SERPER_CREDENTIAL_ID
-            }) else {
+            let Some(provider) = select_provider(rows, &key, method_id) else {
                 return ProviderAuthOutcome::Error("Provider unavailable".to_string());
             };
             match action {
@@ -85,5 +102,61 @@ pub(super) async fn flow(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn provider(id: &str, auth_type: AuthType) -> ProviderRow {
+        ProviderRow {
+            id: id.to_string(),
+            name: id.to_string(),
+            auth_type,
+            flow: match auth_type {
+                AuthType::Oauth => AuthFlow::TerminalFlow,
+                AuthType::ApiKey => AuthFlow::ApiKeyPrompt,
+            },
+            status: None,
+            configured: false,
+            available: true,
+        }
+    }
+
+    #[test]
+    fn explicit_method_routes_the_native_row_not_the_first_matching_provider() {
+        for id in ["anthropic", "xai"] {
+            for (first, second) in [
+                (AuthType::Oauth, AuthType::ApiKey),
+                (AuthType::ApiKey, AuthType::Oauth),
+            ] {
+                let rows = vec![provider(id, first), provider(id, second)];
+                for (selected, expected) in [
+                    (Method::Oauth, AuthType::Oauth),
+                    (Method::ApiKey, AuthType::ApiKey),
+                ] {
+                    let selected = select_provider(rows.clone(), id, Some(selected)).unwrap();
+                    assert_eq!(selected, provider(id, expected));
+                    let catalog = row(&selected);
+                    assert_eq!(
+                        catalog["methodId"],
+                        serde_json::to_value(method(&selected)).unwrap()
+                    );
+                }
+                // Old v1 clients still get the native catalog's first row.
+                assert_eq!(select_provider(rows, id, None), Some(provider(id, first)));
+            }
+        }
+    }
+
+    #[test]
+    fn missing_or_unavailable_method_never_falls_back_to_another_row() {
+        let rows = vec![provider("anthropic", AuthType::Oauth)];
+        assert!(select_provider(rows.clone(), "anthropic", Some(Method::ApiKey)).is_none());
+        assert!(select_provider(rows, "anthropic:api_key", Some(Method::Oauth)).is_none());
+        let mut unavailable = provider("anthropic", AuthType::ApiKey);
+        unavailable.available = false;
+        assert!(select_provider(vec![unavailable], "anthropic", Some(Method::ApiKey)).is_none());
     }
 }
