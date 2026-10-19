@@ -340,7 +340,9 @@ async fn run_stream(
     }
 
     if response.status >= 400 {
-        let api_error = parse_error_response(&mut response).await;
+        let api_error = inactivity::wait_for_activity(parse_error_response(&mut response))
+            .await
+            .map_err(CodexStreamError::into_provider_error)?;
         return Err(api_error.into_provider_error());
     }
 
@@ -452,7 +454,8 @@ async fn run_websocket_attempt(
         let mut processor = ResponsesStreamProcessor::new(model, output, writer, hooks);
         // The TS catch settles partial tool calls before the error event carries the message.
         let streamed: Result<(), CodexStreamError> = async {
-            while let Some(event) = inactivity::next_event(&mut events).await? {
+            let mut activity = inactivity::ActivityWindow::new();
+            while let Some(event) = activity.next_event(&mut events).await? {
                 match event {
                     websocket::WorkerEvent::Event(event) => {
                         // Codex can emit lifecycle, telemetry, or vendor metadata before rejecting
@@ -565,14 +568,16 @@ async fn run_sse_stream(
     // The TS catch settles partial tool calls before the error event carries the message.
     let stream_result: Result<(), ProviderError> = async {
         let mut decoder = SseDecoder::new();
+        let mut activity = inactivity::ActivityWindow::new();
         loop {
-            let Some(chunk) = inactivity::wait_for_activity(response.next_text())
+            let Some(chunk) = activity
+                .wait(response.next_text())
                 .await
                 .map_err(CodexStreamError::into_provider_error)??
             else {
                 break;
             };
-            process_sse_chunk(&chunk, &mut decoder, model, &mut processor)?;
+            process_sse_chunk(&chunk, &mut decoder, model, &mut processor, &mut activity)?;
         }
         for sse in decoder.finish() {
             if sse.data.trim().is_empty() || sse.data.trim() == "[DONE]" {
@@ -603,6 +608,7 @@ fn process_sse_chunk(
     decoder: &mut SseDecoder,
     _model: &Model,
     processor: &mut ResponsesStreamProcessor<'_>,
+    activity: &mut inactivity::ActivityWindow,
 ) -> Result<(), ProviderError> {
     for sse in decoder.push_text(chunk) {
         if sse.data.trim().is_empty() || sse.data.trim() == "[DONE]" {
@@ -615,6 +621,7 @@ fn process_sse_chunk(
             })
             .into_provider_error()
         })?;
+        activity.observe(&event);
         let mapped = map_codex_event(event).map_err(CodexStreamError::into_provider_error)?;
         processor.handle_event(&mapped.event)?;
         if mapped.done {
