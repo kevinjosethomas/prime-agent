@@ -31,7 +31,10 @@ async fn ready_probe_with_eof_never_completes() {
     })
     .await
     .unwrap();
-    assert_eq!(rows(output), vec![json!({"type": "ready", "protocolVersion": 1})]);
+    assert_eq!(
+        rows(output),
+        vec![json!({"type": "ready", "protocolVersion": 1})]
+    );
 }
 
 #[tokio::test]
@@ -41,12 +44,20 @@ async fn result_echoes_id_text_and_usage_and_completes_once() {
     let calls = Arc::new(AtomicUsize::new(0));
     let count = calls.clone();
     let mut output = Vec::new();
-    serve(BufReader::new(bytes.as_slice()), &mut output, move |request| async move {
-        count.fetch_add(1, Ordering::SeqCst);
-        assert_eq!(request.user, "TARGET: ship it");
-        assert_eq!(request.max_tokens, 200);
-        Ok(RouteResponse { text: "{\"task\":\"a\"}".to_string(), input: 12, output: 3 })
-    })
+    serve(
+        BufReader::new(bytes.as_slice()),
+        &mut output,
+        move |request| async move {
+            count.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(request.user, "TARGET: ship it");
+            assert_eq!(request.max_tokens, 200);
+            Ok(RouteResponse {
+                text: "{\"task\":\"a\"}".to_string(),
+                input: 12,
+                output: 3,
+            })
+        },
+    )
     .await
     .unwrap();
     let rows = rows(output);
@@ -72,9 +83,11 @@ async fn invalid_requests_never_complete() {
     long_user["user"] = json!("x".repeat(MAX_USER_BYTES + 1));
     for value in [extra, empty_user, no_tokens, too_many, long_user] {
         let mut output = Vec::new();
-        serve(BufReader::new(line(&value).as_slice()), &mut output, |_| async {
-            panic!("invalid request must not complete")
-        })
+        serve(
+            BufReader::new(line(&value).as_slice()),
+            &mut output,
+            |_| async { panic!("invalid request must not complete") },
+        )
         .await
         .unwrap();
         let last = rows(output).pop().unwrap();
@@ -87,9 +100,11 @@ async fn invalid_requests_never_complete() {
 #[tokio::test]
 async fn completion_errors_are_fixed_messages_with_the_request_id() {
     let mut output = Vec::new();
-    serve(BufReader::new(line(&request()).as_slice()), &mut output, |_| async {
-        Err("Task route completion failed")
-    })
+    serve(
+        BufReader::new(line(&request()).as_slice()),
+        &mut output,
+        |_| async { Err("Task route completion failed") },
+    )
     .await
     .unwrap();
     assert_eq!(

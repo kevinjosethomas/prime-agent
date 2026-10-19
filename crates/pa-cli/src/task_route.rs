@@ -100,7 +100,11 @@ where
         Ok(Ok(0)) => return Ok(()),
         Ok(Ok(_)) => {}
         Err(_) => {
-            return emit(&mut writer, error(None, "timeout", "Task route request timed out")).await
+            return emit(
+                &mut writer,
+                error(None, "timeout", "Task route request timed out"),
+            )
+            .await
         }
         Ok(Err(_)) => return Err(std::io::Error::other("Task route connection closed")),
     }
@@ -158,7 +162,10 @@ fn model_and_auth(
     ))
 }
 
-async fn complete(agent_dir: PathBuf, request: RouteRequest) -> Result<RouteResponse, &'static str> {
+async fn complete(
+    agent_dir: PathBuf,
+    request: RouteRequest,
+) -> Result<RouteResponse, &'static str> {
     let (model, mut base) = model_and_auth(&agent_dir, &request.model)?;
     base.max_tokens = Some(request.max_tokens);
     let mut options = pa_ai::types::SimpleStreamOptions::from_base(base);
