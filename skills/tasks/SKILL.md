@@ -123,11 +123,11 @@ Kevin scans these in the sidebar and detail page.
 
 ## Messages
 
-Clef assigns chat messages to tasks automatically. Do not spend model turns
-classifying each message. Use
-`await tasks.assign_messages(message_ids, task_id, source="manual")` only for a
-correction Kevin explicitly asks for; manual assignments are protected from
-automatic changes. `task_id=None` marks messages as general.
+A message is placed by Kevin's choice (a focused-thread send in Primer, or a move
+he asks for) or else by Clef, which places every other message, including yours.
+Do not classify or tag messages yourself. When Kevin explicitly asks to move
+messages, record it with `await tasks.assign_messages(message_ids, task_id)`;
+Clef never overrides it. `task_id=None` means no task.
 
 ## Agents
 

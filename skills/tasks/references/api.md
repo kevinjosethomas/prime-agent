@@ -224,18 +224,18 @@ work into subtasks and give each its own status.
 
 ## Message assignment and failure recovery
 
-Assign whole messages (IDs from `context()`) to the task they belong to, or to `None`
-when they are deliberately general:
+Clef places messages automatically. A message moves only by Kevin's choice: a
+focused-thread send in Primer, or a move he explicitly asks for. To record such a
+move, pass whole message IDs (from `context()`) and the task, or `None` for no task:
 
 ```python
 await tasks.assign_messages([actual_message_id], "primer-drop-files")
 await tasks.assign_messages([greeting_id], None)
-await tasks.assign_messages([actual_message_id], "o1", source="manual")
 ```
 
-`assign_messages(message_ids, task_id, *, source="agent")` takes 1–200 message IDs.
-Use `source="manual"` only for a correction Kevin explicitly asked for; manual
-assignments are protected from later automatic relabeling. Do not guess IDs.
+`assign_messages(message_ids, task_id)` takes 1–200 message IDs and records a manual
+placement that Clef never overrides. Do not use it to classify messages yourself,
+and do not guess IDs.
 
 Each report gets a unique UUID event ID. If delivery fails or times out, its commit
 may be uncertain. Retry the exact event, not a newly generated equivalent update:

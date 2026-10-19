@@ -8,7 +8,7 @@ and requires only the standard library.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 if TYPE_CHECKING:
     from rlm import RLMCreateSessionHandle, RLMSpawnHandle, RLMSubagent
@@ -114,10 +114,9 @@ async def sync_agents(task_id: str) -> tuple[RLMSubagent, ...]:
     return await _configured().sync_agents(task_id)
 
 
-async def assign_messages(message_ids: Sequence[str], task_id: str | None, *,
-                          source: Literal["agent", "manual"] = "agent") -> Any:
-    """Assign messages to one task, or to none (deliberately general)."""
-    return await _configured().assign_messages(message_ids, task_id, source=source)
+async def assign_messages(message_ids: Sequence[str], task_id: str | None) -> Any:
+    """Move messages to one task, or to none, as Kevin explicitly asked."""
+    return await _configured().assign_messages(message_ids, task_id)
 
 
 async def retry(report: Report) -> Any:

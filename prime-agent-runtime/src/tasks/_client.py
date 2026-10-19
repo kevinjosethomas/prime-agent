@@ -252,11 +252,10 @@ class Client:
                 matched.append(row)
         return tuple(matched)
 
-    async def assign_messages(self, message_ids: Sequence[str], task_id: str | None, *,
-                              source: str = "agent") -> Any:
-        """Assign messages to one task, or to none when they are deliberately general.
+    async def assign_messages(self, message_ids: Sequence[str], task_id: str | None) -> Any:
+        """Move messages to one task, or to none, as Kevin explicitly asked.
 
-        Use source="manual" only for a correction Kevin explicitly asked for.
+        This records Kevin's choice; Clef places every other message.
         """
         if isinstance(message_ids, (str, bytes)) or not 1 <= len(message_ids) <= 200:
             raise ValueError("Pass 1–200 message IDs as a sequence")
@@ -264,10 +263,8 @@ class Client:
             text(value, "message ID")
         if task_id is not None:
             text(task_id, "task ID")
-        if source not in ("agent", "manual"):
-            raise ValueError("source must be 'agent' or 'manual'")
         return await self.retry(Report.create("set-message-task", messageIds=list(message_ids),
-                                            taskId=task_id, source=source))
+                                            taskId=task_id, source="manual"))
 
     async def retry(self, report: Report) -> Any:
         """Deliver the exact same immutable event again after uncertain delivery."""

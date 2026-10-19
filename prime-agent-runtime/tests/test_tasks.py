@@ -149,22 +149,20 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task.title, title)
         self.assertFalse(marker.exists())
 
-    async def test_assign_messages_reports_task_none_and_manual_source(self):
+    async def test_assign_messages_records_manual_moves(self):
         tasks.configure(**self.config)
         await self.client.assign_messages(["m1", "m2"], "json")
         await tasks.assign_messages(["m3"], None)
-        await tasks.assign_messages(["m1"], "other", source="manual")
         self.assertEqual([{key: value for key, value in report.items() if key != "eventId"}
                           for report in self.state()["reports"]], [
-            {"operation": "set-message-task", "messageIds": ["m1", "m2"], "taskId": "json", "source": "agent"},
-            {"operation": "set-message-task", "messageIds": ["m3"], "taskId": None, "source": "agent"},
-            {"operation": "set-message-task", "messageIds": ["m1"], "taskId": "other", "source": "manual"}])
+            {"operation": "set-message-task", "messageIds": ["m1", "m2"], "taskId": "json", "source": "manual"},
+            {"operation": "set-message-task", "messageIds": ["m3"], "taskId": None, "source": "manual"}])
         for args, kwargs in ((("m1", "json"), {}), (([], "json"), {}), ((["m"] * 201, "json"), {}),
-                             (([" "], "json"), {}), ((["m1"], ""), {}), ((["m1"], "json"), {"source": "clef"})):
+                             (([" "], "json"), {}), ((["m1"], ""), {})):
             with self.subTest(args=args, kwargs=kwargs):
                 with self.assertRaises(ValueError):
                     await self.client.assign_messages(*args, **kwargs)
-        self.assertEqual(len(self.state()["reports"]), 3)
+        self.assertEqual(len(self.state()["reports"]), 2)
 
     async def test_commit_links_roundtrip(self):
         link = Link("commit", "https://github.com/kevinjosethomas/prime-agent/commit/3a8a666b5", "Rename")
