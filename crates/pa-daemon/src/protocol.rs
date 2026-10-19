@@ -47,7 +47,6 @@ pub(crate) fn app_version() -> &'static str {
 /// Command types the daemon recognizes (TS `DAEMON_COMMAND_TYPES` in TS
 /// declared order, followed by the Rust-native supervisor/worker frames).
 pub const KNOWN_COMMAND_TYPES: &[&str] = &[
-    "classify_workstream",
     "ack_result",
     "list",
     "list_agent_peers",
@@ -98,10 +97,6 @@ pub const KNOWN_COMMAND_TYPES: &[&str] = &[
     "get_commands",
     "get_resource_snapshot",
     "replace_acp_mcp_servers",
-    "get_global_harness_defaults",
-    "set_global_harness_defaults",
-    "get_subagent_model_default",
-    "set_subagent_model_default",
     "get_model_catalog",
     "get_available_models",
     "get_queue",
@@ -170,6 +165,11 @@ pub const KNOWN_COMMAND_TYPES: &[&str] = &[
     "set_mcp_static_token",
     "remove_mcp_connection",
     "mark_anthropic_warning_shown",
+    "classify_workstream",
+    "get_global_harness_defaults",
+    "set_global_harness_defaults",
+    "get_subagent_model_default",
+    "set_subagent_model_default",
 ];
 
 /// Parsed client command envelope.

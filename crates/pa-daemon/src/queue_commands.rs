@@ -770,7 +770,7 @@ mod tests {
                 &mut lane,
                 0,
                 "same",
-                &json!({"text":"/clear"}),
+                &json!({"text":"/compact"}),
                 "replace",
                 "deleted"
             ),

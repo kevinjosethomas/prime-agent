@@ -88,6 +88,19 @@ impl MaterializedInputOwnership {
     }
 }
 
+/// Whether an emitted row is the engine's settled row plus the worker's identity stamps.
+fn same_settled_row(decorated: &Value, settled: &Value) -> bool {
+    let strip = |row: &Value| {
+        let mut row = row.clone();
+        if let Some(fields) = row.as_object_mut() {
+            fields.remove("nativeMessageId");
+            fields.remove("replyOwnership");
+        }
+        row
+    };
+    strip(decorated) == strip(settled)
+}
+
 impl TurnRunner {
     pub(super) async fn run(self) {
         loop {
@@ -858,7 +871,17 @@ impl TurnRunner {
                         *tool_results = std::mem::take(&mut completed_tools);
                     }
                     EngineEvent::AgentEnd { messages } => {
-                        messages.clone_from(&aggregate_rows);
+                        // Rows this run emitted carry their stamped identity and ownership;
+                        // rows it never emitted (the deferred harness digest) keep the
+                        // engine's form.
+                        for message in messages.iter_mut() {
+                            if let Some(decorated) = aggregate_rows
+                                .iter()
+                                .find(|row| same_settled_row(row, message))
+                            {
+                                message.clone_from(decorated);
+                            }
+                        }
                     }
                     _ => {}
                 }

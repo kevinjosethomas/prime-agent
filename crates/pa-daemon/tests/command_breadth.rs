@@ -548,6 +548,11 @@ fn known_command_types_match_the_ts_list() {
                     | "tail_kernel_bash"
                     | "kill_kernel_bash"
                     | "mark_anthropic_warning_shown"
+                    | "classify_workstream"
+                    | "get_global_harness_defaults"
+                    | "set_global_harness_defaults"
+                    | "get_subagent_model_default"
+                    | "set_subagent_model_default"
             ),
             "unexpected non-TS command type: {extra}"
         );

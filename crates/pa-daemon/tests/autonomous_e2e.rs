@@ -381,7 +381,8 @@ fn autonomous_gate_failure_then_pass_stops_the_run_in_run() {
     );
     // The in-run ordering (the TS frame order): the continuation's user row pair is
     // preceded by its `turn_start`, which follows the settled turn's `turn_end` with no
-    // run boundary between.
+    // run boundary between. `input_ownership` is the additive Rust-only ownership
+    // channel (no TS frame), so the TS order is checked without it.
     let continuation_index = harness
         .client
         .events
@@ -395,6 +396,7 @@ fn autonomous_gate_failure_then_pass_stops_the_run_in_run() {
     let preceding: Vec<&str> = harness.client.events[..continuation_index]
         .iter()
         .filter_map(|event| event.get("type").and_then(Value::as_str))
+        .filter(|kind| *kind != "input_ownership")
         .collect();
     assert_eq!(
         preceding.iter().rev().take(3).copied().collect::<Vec<_>>(),

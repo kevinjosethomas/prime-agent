@@ -48,6 +48,10 @@ fn supervisor_end_to_end_scripted_session_lifecycle() {
             "heartbeat_catalog",
             "heartbeat_management",
             "model_catalog",
+            // Fork-native capabilities (no TS counterpart).
+            "subagent_model_defaults",
+            "global_harness_defaults",
+            "workstream_classification",
             "side_question_transcript",
             "transient_bash",
             "kernel_bash_activity",

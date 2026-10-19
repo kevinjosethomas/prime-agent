@@ -503,6 +503,8 @@ const TS_PACKAGED_SKILL_SET: &[&str] = &[
     "rlm-heartbeat",
     "skill-creator",
     "websearch",
+    // The desktop fork's runtime skill for the workstreams Python API (no TS counterpart).
+    "workstreams",
 ];
 
 /// The bundled skills directory matches the TS packaged set name-for-name: the generic `mcp` skill

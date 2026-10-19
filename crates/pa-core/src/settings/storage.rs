@@ -185,8 +185,17 @@ impl SettingsStorage for FileSettingsStorage {
         let _process_guard = process_lock(path);
         let metadata = match fs::metadata(path) {
             Ok(metadata) => metadata,
-            // Missing settings are unset; an unreadable path is not an absent preference.
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            // Missing settings are unset (a non-directory path component means the file
+            // cannot exist, as TS `existsSync` reports); an unreadable path is not an
+            // absent preference.
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                return Ok(None)
+            }
             Err(error) => return Err(error.into()),
         };
         let Some(identity) = stat_identity(&metadata) else {
