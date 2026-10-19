@@ -376,6 +376,20 @@ jobs:
           export PA_E2E_KERNEL_PYTHON="${PRIME_AGENT_KERNEL_PYTHON}"
           export PYTHONPATH="${reference}/package/skills/goal/src"
           test -x "${PRIME_AGENT_KERNEL_PYTHON}"
+          # The pinned TS @ provider needs the real fd executable. Stage
+          # the distro binary only for the completion fixture; enumeration
+          # stays in the actual product rather than a mocked tool.
+          if [ -f scripts/review_at_completion_parity.py ]; then
+            if ! command -v fd >/dev/null && ! command -v fdfind >/dev/null; then
+              sudo apt-get update -qq
+              sudo apt-get install -y --no-install-recommends fd-find
+            fi
+            if ! command -v fd >/dev/null; then
+              mkdir -p "${RUNNER_TEMP}/at-completion-tools"
+              ln -s "$(command -v fdfind)" "${RUNNER_TEMP}/at-completion-tools/fd"
+              export PATH="${RUNNER_TEMP}/at-completion-tools:${PATH}"
+            fi
+          fi
           # Discover independently added verifiers so feature PRs do not
           # overwrite or conflict with each other's comparison selection.
           for verifier in scripts/review_*_parity.py; do

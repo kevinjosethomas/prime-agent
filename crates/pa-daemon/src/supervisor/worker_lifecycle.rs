@@ -908,6 +908,27 @@ pub(super) fn recovery_journal_owner_is_gone(
     }
 }
 
+/// Whether a worker process is provably gone (the journal-owner rule: dead, or its pid now
+/// belongs to another process). Pid 0 records no identity and is never proof.
+pub(super) async fn worker_process_gone(pid: u64, start_id: Option<String>) -> bool {
+    let Ok(pid) = u32::try_from(pid) else {
+        return false;
+    };
+    if pid == 0 {
+        return false;
+    }
+    // On macOS the start-id probe shells out to `ps`: keep it off the executor.
+    tokio::task::spawn_blocking(move || {
+        recovery_journal_owner_is_gone(
+            crate::lease::is_process_alive(pid).ok(),
+            start_id.as_deref(),
+            crate::lease::get_process_start_id(pid).as_deref(),
+        )
+    })
+    .await
+    .unwrap_or(false)
+}
+
 /// Probe a worker socket until it accepts connections or the connect budget runs out; the
 /// error names the worker so a stuck launch reports which session never came up.
 pub(super) async fn probe_worker_socket(
