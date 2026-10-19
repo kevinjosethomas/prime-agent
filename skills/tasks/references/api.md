@@ -1,63 +1,71 @@
-# Python workstream API
+# Python tasks API
 
 All state operations are async and work inside `python_repl`. `configure` is local
 setup supplied by Desktop, not something to rebuild each turn. The package is part
 of `prime-agent-runtime`, rather than a separately downloaded dependency. Importing
 it performs no I/O and requires only the Python standard library.
 
-## Read and manage outcomes
+## Read and manage tasks
 
 ```python
-items = await workstreams.list(status="active")  # visible immutable snapshots
-archived = await workstreams.list(archived=True) # only archived workstreams
-all_items = await workstreams.list(archived=None) # include visible and archived
-task = await workstreams.get("prime-cli-json")    # KeyError if missing
-task = await workstreams.update("prime-cli-json", summary="Parser verified")
+items = await tasks.list(status="active")   # visible immutable snapshots
+archived = await tasks.list(archived=True)  # only archived tasks
+all_items = await tasks.list(archived=None) # include visible and archived
+task = await tasks.get("prime-cli-json")    # KeyError if missing
+task = await tasks.update("prime-cli-json", summary="Parser verified")
 task = await task.refresh()
 ```
 
 `create(id, title, **fields)` refuses an already observed ID. `upsert(id, title,
 **fields)` replaces editable state; omitted fields take defaults. The host-owned
-archive flag is preserved. Prefer `update` to change selected fields. Supported fields:
+archive flag is preserved. Prefer `update` to change selected fields; it writes only
+`id`, `title`, `status`, `summary`, `description`, `question`, `owner`, `parentId`
+and `links`. Host-owned read fields such as `updatedAt`, `archived` and `taskUrl`
+cannot be upserted. Supported fields:
 
 | Field | Meaning |
 | --- | --- |
 | `status` | `todo` (default), `active`, `needs_input`, `ready`, `backlog`, `done` |
 | `summary` | Latest meaningful result or next action, at most 2,000 characters |
-| `description` | Outcome/scope context for routing, at most 6,000 characters |
+| `description` | Scope context for routing, at most 6,000 characters |
 | `owner` | Human-readable owner/agent, default `/root` |
 | `question` | Actual unresolved question; mandatory for `needs_input` |
-| `steps` | Up to 100 `Step(id, title, done=False)` values or matching dictionaries |
-| `parent_id` | Existing parent workstream ID; `None` removes a parent on update |
+| `parent_id` | Existing parent task ID (makes this a subtask); `None` removes it on update |
 | `links` | Up to 20 `Link(kind, url, title=None)` values or matching dictionaries |
 
 Titles are at most 160 characters. IDs remain stable and are at most 512 characters.
-Links accept `chat`, `pr`, or `source`; URLs must be HTTP(S) without embedded credentials.
+Links accept `chat`, `pr`, `source`, or `commit`; URLs must be HTTP(S) without embedded
+credentials. A `commit` link is the commit's web URL, never a bare SHA:
+`Link("commit", "https://github.com/org/repo/commit/<sha>", "Short title")`.
 Desktop enforces parent existence and rejects cycles. Timestamps come from the host.
 Handle fields are snapshots: operations return new handles and fetch current state
 before partial writes. Independent agents' full-state updates are last-writer-wins;
-this version does not offer compare-and-swap or transactional multi-workstream edits.
+this version does not offer compare-and-swap or transactional multi-task edits.
 The duplicate check in `create` is not an atomic create-if-absent across processes.
 
-Reuse the existing product or independently owned feature before creating anything.
-All Primer feedback belongs to its existing Primer workstream: fixes, layout,
-threads, renaming the agent, and dropping files into Primer are milestones. Chats,
-workers, and PRs do not create new outcomes. Keep Lighthouse intake and judging
-together in the O1 case:
+## Tasks and subtasks
+
+A subtask is a task whose `parent_id` points at another task. Reuse the existing
+task (for example Primer) and record each distinct request or feedback item from
+Kevin as a subtask under it. Check existing subtasks first and do not duplicate one.
+Create a new top-level task only for a product or independently owned outcome.
+Chats, workers, and PRs do not create new tasks.
 
 ```python
-case = await workstreams.get("o1")  # use the existing observed stable ID
-case = await case.milestone("intake", "Complete Lighthouse O1 intake")
-case = await case.milestone("judging", "Prepare judging applications")
-case = await case.update(links=[
-    Link("source", "https://example.com/intake", "Intake questionnaire"),
+primer = await tasks.get("primer")  # use the existing observed stable ID
+existing = await tasks.list(parent_id=primer.id, archived=None)
+item = next((t for t in existing if t.title == "Drop files into Primer"), None)
+if item is None:
+    item = await primer.subtask("primer-drop-files", "Drop files into Primer", status="active")
+item = await item.update(links=[
+    Link("pr", "https://github.com/org/repo/pull/12", "Drop files"),
+    Link("commit", "https://github.com/org/repo/commit/3a8a666b5", "Accept dropped files"),
 ])
-await case.associate(actual_session_id, name="intake-worker", role="researcher")
+await item.associate(actual_session_id, name="drop-files-worker", role="implementer")
 ```
 
-`task.subtask(id, title, **fields)` creates a workstream with `parent_id=task.id`.
-Use it only for an independently owned feature, not routine milestones or chat
-branches. `list(parent_id=task.id)` lists its visible children.
+`task.subtask(id, title, **fields)` is `create(id, title, parent_id=task.id, **fields)`.
+`list(parent_id=task.id)` lists its visible subtasks.
 
 `associate` stores an actual existing session ID; it does not independently verify
 daemon availability or agent ownership. Discover the ID through supported RLM/roster
@@ -69,22 +77,22 @@ message bodies. It is not an API for reading a session's conversation.
 
 ```python
 task = await task.archive()
-task = await workstreams.restore(task.id)
+task = await tasks.restore(task.id)
 # Equivalent client forms: await client.archive(id), await client.restore(id).
 ```
 
 `archive` and `restore` return refreshed immutable handles. They use the host's
-`set-archived` operation, preserving status, milestones and `updated_at`. The snapshot
+`set-archived` operation, preserving status, subtasks and `updated_at`. The snapshot
 field `archived` defaults to `False` when an older host omits it. `list()` and
 `list(archived=False)` hide archived entries; `archived=True` selects only archived
 entries and `archived=None` includes all. Status and parent filters still apply.
 `get(id)` can always read an archived entry. Partial updates preserve its host-owned
 archive flag; `archived` is not an `upsert` or `update` field. Use these methods instead.
 
-Archive duplicate or dropped outcomes rather than deleting their history. Archiving
-does not merge workstreams, transfer milestones, or mark work complete. Preserve useful
-milestones in the existing product workstream first. Restore an existing archived
-outcome when it resumes instead of creating another workstream for the new chat.
+Archive duplicate or dropped tasks rather than deleting their history. Archiving
+does not merge tasks, move subtasks, or mark work complete. Move useful subtasks to
+the existing task first with `update(parent_id=...)`. Restore an existing archived
+task when it resumes instead of creating another task for the new chat.
 
 ## Independent work agents for the orchestrator
 
@@ -98,16 +106,16 @@ worker = await task.start_agent(
 ```
 
 Signature: `start_agent(prompt, *, name, model=None, thinking=None, cwd=None,
-role="worker-parent")`. Client/module forms take `workstream_id` first. The wrapper
+role="worker-parent")`. Client/module forms take `task_id` first. The wrapper
 calls existing `rlm.create_session`, which requires a daemon-backed depth-0 caller.
 It returns the original `rlm.RLMCreateSessionHandle` with `active_session_id`,
 `session_id`, `name`, `session_file` and `model`. These are actual native identities;
 no child ID or guessed session ID is invented. The independent resident has its own
 durable native session and may use `task.spawn` for its own RLM children.
 
-The bootstrap configures the same trusted reporter and existing workstream ID inside
+The bootstrap configures the same trusted reporter and existing task ID inside
 the new agent. When `context().root.sessionId` is recorded, it instructs that agent
-to update workstream state and send one concise meaningful result, blocking question,
+to update task state and send one concise meaningful result, blocking question,
 or failure through typed `agent_message.send(..., receiver_role="sibling",
 receiver_name=actual_orchestrator_id)`. Routine progress stays in metadata. If no
 verified orchestrator ID exists, it omits the callback rather than guessing a recipient.
@@ -150,7 +158,7 @@ can be used when an older installed package lacks `start_agent`.
 ## Native RLM children owned by work agents
 
 The state API is available to every authorized agent whose kernel has the trusted
-local reporter configuration. Work agents create/update outcomes normally, then
+local reporter configuration. Work agents create/update tasks normally, then
 spawn and assign their own native children without a second agent engine:
 
 ```python
@@ -164,20 +172,20 @@ await task.sync_agents()
 ```
 
 `spawn` delegates to `rlm.spawn(prompt, name=..., model=..., thinking=...)`. It adds
-trusted bootstrap instructions that configure `import workstreams` inside the child
-kernel and load the same stable workstream ID. Children using `task.spawn` pass this
+trusted bootstrap instructions that configure `import tasks` inside the child
+kernel and load the same stable task ID. Children using `task.spawn` pass this
 setup onward to their children. Model selection, task execution, resource budgets,
 and agent lifecycles remain owned by RLM. Omit `model`/`thinking` to retain RLM defaults.
 `collect` returns snapshots: a timeout can leave a child running. Inspect its actual
 status before claiming completion. The native runtime owns collection and lifecycle.
 
 Assign an already observed child with `await task.assign(handle, role="reviewer")`,
-or `await workstreams.assign(task.id, roster_row)`. The input must be an actual
+or `await tasks.assign(task.id, roster_row)`. The input must be an actual
 `rlm.RLMSpawnHandle` or `rlm.RLMSubagent`, not a guessed dictionary. A queued spawn
 handle supplies `rlm_child_id` and `session_dir`, but no session ID. The metadata
 records that real scoped identity without inventing a clickable chat. Once a roster
 row has a real `session_id`, `assign(row)` adds it. `sync_agents()` reads the direct-child
-roster once and updates only children already assigned to this workstream, matching
+roster once and updates only children already assigned to this task, matching
 both child ID and session directory. It does not poll, sleep, or claim to see other
 agents' private descendant rosters. An owner can also assign a supplied verified row.
 
@@ -187,50 +195,47 @@ retains the admitted child. **Do not spawn again** to repair metadata:
 ```python
 try:
     child = await task.spawn("Verify parser", name="parser-reviewer")
-except workstreams.AssignmentError as error:
+except tasks.AssignmentError as error:
     child = error.handle
     if error.report is not None:
-        await workstreams.retry(error.report)
+        await tasks.retry(error.report)
     else:
         await task.assign(child)
 ```
 
 For an existing independently created local kernel, the parent can share
-`client.configuration()` and that agent can call `workstreams.configure(**configuration)`
+`client.configuration()` and that agent can call `tasks.configure(**configuration)`
 once. The returned configuration is a fresh copy of reporter argv, environment and
 timeout. It contains trusted local paths/setup, not credentials: do not put secrets
 in reporter argv/environment or source this configuration from incoming task data.
 No global files, startup services, permissions or network endpoints are created.
 
-## Milestones and status
+## Status
 
 ```python
-task = await task.milestone("test", "Verify parser on malformed records")
-task = await task.check("test")                # unknown ID raises KeyError
-task.progress                                 # (completed, total), or None
 task = await task.needs_input("May I merge the verified change?")
 task = await task.update(status="ready", summary="Verified change ready for review")
-task = await task.complete()                   # rejects unfinished steps
+task = await task.complete(summary="Merged")  # sets status done
 ```
 
 Moving out of `needs_input` clears its old question unless a replacement question is
-explicitly supplied. `complete` does not check all steps for you. Unknown progress
-stays unknown; parent progress is not calculated from guessed subtask weights.
+explicitly supplied. There is no progress percentage or checklist; split distinct
+work into subtasks and give each its own status.
 
-## Corrections and failure recovery
+## Message assignment and failure recovery
 
-Clef automatically labels user/assistant exchanges using workstream context and
-recent conversation. A missing/unavailable classifier must remain visible as an
-unclassified state; this package does not quietly call a larger model instead.
-Only when the user explicitly requests a correction, pass indexed turn IDs from `context()`:
+Assign whole messages (IDs from `context()`) to the task they belong to, or to `None`
+when they are deliberately general:
 
 ```python
-await workstreams.classify([actual_turn_id], ["o1", "travel"])
+await tasks.assign_messages([actual_message_id], "primer-drop-files")
+await tasks.assign_messages([greeting_id], None)
+await tasks.assign_messages([actual_message_id], "o1", source="manual")
 ```
 
-These corrections are recorded with source `manual`, replacing earlier labels while
-remaining protected from later automatic classification. Do not use this API for
-routine message labeling or an unsolicited guess.
+`assign_messages(message_ids, task_id, *, source="agent")` takes 1–200 message IDs.
+Use `source="manual"` only for a correction Kevin explicitly asked for; manual
+assignments are protected from later automatic relabeling. Do not guess IDs.
 
 Each report gets a unique UUID event ID. If delivery fails or times out, its commit
 may be uncertain. Retry the exact event, not a newly generated equivalent update:
@@ -238,9 +243,9 @@ may be uncertain. Retry the exact event, not a newly generated equivalent update
 ```python
 try:
     task = await task.update(summary="Export verified")
-except workstreams.DeliveryError as error:
+except tasks.DeliveryError as error:
     if error.report is not None:
-        await workstreams.retry(error.report)
+        await tasks.retry(error.report)
     else:
         raise  # Reading state failed; diagnose the reporter connection.
 ```
@@ -254,7 +259,7 @@ the write committed: read current state before deciding to issue another change.
 Desktop supplies trusted absolute paths once in `/root`'s Python kernel:
 
 ```python
-workstreams.configure(
+tasks.configure(
     command=[electron_path, reporter_path, "--db", desktop_database_path],
     env={"ELECTRON_RUN_AS_NODE": "1"},
     timeout=15,

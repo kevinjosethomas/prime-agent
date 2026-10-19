@@ -1,5 +1,5 @@
 ---
-name: workstreams
+name: tasks
 description: Create and maintain outcome-based workstreams from the Prime Agent Python kernel. Use for task state, real milestone progress, needs-input questions, subtasks, source links, and associations with actual agent sessions in the persistent /root orchestrator.
 ---
 

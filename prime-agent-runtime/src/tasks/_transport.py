@@ -34,7 +34,7 @@ class AssignmentError(DeliveryError):
     """An agent was admitted, but metadata delivery failed. Never restart it to retry."""
 
     def __init__(self, handle: Any, error: Exception):
-        super().__init__("Agent admitted; workstream assignment was not confirmed. Retain handle and retry assignment, not agent creation.",
+        super().__init__("Agent admitted; task assignment was not confirmed. Retain handle and retry assignment, not agent creation.",
                          error.report if isinstance(error, DeliveryError) else None)
         self.handle = handle
 
@@ -69,13 +69,13 @@ class Reporter:
             )
             stdout, _stderr = await asyncio.wait_for(process.communicate(body), self.timeout)
             if process.returncode != 0:
-                raise DeliveryError(f"Workstream reporter exited with code {process.returncode}", report)
+                raise DeliveryError(f"Tasks reporter exited with code {process.returncode}", report)
             try:
                 return json.loads(stdout)
             except (ValueError, UnicodeError) as error:
-                raise DeliveryError("Workstream reporter returned invalid JSON", report) from error
+                raise DeliveryError("Tasks reporter returned invalid JSON", report) from error
         except (OSError, asyncio.TimeoutError) as error:
-            raise DeliveryError("Workstream reporter unavailable or timed out", report) from error
+            raise DeliveryError("Tasks reporter unavailable or timed out", report) from error
         finally:
             if process is not None and process.returncode is None:
                 try:

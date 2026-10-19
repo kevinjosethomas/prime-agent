@@ -8,7 +8,7 @@ The Python job runs complete `prime-agent-runtime/tests` discovery, including th
 exact shipped readiness assertion and its stale-archive-API regressions. It also
 runs the separate create-session and subagent-registry regression suites.
 
-The native job retains the auth, provider-login, MCP-login, workstream identity,
+The native job retains the auth, provider-login, MCP-login, tasks identity,
 bootstrap readiness, classifier, MCP, release-build and packaged-artifact checks.
 Its non-authenticating `auth --json` EOF probe must advertise
 `provider_auth_methods` on the v1 ready event. No login request is needed.
@@ -26,22 +26,22 @@ artifact SHA-256, and desktop source identity. Require zero skips:
 
 ```sh
 ELECTRON_RUN_AS_NODE=1 \
-WORKSTREAM_DESKTOP_REPORTER='["/path/to/Primer.app/Contents/MacOS/Prime Agent Desktop", "/path/to/Primer.app/Contents/Resources/app.asar/dist-electron/workstream-cli.cjs"]' \
+TASKS_DESKTOP_REPORTER='["/path/to/Primer.app/Contents/MacOS/Prime Agent Desktop", "/path/to/Primer.app/Contents/Resources/app.asar/dist-electron/task-cli.cjs"]' \
 PYTHONPATH=prime-agent-runtime/src \
 python -m unittest discover -s prime-agent-runtime/tests -v
 ```
 
 The tests add their own `--db` inside `TemporaryDirectory`. Do not provide a live
-workstream DB, open Electron UI, or invoke a real session/provider. At the initial
-archive candidate this discovers 26 tests: 19 fixture/API, three canonical desktop,
-and four exact readiness-probe tests. Without a reporter only 23 pass, with three
-explicit skips. With the canonical reporter all 26 must pass.
+tasks DB, open Electron UI, or invoke a real session/provider. This
+discovers 31 tests: 23 fixture/API, three canonical desktop, and five exact
+readiness-probe tests. Without a reporter only 28 pass, with three explicit
+skips. With the canonical reporter all 31 must pass.
 
-The canonical archive test covers status, milestone, timestamp and archive-state
+The canonical archive test covers status, timestamp and archive-state
 preservation across archive/restore/update. The separate assignment test verifies
 queued and observed native identities. It does not establish archive/restore
-preservation of associated sessions or classified turns in the canonical host;
-that remains an additional integration limit, not a property proven by 26 green
+preservation of associated sessions or message-task assignments in the canonical host;
+that remains an additional integration limit, not a property proven by 31 green
 tests. Fixture coverage and the minimal `set-archived` request are source-side
 evidence only for those associations.
 

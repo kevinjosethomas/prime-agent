@@ -838,11 +838,11 @@ def path_of(module, roots):
         return None
     return str(root / (tail.replace(".", "/") + ".py")) if tail else str(root / "__init__.py")
 
-roots = {"rlm": pathlib.Path(sys.argv[1]), "workstreams": pathlib.Path(sys.argv[2])}
-seed = ["rlm", "rlm.mcp", "rlm.harness", "rlm.bash", "rlm.repl", "workstreams"]
-# Include the workstreams package's relative imports without expanding the legacy RLM seed.
-seed.extend("workstreams." + ".".join(path.relative_to(roots["workstreams"]).with_suffix("").parts)
-            for path in roots["workstreams"].rglob("*.py") if path.name != "__init__.py")
+roots = {"rlm": pathlib.Path(sys.argv[1]), "tasks": pathlib.Path(sys.argv[2])}
+seed = ["rlm", "rlm.mcp", "rlm.harness", "rlm.bash", "rlm.repl", "tasks"]
+# Include the tasks package's relative imports without expanding the legacy RLM seed.
+seed.extend("tasks." + ".".join(path.relative_to(roots["tasks"]).with_suffix("").parts)
+            for path in roots["tasks"].rglob("*.py") if path.name != "__init__.py")
 closure = []
 pending = list(seed)
 violations = []
@@ -878,7 +878,7 @@ print(json.dumps({"closure": sorted(closure), "violations": violations}))
             real_rlm
                 .parent()
                 .expect("rlm has a package parent")
-                .join("workstreams"),
+                .join("tasks"),
         )
         .output()
         .expect("the real python must run the closure parse");
@@ -894,12 +894,12 @@ print(json.dumps({"closure": sorted(closure), "violations": violations}))
             && report.closure.contains(&"rlm.harness".to_string())
             && report.closure.contains(&"rlm.bash".to_string())
             && report.closure.contains(&"rlm.repl".to_string())
-            && report.closure.contains(&"workstreams".to_string()),
+            && report.closure.contains(&"tasks".to_string()),
         "the frozen closure seed is wrong: {report:?}"
     );
     assert!(
         report.violations.is_empty(),
-        "the probe import closure grew beyond rlm+workstreams+stdlib (closure {:?}): {:?}",
+        "the probe import closure grew beyond rlm+tasks+stdlib (closure {:?}): {:?}",
         report.closure,
         report.violations
     );
