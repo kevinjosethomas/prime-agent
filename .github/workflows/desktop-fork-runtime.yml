@@ -122,6 +122,7 @@ jobs:
         run: |
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-ai --lib thread_classification
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-cli --lib thread_classify
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-cli --lib task_route
           python3 - <<'PYTHREAD'
           import json, subprocess
           result = subprocess.run(['target/aarch64-apple-darwin/release/prime-agent', 'thread-classify', '--json'], input='', text=True, capture_output=True, timeout=10, check=True)
@@ -130,6 +131,8 @@ jobs:
           for flags in [['--json', '--contrastive'], ['--contrastive']]:
               probe = subprocess.run(['target/aarch64-apple-darwin/release/prime-agent', 'thread-classify', *flags], input='', text=True, capture_output=True, timeout=10, check=True)
               assert [json.loads(line) for line in probe.stdout.splitlines()] == [{'type': 'ready', 'protocolVersion': 1}]
+          route = subprocess.run(['target/aarch64-apple-darwin/release/prime-agent', 'task-route', '--json'], input='', text=True, capture_output=True, timeout=10, check=True)
+          assert [json.loads(line) for line in route.stdout.splitlines()] == [{'type': 'ready', 'protocolVersion': 1}]
           PYTHREAD
       - name: Run focused workstream classifier tests
         run: |

@@ -136,6 +136,16 @@ lease in both historic supervisor registries until Rust owns the replacement
 socket, preventing old clients from launching a competing daemon. Admission
 records are refreshed and removed only while their ownership token matches.
 
+## Task route decision
+
+`prime-agent task-route --json` runs one stateless Clef (System One) decision for
+Primer's task routing. It emits ready-v1 before auth, accepts one <=256 KiB request
+`{id, state, questions}` (1-32 choice questions) and returns
+`{type:"result", id, answers}`. The model is pinned to `cloudflare/clef`; the host
+owns the questions and the decision. There is no session, tool, daemon or history.
+Readiness+EOF and invalid requests never touch auth or the network; errors are
+fixed messages so request text is never echoed.
+
 ## Semantic thread evaluator
 
 `prime-agent thread-classify --json` composes the pa-ai semantic-thread evaluator
