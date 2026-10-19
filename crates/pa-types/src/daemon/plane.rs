@@ -57,6 +57,8 @@ pub fn command_plane(command_type: &str) -> DaemonCommandPlane {
         | "get_available_models"
         | "get_queue"
         | "mutate_queued_message"
+        | "list_queued_inputs"
+        | "mutate_queued_input"
         | "clear_queue"
         | "abort_and_clear_queue"
         | "acquire_session_input_pause"
@@ -139,6 +141,7 @@ const READ_ONLY_DAEMON_COMMANDS: &[&str] = &[
     "get_global_harness_defaults",
     "get_available_models",
     "get_queue",
+    "list_queued_inputs",
     "cron_list",
     "heartbeats_list",
     "update_restore_status",

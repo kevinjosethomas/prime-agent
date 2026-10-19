@@ -89,7 +89,11 @@ impl Worker {
 
         AgentConnectionState {
             active_input_ownership: core.active_input_ownership.clone(),
-            input_capabilities: json!({"focusedThreadReplyV1": true, "focusedThreadOutputV1": true}),
+            input_capabilities: json!({
+                "focusedThreadReplyV1": true,
+                "focusedThreadOutputV1": true,
+                "queuedInputControlsV1": true,
+            }),
             is_streaming: core.busy,
             is_compacting: core.compacting,
             active_session_id: Some(core.active_session_id.clone()),

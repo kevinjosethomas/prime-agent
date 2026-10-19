@@ -148,6 +148,8 @@ impl Worker {
             "export_html" => self.exports.export_html(payload).await,
             "export_jsonl" => self.exports.export_jsonl(payload),
             "mutate_queued_message" => self.handle_mutate_queued_message(payload),
+            "list_queued_inputs" => self.handle_list_queued_inputs(),
+            "mutate_queued_input" => self.handle_mutate_queued_input(payload),
             "resume_queue" => self.handle_resume_queue(),
             "factory_activity" => self.handle_factory_activity(payload).await,
             "execute_bash" => self.handle_execute_bash(payload),
@@ -414,8 +416,7 @@ impl Worker {
         let (core, inputs) = self.summary_inputs();
         let summary = self.summary_locked(&core, inputs);
         let mut state = serde_json::to_value(&summary).unwrap_or(Value::Null);
-        state["inputCapabilities"] =
-            json!({"focusedThreadReplyV1": true, "focusedThreadOutputV1": true});
+        state["inputCapabilities"] = json!({"focusedThreadReplyV1": true, "focusedThreadOutputV1": true, "queuedInputControlsV1": true});
         state["activeInputOwnership"] = json!(core.active_input_ownership);
         response_success(None, "get_state", Some(state))
     }

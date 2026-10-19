@@ -219,6 +219,7 @@ async fn compacting_window_parks_a_cleared_suspension_until_it_ends() {
             queue_visible: true,
             policy: TurnPolicy::Queued,
             forced_batch: false,
+            input_id: None,
         });
     }
     let parked = std::sync::Arc::clone(&runner.core);
@@ -356,6 +357,7 @@ async fn idle_passivation_refuses_while_the_lanes_hold_undelivered_input() {
             queue_visible: true,
             policy: TurnPolicy::Queued,
             forced_batch: false,
+            input_id: None,
         });
     }
     assert!(
@@ -390,6 +392,7 @@ async fn idle_passivation_refuses_while_the_lanes_hold_undelivered_input() {
         queue_visible: true,
         policy: TurnPolicy::Queued,
         forced_batch: false,
+        input_id: None,
     });
     assert!(
         runner.idle_passivation_window().is_none(),

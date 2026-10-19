@@ -170,6 +170,8 @@ pub const KNOWN_COMMAND_TYPES: &[&str] = &[
     "set_global_harness_defaults",
     "get_subagent_model_default",
     "set_subagent_model_default",
+    "list_queued_inputs",
+    "mutate_queued_input",
 ];
 
 /// Parsed client command envelope.
@@ -749,6 +751,12 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
         | DaemonCommand::MutateQueuedMessage {
             active_session_id, ..
         }
+        | DaemonCommand::ListQueuedInputs {
+            active_session_id, ..
+        }
+        | DaemonCommand::MutateQueuedInput {
+            active_session_id, ..
+        }
         | DaemonCommand::ClearQueue {
             active_session_id, ..
         }
@@ -1014,6 +1022,8 @@ pub fn command_type_name(command: &DaemonCommand) -> &'static str {
         DaemonCommand::GetAvailableModels { .. } => "get_available_models",
         DaemonCommand::GetQueue { .. } => "get_queue",
         DaemonCommand::MutateQueuedMessage { .. } => "mutate_queued_message",
+        DaemonCommand::ListQueuedInputs { .. } => "list_queued_inputs",
+        DaemonCommand::MutateQueuedInput { .. } => "mutate_queued_input",
         DaemonCommand::ClearQueue { .. } => "clear_queue",
         DaemonCommand::AbortAndClearQueue { .. } => "abort_and_clear_queue",
         DaemonCommand::AcquireSessionInputPause { .. } => "acquire_session_input_pause",
@@ -1150,6 +1160,32 @@ mod tests {
             assert!(pa_types::daemon::is_session_plane_daemon_command(kind));
         }
         assert!(default_server_capabilities().contains(&"kernel_bash_activity".to_string()));
+    }
+
+    #[test]
+    fn queued_input_commands_are_session_scoped() {
+        for (command, kind) in [
+            (
+                serde_json::json!({"type":"list_queued_inputs","activeSessionId":"session"}),
+                "list_queued_inputs",
+            ),
+            (
+                serde_json::json!({"type":"mutate_queued_input","activeSessionId":"session","inputId":"qi_1","action":"edit","text":"x"}),
+                "mutate_queued_input",
+            ),
+        ] {
+            let line = serde_json::json!({"type":"command","id":"c1", "protocol":current_protocol_info(), "command":command}).to_string();
+            let parsed = parse_daemon_command_line(&line).unwrap();
+            assert_eq!(command_type_name(&parsed.command), kind);
+            assert_eq!(command_active_session_id(&parsed.command), Some("session"));
+            assert!(pa_types::daemon::is_session_plane_daemon_command(kind));
+        }
+        assert!(!pa_types::daemon::is_daemon_mutating_command(
+            "list_queued_inputs"
+        ));
+        assert!(pa_types::daemon::is_daemon_mutating_command(
+            "mutate_queued_input"
+        ));
     }
 
     #[test]

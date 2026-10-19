@@ -1,13 +1,40 @@
-//! The queue-lane command surface: `mutate_queued_message` and
-//! `resume_queue`. Wire contract: `get_queue` and the
+//! The queue-lane command surface: `mutate_queued_message`, `resume_queue`,
+//! and the queued-input pair. Wire contract: `get_queue` and the
 //! `session_action_update` events expose each lane's message previews,
 //! and a mutation addresses one preview by `lane` + `index` + `expectedText`.
+//! `list_queued_inputs` and `mutate_queued_input` address a queued human input by
+//! its stable id instead; a row already taken for delivery answers `already_sent`.
 
 use serde_json::Value;
 
 use crate::protocol::{response_failure, response_success, DaemonResponse};
 use crate::worker::Lane;
-use crate::worker::{parse_prompt_images, TurnSettle, Worker};
+use crate::worker::{parse_prompt_images, QueueCheckpoint, QueuedItem, TurnSettle, Worker};
+
+/// The wire item of one queued human input.
+fn queued_input_view(item: &QueuedItem, lane: Lane) -> Option<Value> {
+    let id = item.input_id.as_ref().filter(|_| item.queue_visible)?;
+    Some(serde_json::json!({
+        "id": id,
+        "text": item.message,
+        "deliveryMode": match lane {
+            Lane::Steering => "steer",
+            Lane::FollowUp => "follow_up",
+        },
+        "imageCount": item.images.len(),
+    }))
+}
+
+/// Locate one queued human input by id across both lanes.
+fn find_queued_input(core: &crate::worker::SessionCore, id: &str) -> Option<(Lane, usize)> {
+    let position = |lane: &std::collections::VecDeque<QueuedItem>| {
+        lane.iter()
+            .position(|item| item.queue_visible && item.input_id.as_deref() == Some(id))
+    };
+    position(&core.steering)
+        .map(|index| (Lane::Steering, index))
+        .or_else(|| position(&core.follow_up).map(|index| (Lane::FollowUp, index)))
+}
 
 /// The wire lane names: `"steering"` and `"followUp"`.
 fn wire_lane(value: Option<&Value>) -> Option<Lane> {
@@ -148,6 +175,153 @@ impl Worker {
         response
     }
 
+    /// `list_queued_inputs`: the queued human inputs in delivery-lane order.
+    pub(crate) fn handle_list_queued_inputs(&self) -> DaemonResponse {
+        if let Err(response) = self.require_created("list_queued_inputs") {
+            return response;
+        }
+        let core = self.core.lock().unwrap();
+        let items: Vec<Value> = core
+            .steering
+            .iter()
+            .filter_map(|item| queued_input_view(item, Lane::Steering))
+            .chain(
+                core.follow_up
+                    .iter()
+                    .filter_map(|item| queued_input_view(item, Lane::FollowUp)),
+            )
+            .collect();
+        response_success(
+            None,
+            "list_queued_inputs",
+            Some(serde_json::json!({ "items": items })),
+        )
+    }
+
+    /// `mutate_queued_input { inputId, action: "remove" | "edit" | "steer", text? }`: one
+    /// atomic change to a queued human input under the core lock, so it can never race
+    /// the runner taking the row. A row no longer queued answers `already_sent`.
+    /// Remove and edit leave scheduling alone; steer moves the row to the steering lane,
+    /// which stops the running turn at its next boundary like a `steer` command.
+    pub(crate) fn handle_mutate_queued_input(&self, payload: &Value) -> DaemonResponse {
+        const COMMAND: &str = "mutate_queued_input";
+        if let Err(response) = self.require_created(COMMAND) {
+            return response;
+        }
+        let Some(id) = payload.get("inputId").and_then(Value::as_str) else {
+            return response_failure(
+                None,
+                COMMAND,
+                "mutate_queued_input requires an inputId",
+                None,
+            );
+        };
+        let action = payload
+            .get("action")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !matches!(action, "remove" | "edit" | "steer") {
+            return response_failure(
+                None,
+                COMMAND,
+                "mutate_queued_input requires action \"remove\", \"edit\", or \"steer\"",
+                None,
+            );
+        }
+        let text = payload.get("text").and_then(Value::as_str);
+        if action == "edit" && text.is_none() {
+            return response_failure(
+                None,
+                COMMAND,
+                "mutate_queued_input edit requires text",
+                None,
+            );
+        }
+        let (item, snapshot) = {
+            let mut core = self.core.lock().unwrap();
+            let Some((lane, index)) = find_queued_input(&core, id) else {
+                return response_success(
+                    None,
+                    COMMAND,
+                    Some(serde_json::json!({ "status": "already_sent" })),
+                );
+            };
+            let lane_items = match lane {
+                Lane::Steering => &mut core.steering,
+                Lane::FollowUp => &mut core.follow_up,
+            };
+            let item = match action {
+                "remove" => {
+                    let mut item = lane_items.remove(index).expect("located row");
+                    if let Some(done) = item.done.take() {
+                        let _ = done.send(TurnSettle::Withdrawn(
+                            crate::worker::QUEUED_PROMPT_DELETED.to_string(),
+                        ));
+                    }
+                    crate::worker::clear_withdrawn_progress_note(&core, self.engine.as_ref());
+                    None
+                }
+                "edit" => {
+                    let item = &mut lane_items[index];
+                    let text = text.unwrap_or_default();
+                    if text.trim().is_empty() && item.images.is_empty() {
+                        return response_failure(
+                            None,
+                            COMMAND,
+                            "A queued message cannot be empty",
+                            None,
+                        );
+                    }
+                    if item.focused_reply.is_some()
+                        && crate::session_commands::parse_prompt_session_command(text).is_some()
+                    {
+                        return response_failure(
+                            None,
+                            COMMAND,
+                            "A thread reply cannot be a session command",
+                            None,
+                        );
+                    }
+                    item.message = text.to_string();
+                    queued_input_view(item, lane)
+                }
+                _ => {
+                    if lane == Lane::FollowUp {
+                        let item = core.follow_up.remove(index).expect("located row");
+                        crate::worker::enqueue_priority(&mut core.steering, item);
+                    }
+                    core.queued_input_suspended = false;
+                    find_queued_input(&core, id).and_then(|(lane, index)| {
+                        let items = match lane {
+                            Lane::Steering => &core.steering,
+                            Lane::FollowUp => &core.follow_up,
+                        };
+                        queued_input_view(&items[index], lane)
+                    })
+                }
+            };
+            (item, Self::snapshot_locked(&core))
+        };
+        self.checkpoint_queue(if action == "steer" {
+            QueueCheckpoint::Admitted {
+                operation: "steer_queued",
+            }
+        } else {
+            QueueCheckpoint::Settle {
+                operation: "queue_mutated",
+            }
+        });
+        let _ = self.emit_action_update(&snapshot);
+        if action == "steer" {
+            self.work_notify.notify_one();
+        }
+        let mut data = serde_json::json!({ "status": "applied" });
+        if let Some(item) = item {
+            data["item"] = item;
+        }
+        response_success(None, COMMAND, Some(data))
+    }
+
     /// `resume_queue`: the queue's queued work resumes (the turn runner
     /// drains the lanes when idle); the failure string is TS-verbatim for the empty queue.
     pub(crate) fn handle_resume_queue(&self) -> DaemonResponse {
@@ -278,6 +452,215 @@ mod tests {
         .collect()
     }
 
+    async fn queued_inputs(worker: &Worker) -> Vec<Value> {
+        let listed = worker.dispatch("list_queued_inputs", &json!({})).await;
+        assert!(listed.success, "list failed: {listed:?}");
+        listed.data.expect("list data")["items"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    async fn mutate_input(worker: &Worker, payload: Value) -> Value {
+        let response = worker.dispatch("mutate_queued_input", &payload).await;
+        assert!(response.success, "mutate failed: {response:?}");
+        response.data.expect("mutate data")
+    }
+
+    async fn queue_human(worker: &Worker, command: &str, message: &str) -> String {
+        let admitted = worker
+            .dispatch(
+                command,
+                &json!({ "message": message, "images": [
+                { "type": "image", "data": "AAAA", "mimeType": "image/png" }
+            ] }),
+            )
+            .await;
+        assert!(admitted.success, "{command}: {admitted:?}");
+        admitted.data.expect("receipt")["inputId"]
+            .as_str()
+            .expect("human input id")
+            .to_string()
+    }
+
+    /// Identical texts stay distinct rows: each id addresses only its own row.
+    #[tokio::test]
+    async fn queued_inputs_have_distinct_ids_and_remove_only_the_addressed_row() {
+        let worker = created_worker().await;
+        worker.core.lock().unwrap().busy = true;
+        let first = queue_human(&worker, "follow_up", "same").await;
+        let second = queue_human(&worker, "follow_up", "same").await;
+        assert_ne!(first, second);
+        let listed = queued_inputs(&worker).await;
+        assert_eq!(
+            listed,
+            vec![
+                json!({ "id": first, "text": "same", "deliveryMode": "follow_up", "imageCount": 1 }),
+                json!({ "id": second, "text": "same", "deliveryMode": "follow_up", "imageCount": 1 }),
+            ]
+        );
+        let removed = mutate_input(&worker, json!({ "inputId": second, "action": "remove" })).await;
+        assert_eq!(removed, json!({ "status": "applied" }));
+        let listed = queued_inputs(&worker).await;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0]["id"], json!(first));
+        let again = mutate_input(&worker, json!({ "inputId": second, "action": "remove" })).await;
+        assert_eq!(again, json!({ "status": "already_sent" }));
+    }
+
+    /// Edit keeps the id, images and lane; it does not wake or resume the queue.
+    #[tokio::test]
+    async fn edit_replaces_text_and_keeps_identity_and_images() {
+        let worker = created_worker().await;
+        {
+            let mut core = worker.core.lock().unwrap();
+            core.busy = true;
+        }
+        let id = queue_human(&worker, "follow_up", "draft").await;
+        worker.core.lock().unwrap().queued_input_suspended = true;
+        let edited = mutate_input(
+            &worker,
+            json!({ "inputId": id, "action": "edit", "text": "final words" }),
+        )
+        .await;
+        assert_eq!(
+            edited,
+            json!({
+                "status": "applied",
+                "item": { "id": id, "text": "final words", "deliveryMode": "follow_up", "imageCount": 1 },
+            })
+        );
+        {
+            let core = worker.core.lock().unwrap();
+            assert!(
+                core.queued_input_suspended,
+                "edit must not resume the queue"
+            );
+            let item = core.follow_up.front().expect("edited row");
+            assert_eq!(item.message, "final words");
+            assert_eq!(item.images.len(), 1);
+        }
+        let blank = worker
+            .dispatch(
+                "mutate_queued_input",
+                &json!({ "inputId": "qi_missing", "action": "edit" }),
+            )
+            .await;
+        assert!(!blank.success, "edit without text is malformed");
+    }
+
+    /// Steer moves the same row into the steering lane ahead of background steering,
+    /// like a fresh `steer`, and clears a queued-input suspension.
+    #[tokio::test]
+    async fn steer_moves_the_follow_up_into_the_steering_lane() {
+        let worker = created_worker().await;
+        worker.core.lock().unwrap().busy = true;
+        let delivered = worker
+            .dispatch(
+                "worker_deliver_message",
+                &json!({
+                    "targetActiveSessionId": "queue-session",
+                    "message": "the research is done",
+                    "sender": { "activeSessionId": "source-session" },
+                    "deliveryMode": "steer",
+                }),
+            )
+            .await;
+        assert!(delivered.success, "deliver failed: {delivered:?}");
+        let id = queue_human(&worker, "follow_up", "do this now").await;
+        worker.core.lock().unwrap().queued_input_suspended = true;
+        let steered = mutate_input(&worker, json!({ "inputId": id, "action": "steer" })).await;
+        assert_eq!(steered["status"], "applied");
+        assert_eq!(steered["item"]["deliveryMode"], "steer");
+        assert_eq!(steered["item"]["id"], json!(id));
+        assert_eq!(lane_texts(&worker, Lane::FollowUp), Vec::<String>::new());
+        let core = worker.core.lock().unwrap();
+        assert!(!core.queued_input_suspended);
+        assert_eq!(
+            core.steering.front().unwrap().input_id.as_deref(),
+            Some(id.as_str())
+        );
+        assert_eq!(core.steering.len(), 2);
+    }
+
+    /// A row the runner already took answers `already_sent` for every action.
+    #[tokio::test]
+    async fn a_dequeued_input_answers_already_sent() {
+        let worker = created_worker().await;
+        worker.core.lock().unwrap().busy = true;
+        let id = queue_human(&worker, "steer", "taken").await;
+        let taken = worker
+            .core
+            .lock()
+            .unwrap()
+            .steering
+            .pop_front()
+            .expect("queued row");
+        assert_eq!(taken.input_id.as_deref(), Some(id.as_str()));
+        for action in [
+            json!({ "inputId": id, "action": "remove" }),
+            json!({ "inputId": id, "action": "edit", "text": "late" }),
+            json!({ "inputId": id, "action": "steer" }),
+        ] {
+            assert_eq!(
+                mutate_input(&worker, action).await,
+                json!({ "status": "already_sent" })
+            );
+        }
+    }
+
+    /// Agent, notice and caller-custom rows get no id and never list.
+    #[tokio::test]
+    async fn only_plain_human_rows_are_queued_inputs() {
+        let worker = created_worker().await;
+        worker.core.lock().unwrap().busy = true;
+        worker
+            .dispatch(
+                "worker_deliver_message",
+                &json!({
+                    "targetActiveSessionId": "queue-session",
+                    "message": "agent text",
+                    "sender": { "activeSessionId": "source-session" },
+                }),
+            )
+            .await;
+        let custom = worker
+            .dispatch(
+                "follow_up",
+                &json!({
+                    "message": "notice",
+                    "customMessage": { "role": "custom", "customType": "bash_notice", "content": "x" },
+                }),
+            )
+            .await;
+        assert!(custom.success, "custom follow-up: {custom:?}");
+        assert!(custom.data.expect("receipt").get("inputId").is_none());
+        let prompt = worker
+            .dispatch("prompt", &json!({ "message": "busy prompt" }))
+            .await;
+        let prompt_id = prompt.data.expect("prompt receipt")["inputId"].clone();
+        let listed = queued_inputs(&worker).await;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0]["id"], prompt_id);
+        assert_eq!(listed[0]["text"], "busy prompt");
+    }
+
+    /// The id survives the recovery record; a pre-field record restores without one.
+    #[test]
+    fn queued_input_id_round_trips_through_the_recovery_record() {
+        let record: crate::journal::WorkerQueueItemRecord =
+            serde_json::from_value(json!({ "message": "old" })).unwrap();
+        assert_eq!(record.input_id, None);
+        let record = crate::journal::WorkerQueueItemRecord {
+            input_id: Some("qi_1".to_string()),
+            ..record
+        };
+        let wire = serde_json::to_value(&record).unwrap();
+        assert_eq!(wire["input_id"], "qi_1");
+        let back: crate::journal::WorkerQueueItemRecord = serde_json::from_value(wire).unwrap();
+        assert_eq!(back.input_id.as_deref(), Some("qi_1"));
+    }
+
     #[tokio::test]
     async fn a_labeled_preview_row_is_addressed_and_edited_by_its_preview() {
         let worker = created_worker().await;
@@ -300,6 +683,7 @@ mod tests {
                 queue_visible: true,
                 policy: crate::worker::TurnPolicy::Injected,
                 forced_batch: false,
+                input_id: None,
             });
         }
         let queue = worker.dispatch("get_queue", &json!({})).await;
@@ -361,6 +745,7 @@ mod tests {
                 queue_visible: true,
                 policy: crate::worker::TurnPolicy::Injected,
                 forced_batch: false,
+                input_id: None,
             });
         }
         let expected = "Heartbeat prompt: [heartbeat: every 10m run#0]\n\nnudge the mission";
@@ -567,6 +952,7 @@ mod tests {
                 queue_visible: true,
                 policy: crate::worker::TurnPolicy::Queued,
                 forced_batch: false,
+                input_id: None,
             });
         }
         let response = worker
@@ -634,6 +1020,7 @@ mod tests {
                 queue_visible: true,
                 policy: crate::worker::TurnPolicy::Queued,
                 forced_batch: false,
+                input_id: None,
             });
 
         let replaced = worker
@@ -760,6 +1147,7 @@ mod tests {
             queue_visible: true,
             policy: crate::worker::TurnPolicy::Queued,
             forced_batch: false,
+            input_id: None,
         };
         let mut lane = std::collections::VecDeque::from([
             item("same", Some(route.clone())),

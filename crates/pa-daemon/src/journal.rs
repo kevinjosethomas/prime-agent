@@ -233,6 +233,9 @@ pub struct WorkerQueueItemRecord {
     /// restores as "queued" — the only class a fresh snapshot can batch.
     #[serde(default = "queue_policy_default")]
     pub policy: String,
+    /// The stable queued-input id of a human row; a pre-field record restores without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_id: Option<String>,
 }
 
 fn queue_visible_default() -> bool {
@@ -606,6 +609,7 @@ fn parse_snapshot_lane(value: Option<&Value>) -> Vec<WorkerQueueItemRecord> {
                         queue_key: None,
                         queue_visible: true,
                         policy: queue_policy_default(),
+                        input_id: None,
                     }),
                     Value::Object(_) => serde_json::from_value(entry.clone()).ok(),
                     _ => None,
@@ -693,6 +697,7 @@ mod tests {
             queue_key: None,
             queue_visible: true,
             policy: queue_policy_default(),
+            input_id: None,
         };
         sequential
             .record_queue_snapshot("s1", std::slice::from_ref(&item), &[])
@@ -829,6 +834,7 @@ mod tests {
             queue_key: None,
             queue_visible: true,
             policy: queue_policy_default(),
+            input_id: None,
         };
         let mut journal = WorkerRecoveryJournal::open(&path).unwrap();
         journal
@@ -928,6 +934,7 @@ mod tests {
             queue_key: None,
             queue_visible: true,
             policy: queue_policy_default(),
+            input_id: None,
         };
         let mut journal = WorkerRecoveryJournal::open(&path).unwrap();
         journal
@@ -1021,6 +1028,7 @@ mod tests {
                 queue_key: None,
                 queue_visible: true,
                 policy: queue_policy_default(),
+                input_id: None,
             };
             journal.record_queue_snapshot("s1", &[item], &[]).unwrap();
             drop(journal);

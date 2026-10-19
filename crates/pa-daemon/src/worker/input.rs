@@ -1,10 +1,11 @@
 //! The input handlers behind dispatch: prompt delivery, queue
 //! operations, and agent-message delivery.
 use super::{
-    enqueue_priority, json, oneshot, parse_custom_message, parse_prompt_images, response_success,
-    sender_is_child_of, AgentFamilyRelationship, AgentMessagePromptPayload, Lane, QueueCheckpoint,
-    QueuePriority, QueuedItem, TurnPolicy, Worker, AGENT_MESSAGE_SOURCE,
-    DEFAULT_AGENT_MESSAGE_MAX_PENDING_PER_SESSION, QUEUED_INPUT_SUSPENDED,
+    enqueue_priority, json, new_queued_input_id, oneshot, parse_custom_message,
+    parse_prompt_images, response_success, sender_is_child_of, AgentFamilyRelationship,
+    AgentMessagePromptPayload, Lane, QueueCheckpoint, QueuePriority, QueuedItem, TurnPolicy,
+    Worker, AGENT_MESSAGE_SOURCE, DEFAULT_AGENT_MESSAGE_MAX_PENDING_PER_SESSION,
+    QUEUED_INPUT_SUSPENDED,
 };
 
 use serde_json::Value;
@@ -170,7 +171,7 @@ impl Worker {
         }
         let (done_tx, done_rx) = oneshot::channel();
         let done = if wait { Some(done_tx) } else { None };
-        let (snapshot, queued_behind_work) = {
+        let (snapshot, queued_behind_work, input_id) = {
             let mut core = self.core.lock().unwrap();
             let focused_reply = match parse_focused_reply(payload, &core) {
                 Ok(route) => route,
@@ -208,6 +209,8 @@ impl Worker {
             };
             // This RPC command is human-origin only for a plain user row.
             // Caller-supplied custom rows never gain human priority.
+            let input_id =
+                (queued_behind_work && custom_message.is_none()).then(new_queued_input_id);
             let item = QueuedItem {
                 focused_reply,
                 priority: if custom_message.is_some() {
@@ -230,13 +233,14 @@ impl Worker {
                     TurnPolicy::Direct
                 },
                 forced_batch: false,
+                input_id: input_id.clone(),
             };
             match lane {
                 Lane::Steering => enqueue_priority(&mut core.steering, item),
                 Lane::FollowUp => enqueue_priority(&mut core.follow_up, item),
             }
             let snapshot = Self::snapshot_locked(&core);
-            (snapshot, queued_behind_work)
+            (snapshot, queued_behind_work, input_id)
         };
         // The admission checkpoint: the admitted prompt is undelivered
         // live work until its turn settles.
@@ -248,13 +252,13 @@ impl Worker {
         }
         self.work_notify.notify_one();
         if !wait {
-            return response_success(
-                None,
-                "prompt",
-                payload
-                    .get("clientInputId")
-                    .map(|id| json!({"clientInputId": id, "accepted": true})),
-            );
+            let mut receipt = payload
+                .get("clientInputId")
+                .map(|id| json!({"clientInputId": id, "accepted": true}));
+            if let Some(id) = input_id {
+                receipt.get_or_insert_with(|| json!({ "accepted": true }))["inputId"] = json!(id);
+            }
+            return response_success(None, "prompt", receipt);
         }
         match done_rx.await {
             Ok(settle) => match settle.wire_error() {
@@ -304,6 +308,8 @@ impl Worker {
             Err(error) => return response_failure(None, lane.as_str(), &error, None),
         };
         core.queued_input_suspended = false;
+        // Only a plain human row is addressable by id; a caller-supplied custom row never is.
+        let input_id = custom_message.is_none().then(new_queued_input_id);
         let item = QueuedItem {
             focused_reply,
             priority: if custom_message.is_some() {
@@ -322,6 +328,7 @@ impl Worker {
             queue_visible: true,
             policy: TurnPolicy::Queued,
             forced_batch: false,
+            input_id: input_id.clone(),
         };
         match lane {
             Lane::Steering => enqueue_priority(&mut core.steering, item),
@@ -349,6 +356,9 @@ impl Worker {
         let mut receipt = json!({ "queued": true });
         if let Some(id) = payload.get("clientInputId") {
             receipt["clientInputId"] = id.clone();
+        }
+        if let Some(id) = input_id {
+            receipt["inputId"] = json!(id);
         }
         response_success(None, command, Some(receipt))
     }
@@ -493,6 +503,7 @@ impl Worker {
                 queue_visible: true,
                 policy: TurnPolicy::Injected,
                 forced_batch: false,
+                input_id: None,
             };
             match lane {
                 Lane::Steering => enqueue_priority(&mut core.steering, item),
