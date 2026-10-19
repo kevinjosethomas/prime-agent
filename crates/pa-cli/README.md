@@ -136,16 +136,6 @@ lease in both historic supervisor registries until Rust owns the replacement
 socket, preventing old clients from launching a competing daemon. Admission
 records are refreshed and removed only while their ownership token matches.
 
-## Task route completion
-
-`prime-agent task-route --json` runs one stateless completion for Primer's task
-routing. It emits ready-v1 before auth, accepts one <=256 KiB request
-`{id, model, system, user, maxTokens}` naming a Prime Inference registry model,
-and returns `{type:"result", id, text, usage}`. The host owns the prompt and the
-decision. There is no session, tool, daemon or history. Readiness+EOF and invalid
-requests never touch auth or the network; provider errors are replaced by fixed
-messages so request text is never echoed.
-
 ## Semantic thread evaluator
 
 `prime-agent thread-classify --json` composes the pa-ai semantic-thread evaluator
