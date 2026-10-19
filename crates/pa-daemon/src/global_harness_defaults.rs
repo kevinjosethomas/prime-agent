@@ -141,12 +141,12 @@ mod tests {
             "futureSetting":{"keep":true},
         });
         std::fs::write(&path, serde_json::to_vec(&initial).unwrap()).unwrap();
-        let patch = GlobalHarnessDefaultsPatch {
+        let defaults_patch = GlobalHarnessDefaultsPatch {
             auto_compaction_enabled: Some(false),
             max_depth: Some(0),
             ..GlobalHarnessDefaultsPatch::default()
         };
-        let result = set(dir.path(), &patch, "test-version").unwrap();
+        let result = set(dir.path(), &defaults_patch, "test-version").unwrap();
         assert_eq!(result, get(dir.path(), "test-version").unwrap());
         let mut expected = initial;
         expected["compaction"]["enabled"] = json!(false);

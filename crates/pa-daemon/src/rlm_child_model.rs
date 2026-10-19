@@ -265,10 +265,11 @@ mod tests {
     fn spawn_prefers_explicit_then_global_then_parent_and_reloads_between_spawns() {
         let dir = tempfile::TempDir::new().unwrap();
         write_catalog(dir.path());
-        let parent = Some("test-provider/glm-5.3");
+        let parent_model = "test-provider/glm-5.3";
+        let parent = Some(parent_model);
         assert_eq!(
             resolve_spawn_model_unchecked(dir.path(), None, parent).unwrap(),
-            parent.unwrap()
+            parent_model
         );
         let mut settings = pa_core::settings::SettingsManager::create(dir.path(), dir.path());
         settings
@@ -280,17 +281,17 @@ mod tests {
         );
         assert_eq!(
             resolve_spawn_model_unchecked(dir.path(), Some("glm-5.3"), parent).unwrap(),
-            parent.unwrap()
+            parent_model
         );
         // Top-level creation keeps its old resolution, ignoring the global child preference.
         assert_eq!(
             resolve_child_model_unchecked(dir.path(), None, parent, "session").unwrap(),
-            parent.unwrap()
+            parent_model
         );
         settings.set_subagent_default_model(None).unwrap();
         assert_eq!(
             resolve_spawn_model_unchecked(dir.path(), None, parent).unwrap(),
-            parent.unwrap()
+            parent_model
         );
     }
 

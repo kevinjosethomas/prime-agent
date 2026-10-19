@@ -127,7 +127,7 @@ impl SessionCore {
             running_tool_calls: std::collections::HashSet::new(),
             running_admission_ids: std::collections::HashSet::new(),
             running_client_input_ids: std::collections::HashSet::new(),
-            active_input_ownership: Default::default(),
+            active_input_ownership: ReplyOwnership::default(),
             auto_compaction_enabled: true,
             last_action_snapshot: Some(SessionActionSnapshot::default()),
             rlm_depth: 0,

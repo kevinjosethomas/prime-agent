@@ -353,7 +353,7 @@ impl Worker {
             // The queue parks and a plain prompt is rejected until a
             // resume site fires.
             core.queued_input_suspended = true;
-            core.active_input_ownership = Default::default();
+            core.active_input_ownership = pa_types::daemon::ReplyOwnership::default();
         }
         self.emit_worker_event(json!({"type":"input_ownership", "ownership":pa_types::daemon::ReplyOwnership::default()}));
         // Queue-INVISIBLE turn actions cancel: a direct prompt admitted on an idle
@@ -626,7 +626,7 @@ impl Worker {
         core.abort_requested = true;
         // The same TS `requestAbort()` suspension as the bare `abort`.
         core.queued_input_suspended = true;
-        core.active_input_ownership = Default::default();
+        core.active_input_ownership = pa_types::daemon::ReplyOwnership::default();
         drop(core);
         self.emit_worker_event(json!({"type":"input_ownership", "ownership":pa_types::daemon::ReplyOwnership::default()}));
         // And the same eager agent abort.

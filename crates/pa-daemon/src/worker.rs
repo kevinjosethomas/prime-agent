@@ -322,7 +322,7 @@ impl Worker {
             running_tool_calls: std::collections::HashSet::new(),
             running_admission_ids: std::collections::HashSet::new(),
             running_client_input_ids: std::collections::HashSet::new(),
-            active_input_ownership: Default::default(),
+            active_input_ownership: pa_types::daemon::ReplyOwnership::default(),
         };
         let active_session_id = config.active_session_id.clone();
         let script = config.script.clone();

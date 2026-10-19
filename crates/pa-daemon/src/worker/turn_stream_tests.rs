@@ -54,7 +54,7 @@ fn burst_runner(engine: Arc<dyn SessionEngine>) -> TurnRunner {
         running_tool_calls: std::collections::HashSet::new(),
         running_admission_ids: std::collections::HashSet::new(),
         running_client_input_ids: std::collections::HashSet::new(),
-        active_input_ownership: Default::default(),
+        active_input_ownership: pa_types::daemon::ReplyOwnership::default(),
     }));
     TurnRunner {
         core,
@@ -569,7 +569,10 @@ async fn ownership_event_fixture(
         }
     }
     let core = runner.core.lock().unwrap();
-    assert_eq!(core.active_input_ownership, Default::default());
+    assert_eq!(
+        core.active_input_ownership,
+        pa_types::daemon::ReplyOwnership::default()
+    );
     (events, core.store.as_ref().unwrap().messages())
 }
 
@@ -718,15 +721,24 @@ fn ownership_set_is_exhaustive_bounded_and_deduplicated() {
         json!({"state":"known","inputIds":["a","b"],"replyToMessageIds":["A","B"]})
     );
     ownership.observe(&json!({"nativeMessageId":"unrouted"}));
-    assert_eq!(ownership.ownership(), Default::default());
+    assert_eq!(
+        ownership.ownership(),
+        pa_types::daemon::ReplyOwnership::default()
+    );
     let mut blank = super::turn::MaterializedInputOwnership::default();
     blank.observe(&json!({"nativeMessageId":"id","clientInputId":" ","replyToMessageId":"A"}));
-    assert_eq!(blank.ownership(), Default::default());
+    assert_eq!(
+        blank.ownership(),
+        pa_types::daemon::ReplyOwnership::default()
+    );
     let mut bounded = super::turn::MaterializedInputOwnership::default();
     for index in 0..65 {
         bounded.observe(&json!({"nativeMessageId":format!("n{index}"),"clientInputId":format!("c{index}"),"replyToMessageId":"A"}));
     }
-    assert_eq!(bounded.ownership(), Default::default());
+    assert_eq!(
+        bounded.ownership(),
+        pa_types::daemon::ReplyOwnership::default()
+    );
 }
 
 #[tokio::test]

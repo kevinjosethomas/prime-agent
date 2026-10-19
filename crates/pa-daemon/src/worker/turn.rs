@@ -79,7 +79,7 @@ impl MaterializedInputOwnership {
 
     pub(super) fn ownership(&self) -> pa_types::daemon::ReplyOwnership {
         if self.unknown || self.input_ids.is_empty() || self.reply_to_message_ids.is_empty() {
-            return Default::default();
+            return pa_types::daemon::ReplyOwnership::default();
         }
         pa_types::daemon::ReplyOwnership::Known {
             input_ids: self.input_ids.clone(),
@@ -121,7 +121,7 @@ impl TurnRunner {
                         .filter_map(|item| item.admission_id.clone())
                         .collect();
                     core.busy = true;
-                    core.active_input_ownership = Default::default();
+                    core.active_input_ownership = pa_types::daemon::ReplyOwnership::default();
                     core.abort_requested = false;
                     core.retry_abort_requested = false;
                     core.running_tool_calls.clear();
@@ -364,7 +364,7 @@ impl TurnRunner {
         };
         {
             let mut core = self.core.lock().unwrap();
-            core.active_input_ownership = Default::default();
+            core.active_input_ownership = pa_types::daemon::ReplyOwnership::default();
             core.running_client_input_ids
                 .extend(items.iter().filter_map(|item| {
                     item.focused_reply
@@ -656,7 +656,7 @@ impl TurnRunner {
                     }
                     EngineEvent::InputOwnershipUnknown => {
                         ownership_ready = true;
-                        core.active_input_ownership = Default::default();
+                        core.active_input_ownership = pa_types::daemon::ReplyOwnership::default();
                     }
                     EngineEvent::AssistantUpdate { message, .. } => {
                         let id = assistant_native_id
@@ -701,7 +701,8 @@ impl TurnRunner {
                             }
                         }
                         if ownership_ready {
-                            core.active_input_ownership = Default::default();
+                            core.active_input_ownership =
+                                pa_types::daemon::ReplyOwnership::default();
                         } else if !emitting_prefix_rows.get() {
                             admitted_ownership.observe(message);
                         }
@@ -857,7 +858,7 @@ impl TurnRunner {
                         *tool_results = std::mem::take(&mut completed_tools);
                     }
                     EngineEvent::AgentEnd { messages } => {
-                        *messages = aggregate_rows.clone();
+                        messages.clone_from(&aggregate_rows);
                     }
                     _ => {}
                 }
@@ -1240,7 +1241,7 @@ impl TurnRunner {
             core.active_action = None;
             core.running_admission_ids.clear();
             core.running_client_input_ids.clear();
-            core.active_input_ownership = Default::default();
+            core.active_input_ownership = pa_types::daemon::ReplyOwnership::default();
             more_queued
         };
         self.emit_turn_event(json!({"type":"input_ownership", "ownership": pa_types::daemon::ReplyOwnership::default()}));
