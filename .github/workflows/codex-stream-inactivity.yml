@@ -18,6 +18,7 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo test --locked -p pa-ai --lib codex_stream_inactivity
       - run: cargo test --locked -p pa-ai --lib openai_codex_responses
+      - run: cargo test --locked -p pa-ai --lib providers::anthropic
       - run: cargo test --locked -p pa-core --lib codex_stream_inactivity
       - run: cargo test --locked -p pa-core --lib session_engine::auto_retry
       - run: cargo test --locked -p pa-core --lib session_engine::provider_failover

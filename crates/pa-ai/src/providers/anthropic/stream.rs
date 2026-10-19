@@ -230,6 +230,15 @@ async fn run_stream(
             params = next;
         }
     }
+    // Normalize the complete outgoing request, including historical and nested
+    // tool-result images. Keep codec work off the async transport executor.
+    if super::images::has_images(&params) {
+        let model_id = model.id.clone();
+        params = tokio::task::spawn_blocking(move || super::images::prepare(params, &model_id))
+            .await
+            .map_err(|_| ProviderError::Message("Could not prepare images for Claude".into()))?
+            .map_err(ProviderError::Message)?;
+    }
 
     let url = format!("{}/v1/messages", model.base_url.trim_end_matches('/'));
     let mut response: HttpResponse = send(RequestOptions {

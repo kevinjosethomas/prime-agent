@@ -19,6 +19,7 @@ use crate::types::{
 use crate::utils_inner::diagnostics::now_ms;
 
 mod convert;
+mod images;
 mod params;
 mod stream;
 
