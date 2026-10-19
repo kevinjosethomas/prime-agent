@@ -107,6 +107,8 @@ pub mod socket;
 pub(crate) mod state_getters;
 mod stop_cleanup;
 pub(crate) mod streaming;
+pub(crate) mod subagent_model_defaults;
+pub(crate) mod global_harness_defaults;
 pub mod supervisor;
 pub mod supervisor_link;
 pub(crate) mod supervisor_lost;

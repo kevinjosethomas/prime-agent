@@ -116,6 +116,26 @@ pub fn resolve_child_model_unchecked(
     Err(model_unavailable_error(reference, target, &candidates))
 }
 
+/// Resolve a future subagent: explicit request, global configured selector, then parent.
+/// Top-level `create_session` deliberately continues to use the child resolver directly.
+///
+/// # Errors
+/// Returns an error for unreadable global settings or an unavailable/disallowed default.
+/// Explicit selectors retain the existing short-form resolution behavior.
+pub fn resolve_spawn_model_unchecked(
+    agent_dir: &Path,
+    reference: Option<&str>,
+    parent_model: Option<&str>,
+) -> Result<String> {
+    if reference.is_some() {
+        return resolve_child_model_unchecked(agent_dir, reference, parent_model, "subagent");
+    }
+    if let Some(configured) = crate::subagent_model_defaults::read_model(agent_dir)? {
+        return crate::subagent_model_defaults::validate_model(agent_dir, &configured);
+    }
+    resolve_child_model_unchecked(agent_dir, None, parent_model, "subagent")
+}
+
 /// A requested thinking level must be supported by the resolved model;
 /// an out-of-catalog model (a scripted verification model) passes unchecked.
 ///
@@ -239,6 +259,22 @@ mod tests {
             .to_string(),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn spawn_prefers_explicit_then_global_then_parent_and_reloads_between_spawns() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_catalog(dir.path());
+        let parent = Some("test-provider/glm-5.3");
+        assert_eq!(resolve_spawn_model_unchecked(dir.path(), None, parent).unwrap(), parent.unwrap());
+        let mut settings = pa_core::settings::SettingsManager::create(dir.path(), dir.path());
+        settings.set_subagent_default_model(Some("test-provider/glm-5.3-turbo".to_string())).unwrap();
+        assert_eq!(resolve_spawn_model_unchecked(dir.path(), None, parent).unwrap(), "test-provider/glm-5.3-turbo");
+        assert_eq!(resolve_spawn_model_unchecked(dir.path(), Some("glm-5.3"), parent).unwrap(), parent.unwrap());
+        // Top-level creation keeps its old resolution, ignoring the global child preference.
+        assert_eq!(resolve_child_model_unchecked(dir.path(), None, parent, "session").unwrap(), parent.unwrap());
+        settings.set_subagent_default_model(None).unwrap();
+        assert_eq!(resolve_spawn_model_unchecked(dir.path(), None, parent).unwrap(), parent.unwrap());
     }
 
     #[test]

@@ -566,14 +566,28 @@ impl SettingsManager {
         self.merged.default_model.as_deref()
     }
 
-    /// Model for `rlm.spawn` without a pinned model; unset inherits parent.
+    /// Global model for future `rlm.spawn` calls without a pinned model; unset inherits parent.
+    /// Project settings and runtime overrides cannot change this global preference.
     #[must_use]
     pub fn get_subagent_default_model(&self) -> Option<String> {
-        self.merged
+        self.global
             .subagent_default_model
             .as_ref()
             .map(|m| m.trim().to_string())
             .filter(|m| !m.is_empty())
+    }
+
+    /// Persist the global child-model preference; `None` restores parent inheritance.
+    /// Callers validate selectors against the catalog and policy before saving.
+    ///
+    /// # Errors
+    /// Returns an error when global settings cannot be read or written.
+    pub fn set_subagent_default_model(&mut self, model: Option<String>) -> Result<()> {
+        if let Some(message) = &self.global_load_error {
+            return Err(anyhow!("Global settings not saved: {message}"));
+        }
+        self.global.subagent_default_model = model;
+        self.save_global(&["subagentDefaultModel"])
     }
 
     #[must_use]
@@ -1288,6 +1302,27 @@ mod tests {
         assert_eq!(manager.get_session_archive_policy().max_sessions, None);
         manager.global.session_archive_max_sessions = Some(serde_json::json!(50));
         assert_eq!(manager.get_session_archive_policy().max_sessions, Some(50));
+    }
+
+    #[test]
+    fn subagent_default_is_global_and_clear_restores_inheritance() {
+        let mut manager = SettingsManager::in_memory(&Settings {
+            subagent_default_model: Some("provider/global".to_string()),
+            default_model: Some("root-model".to_string()),
+            ..Settings::default()
+        });
+        manager.project.subagent_default_model = Some("provider/project".to_string());
+        manager.apply_overrides(&Settings {
+            subagent_default_model: Some("provider/runtime".to_string()),
+            ..Settings::default()
+        });
+        assert_eq!(manager.get_subagent_default_model().as_deref(), Some("provider/global"));
+        manager.set_subagent_default_model(Some("provider/new".to_string())).unwrap();
+        assert_eq!(manager.reopen().get_subagent_default_model().as_deref(), Some("provider/new"));
+        manager.set_subagent_default_model(None).unwrap();
+        let fresh = manager.reopen();
+        assert_eq!(fresh.get_subagent_default_model(), None);
+        assert_eq!(fresh.get_default_model(), Some("root-model"));
     }
 
     #[test]

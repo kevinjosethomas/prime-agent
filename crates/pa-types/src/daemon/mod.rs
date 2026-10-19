@@ -97,6 +97,8 @@ pub mod agent_roster;
 mod command;
 pub mod framing;
 pub mod herdr_env;
+pub mod subagent_model_defaults;
+pub mod global_harness_defaults;
 pub mod launch_env;
 mod outbound;
 mod plane;

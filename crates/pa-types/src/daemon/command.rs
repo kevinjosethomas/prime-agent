@@ -137,6 +137,33 @@ pub struct PromptInput {
     rename_all_fields = "camelCase"
 )]
 pub enum DaemonCommand {
+    GetGlobalHarnessDefaults {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
+    SetGlobalHarnessDefaults {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        patch: super::global_harness_defaults::GlobalHarnessDefaultsPatch,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
+    GetSubagentModelDefault {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
+    SetSubagentModelDefault {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(deserialize_with = "super::subagent_model_defaults::required_nullable_model")]
+        model: Option<String>,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
     List {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,

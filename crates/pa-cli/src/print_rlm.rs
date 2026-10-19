@@ -622,13 +622,18 @@ impl RlmSubagentHost for InlineHost {
                     thinking,
                 )
             } else {
-                let selector = pa_daemon::rlm_child_model::resolve_child_model_unchecked(
-                    &config.agent_dir,
-                    request.model.as_deref(),
-                    node.model_selector.lock().unwrap().as_deref(),
-                    "subagent",
-                )
-                .map_err(|error| anyhow::anyhow!("{error:#}"))?;
+                let agent_dir = config.agent_dir.clone();
+                let reference = request.model.clone();
+                let parent_model = node.model_selector.lock().unwrap().clone();
+                let selector = tokio::task::spawn_blocking(move || {
+                    pa_daemon::rlm_child_model::resolve_spawn_model_unchecked(
+                        &agent_dir,
+                        reference.as_deref(),
+                        parent_model.as_deref(),
+                    )
+                })
+                .await
+                .map_err(|error| anyhow::anyhow!("Child model resolution task failed: {error}"))??;
                 pa_daemon::rlm_child_model::assert_thinking_supported(
                     &config.agent_dir,
                     request.thinking.as_deref(),

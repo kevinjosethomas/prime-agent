@@ -637,6 +637,88 @@ impl Supervisor {
                 };
                 (vec![response_line(&response)], false)
             }
+            DaemonCommand::GetGlobalHarnessDefaults { rest, .. }
+            | DaemonCommand::SetGlobalHarnessDefaults { rest, .. } => {
+                if !rest.is_empty() {
+                    return (
+                        vec![response_line(&response_failure(
+                            Some(&command_id),
+                            &type_name,
+                            "Global defaults do not accept session selectors or extra fields",
+                            None,
+                        ))],
+                        false,
+                    );
+                }
+                let agent_dir = self.options.agent_dir.clone();
+                let patch = match command {
+                    DaemonCommand::SetGlobalHarnessDefaults { patch, .. } => Some(patch.clone()),
+                    _ => None,
+                };
+                let result = tokio::task::spawn_blocking(move || match patch {
+                    Some(patch) => crate::global_harness_defaults::set(&agent_dir, &patch, app_version()),
+                    None => crate::global_harness_defaults::get(&agent_dir, app_version()),
+                })
+                .await;
+                let response = match result {
+                    Ok(Ok(data)) => {
+                        if type_name == "set_global_harness_defaults" {
+                            self.note_daemon_event("global_harness_defaults_changed", None);
+                        }
+                        response_success(Some(&command_id), &type_name, Some(json!(data)))
+                    }
+                    Ok(Err(error)) => response_failure(
+                        Some(&command_id), &type_name, &format!("{error:#}"), None,
+                    ),
+                    Err(error) => response_failure(
+                        Some(&command_id), &type_name,
+                        &format!("Global settings task failed: {error}"), None,
+                    ),
+                };
+                (vec![response_line(&response)], false)
+            }
+            DaemonCommand::GetSubagentModelDefault { rest, .. }
+            | DaemonCommand::SetSubagentModelDefault { rest, .. } => {
+                if !rest.is_empty() {
+                    return (
+                        vec![response_line(&response_failure(
+                            Some(&command_id),
+                            &type_name,
+                            "Global defaults do not accept session selectors or extra fields",
+                            None,
+                        ))],
+                        false,
+                    );
+                }
+                let agent_dir = self.options.agent_dir.clone();
+                let model = match command {
+                    DaemonCommand::SetSubagentModelDefault { model, .. } => Some(model.clone()),
+                    _ => None,
+                };
+                let result = tokio::task::spawn_blocking(move || {
+                    match model {
+                        Some(model) => crate::subagent_model_defaults::set(&agent_dir, model.as_deref()),
+                        None => crate::subagent_model_defaults::get(&agent_dir),
+                    }
+                })
+                .await;
+                let response = match result {
+                    Ok(Ok(data)) => {
+                        if type_name == "set_subagent_model_default" {
+                            self.note_daemon_event("subagent_model_default_changed", None);
+                        }
+                        response_success(Some(&command_id), &type_name, Some(json!(data)))
+                    }
+                    Ok(Err(error)) => response_failure(
+                        Some(&command_id), &type_name, &format!("{error:#}"), None,
+                    ),
+                    Err(error) => response_failure(
+                        Some(&command_id), &type_name,
+                        &format!("Global settings task failed: {error}"), None,
+                    ),
+                };
+                (vec![response_line(&response)], false)
+            }
             DaemonCommand::AckResult { .. } => (Vec::new(), false),
             DaemonCommand::Restart { .. } | DaemonCommand::Shutdown { .. } => {
                 // WHO asked: the request's client id and command id land in the daemon log
@@ -1125,6 +1207,40 @@ mod tests {
     #[cfg(unix)]
     use std::sync::Arc;
     use std::time::Duration;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn subagent_default_is_available_without_a_worker_and_rejects_session_fields() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let supervisor = Arc::new(Supervisor::new(SupervisorOptions {
+            socket_path: dir.path().join("daemon.sock"),
+            agent_dir: dir.path().join("agent"),
+        }).unwrap());
+        let effective = Arc::new(std::sync::Mutex::new("settings-client".to_string()));
+        let (targeted_tx, _targeted_rx) = tokio::sync::mpsc::channel(1);
+        let attached = subscribers::ClientSubscriptions::new("settings-client".to_string(), targeted_tx);
+        let roster = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let connection = Arc::new(crate::input_pause_lease::ClientConnectionState::new());
+        let (dispatch_tx, _dispatch_rx) = tokio::sync::mpsc::channel(1);
+        for (command, expected_success) in [
+            (json!({"type":"get_global_harness_defaults"}), true),
+            (json!({"type":"set_global_harness_defaults","patch":{"maxDepth":0,"autoCompactionEnabled":false}}), true),
+            (json!({"type":"set_global_harness_defaults","patch":{"maxDepth":9},"activeSessionId":"root"}), false),
+            (json!({"type":"get_subagent_model_default"}), true),
+            (json!({"type":"set_subagent_model_default","model":null}), true),
+            (json!({"type":"set_subagent_model_default","model":null,"activeSessionId":"root"}), false),
+        ] {
+            let line = json!({"type":"command","id":"settings", "protocol":current_protocol_info(),"command":command}).to_string();
+            let (lines, stop) = supervisor.dispatch_client(
+                &line, &effective, &attached, &roster, &connection, "settings-client", &dispatch_tx,
+            ).await;
+            assert!(!stop);
+            let Outbound::Line(response) = &lines[0] else { panic!("expected JSON response") };
+            assert_eq!(response["success"], json!(expected_success));
+        }
+        assert!(supervisor.registry.list().await.is_empty());
+        assert_eq!(crate::subagent_model_defaults::get(&supervisor.options.agent_dir).unwrap().model, None);
+    }
 
     /// A response-write failure can retire the serve loop while an accepted
     /// shutdown task has not claimed its owner yet. Keep the receiver alive

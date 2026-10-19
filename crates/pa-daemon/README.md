@@ -2,6 +2,22 @@
 
 Session supervision and wire serving.
 
+`subagent_model_defaults` advertises supervisor-only `get_subagent_model_default`
+and `set_subagent_model_default` commands. The global `subagentDefaultModel`
+preference affects future `rlm.spawn` calls only: an explicit spawn model wins,
+then the configured exact catalog selector, then the parent model. A null save
+restores inheritance. Saves validate the credential-backed catalog and current
+`allowedModels`, preserve unrelated settings, and return a fresh persisted read.
+No root session, existing child, thinking preference, or `create_session` is changed.
+
+`global_harness_defaults` separately exposes supervisor-only
+`get_global_harness_defaults` and `set_global_harness_defaults` with a typed
+`patch` for auto-compaction, steering/follow-up modes, and recursion depth.
+The response identifies global configured values separately from defaults.
+Writes are atomic field-preserving settings updates with fresh read-back;
+no session is selected, created, or changed. Project and environment overrides
+are not presented as global configuration.
+
 The fork-only `classify_workstream` control-plane command performs bounded
 Prime Inference System One evaluation (never chat completion). It resolves request
 auth and team headers through the existing registry, evaluates every workstream
