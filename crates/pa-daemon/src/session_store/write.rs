@@ -71,8 +71,11 @@ impl SessionFile {
     pub(crate) fn persist_message_with_id(&mut self, id: &str, message: &Value) -> Result<String> {
         anyhow::ensure!(!self.by_id.contains_key(id), "message ID already persisted");
         let entry = SessionEntry {
-            type_: "message".to_string(), id: id.to_string(), parent_id: self.leaf_id.clone(),
-            timestamp: crate::util::now_iso(), fields: json!({"message": message}),
+            type_: "message".to_string(),
+            id: id.to_string(),
+            parent_id: self.leaf_id.clone(),
+            timestamp: crate::util::now_iso(),
+            fields: json!({"message": message}),
         };
         self.persist_built_entry(entry)
     }

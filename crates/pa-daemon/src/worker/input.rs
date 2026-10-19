@@ -11,50 +11,88 @@ use serde_json::Value;
 
 use crate::protocol::{response_failure, DaemonResponse};
 
-
 /// Validate against the loaded branch only. No history reads, global context, or tree movement.
 fn parse_focused_reply(
     payload: &Value,
     core: &super::SessionCore,
 ) -> Result<Option<pa_types::daemon::FocusedThreadReply>, String> {
-    if !["clientInputId", "replyToMessageId", "replyContext"].iter().any(|key| payload.get(key).is_some()) {
+    if !["clientInputId", "replyToMessageId", "replyContext"]
+        .iter()
+        .any(|key| payload.get(key).is_some())
+    {
         return Ok(None);
     }
     let route: pa_types::daemon::FocusedThreadReply = serde_json::from_value(payload.clone())
         .map_err(|_| "Invalid focused thread reply".to_string())?;
-    if route.client_input_id.is_empty() || route.client_input_id.len() > 128
-        || route.reply_to_message_id.is_empty() || route.reply_to_message_id.len() > 512
+    if route.client_input_id.is_empty()
+        || route.client_input_id.len() > 128
+        || route.reply_to_message_id.is_empty()
+        || route.reply_to_message_id.len() > 512
         || route.reply_context.len() > 8
-        || payload.get("message").and_then(Value::as_str).is_some_and(|text|
-            crate::session_commands::parse_prompt_session_command(text).is_some())
+        || payload
+            .get("message")
+            .and_then(Value::as_str)
+            .is_some_and(|text| {
+                crate::session_commands::parse_prompt_session_command(text).is_some()
+            })
         || payload.get("customMessage").is_some_and(|v| !v.is_null())
     {
         return Err("Invalid focused thread reply".to_string());
     }
     let store = core.store.as_ref().ok_or("Session is still initializing")?;
     let branch = store.branch();
-    let parent = branch.iter().find(|entry| entry.id == route.reply_to_message_id)
+    let parent = branch
+        .iter()
+        .find(|entry| entry.id == route.reply_to_message_id)
         .and_then(|entry| entry.fields.get("message"));
-    if parent.and_then(|message| message.get("role")).and_then(Value::as_str) != Some("user") {
+    if parent
+        .and_then(|message| message.get("role"))
+        .and_then(Value::as_str)
+        != Some("user")
+    {
         return Err("Reply parent is not a loaded user message in this session".to_string());
     }
-    if core.running_client_input_ids.contains(&route.client_input_id)
-        || branch.iter().any(|entry| entry.fields.get("message")
-        .and_then(|message| message.get("clientInputId")).and_then(Value::as_str)
-            == Some(route.client_input_id.as_str()))
-        || core.steering.iter().chain(&core.follow_up).any(|item| item.focused_reply.as_ref()
-            .is_some_and(|reply| reply.client_input_id == route.client_input_id))
+    if core
+        .running_client_input_ids
+        .contains(&route.client_input_id)
+        || branch.iter().any(|entry| {
+            entry
+                .fields
+                .get("message")
+                .and_then(|message| message.get("clientInputId"))
+                .and_then(Value::as_str)
+                == Some(route.client_input_id.as_str())
+        })
+        || core.steering.iter().chain(&core.follow_up).any(|item| {
+            item.focused_reply
+                .as_ref()
+                .is_some_and(|reply| reply.client_input_id == route.client_input_id)
+        })
     {
-        return Err("clientInputId already admitted; do not resend unknown acknowledgements".to_string());
+        return Err(
+            "clientInputId already admitted; do not resend unknown acknowledgements".to_string(),
+        );
     }
     let mut seen = std::collections::HashSet::new();
     for row in &route.reply_context {
-        if !seen.insert(row.id.as_str()) || row.id.is_empty() || row.id.len() > 512 || row.text.len() > 1000 || !matches!(row.role.as_str(), "user" | "assistant")
-            || !branch.iter().any(|entry| entry.id == row.id
-                && entry.fields.get("message").and_then(|message| message.get("role"))
-                    .and_then(Value::as_str) == Some(row.role.as_str()))
+        if !seen.insert(row.id.as_str())
+            || row.id.is_empty()
+            || row.id.len() > 512
+            || row.text.len() > 1000
+            || !matches!(row.role.as_str(), "user" | "assistant")
+            || !branch.iter().any(|entry| {
+                entry.id == row.id
+                    && entry
+                        .fields
+                        .get("message")
+                        .and_then(|message| message.get("role"))
+                        .and_then(Value::as_str)
+                        == Some(row.role.as_str())
+            })
         {
-            return Err("Reply context must name loaded messages and fit its byte limit".to_string());
+            return Err(
+                "Reply context must name loaded messages and fit its byte limit".to_string(),
+            );
         }
     }
     Ok(Some(route))
@@ -210,7 +248,13 @@ impl Worker {
         }
         self.work_notify.notify_one();
         if !wait {
-            return response_success(None, "prompt", payload.get("clientInputId").map(|id| json!({"clientInputId": id, "accepted": true})));
+            return response_success(
+                None,
+                "prompt",
+                payload
+                    .get("clientInputId")
+                    .map(|id| json!({"clientInputId": id, "accepted": true})),
+            );
         }
         match done_rx.await {
             Ok(settle) => match settle.wire_error() {
@@ -303,7 +347,9 @@ impl Worker {
             "follow_up"
         };
         let mut receipt = json!({ "queued": true });
-        if let Some(id) = payload.get("clientInputId") { receipt["clientInputId"] = id.clone(); }
+        if let Some(id) = payload.get("clientInputId") {
+            receipt["clientInputId"] = id.clone();
+        }
         response_success(None, command, Some(receipt))
     }
 
@@ -498,7 +544,10 @@ mod focused_reply_tests {
         let parent = store.append_message(&json!({"role":"user","content":"parent","timestamp":1}));
         let payload = json!({"message":"same text", "clientInputId":"input-a", "replyToMessageId":parent,
             "replyContext":[{"id":parent,"role":"user","text":"parent"}]});
-        (super::super::SessionCore::test_core(Some(store), "/tmp".to_string()), payload)
+        (
+            super::super::SessionCore::test_core(Some(store), "/tmp".to_string()),
+            payload,
+        )
     }
 
     #[test]
@@ -513,7 +562,9 @@ mod focused_reply_tests {
         payload["replyContext"] = json!([]);
         payload["replyToMessageId"] = json!("other-session-entry");
         assert!(parse_focused_reply(&payload, &core).is_err());
-        assert!(parse_focused_reply(&json!({"message":"ordinary"}), &core).unwrap().is_none());
+        assert!(parse_focused_reply(&json!({"message":"ordinary"}), &core)
+            .unwrap()
+            .is_none());
     }
 
     #[tokio::test]
@@ -525,11 +576,18 @@ mod focused_reply_tests {
             let response = worker.dispatch(command, &payload).await;
             assert!(response.success, "{command}: {response:?}");
             let core = worker.core.lock().unwrap();
-            let item = core.steering.front().or_else(|| core.follow_up.front()).unwrap();
+            let item = core
+                .steering
+                .front()
+                .or_else(|| core.follow_up.front())
+                .unwrap();
             assert_eq!(item.message, "same text");
             let route = item.focused_reply.as_ref().unwrap();
             assert_eq!(route.client_input_id, "input-a");
-            assert_eq!(route.reply_to_message_id, payload["replyToMessageId"].as_str().unwrap());
+            assert_eq!(
+                route.reply_to_message_id,
+                payload["replyToMessageId"].as_str().unwrap()
+            );
         }
     }
 
@@ -540,7 +598,12 @@ mod focused_reply_tests {
         let parent = payload["replyToMessageId"].as_str().unwrap();
         assert_eq!(store.messages()[0]["nativeMessageId"], parent);
         assert_eq!(store.messages_before(1)[0]["nativeMessageId"], parent);
-        assert_eq!(store.windowed_messages(1).messages[0]["nativeMessageId"], parent);
-        assert!(store.entry(parent).unwrap().fields["message"].get("nativeMessageId").is_none());
+        assert_eq!(
+            store.windowed_messages(1).messages[0]["nativeMessageId"],
+            parent
+        );
+        assert!(store.entry(parent).unwrap().fields["message"]
+            .get("nativeMessageId")
+            .is_none());
     }
 }

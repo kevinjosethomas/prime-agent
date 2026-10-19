@@ -96,18 +96,19 @@ pub struct DaemonEventMeta {
 pub mod agent_roster;
 mod command;
 pub mod framing;
-pub mod herdr_env;
-pub mod subagent_model_defaults;
 pub mod global_harness_defaults;
+pub mod herdr_env;
 pub mod launch_env;
 mod outbound;
 mod plane;
+pub mod subagent_model_defaults;
 pub mod update_flow;
 mod worker;
 
 pub use command::{
     CycleDirection, DaemonCommand, DaemonCommandEnvelope, DaemonCommandFrameType,
-    DaemonCommandWire, DaemonSessionLifecycle, FocusedThreadContextRow, FocusedThreadReply, ReplyOwnership, ForkPosition, PromptInput, StreamingBehavior,
+    DaemonCommandWire, DaemonSessionLifecycle, FocusedThreadContextRow, FocusedThreadReply,
+    ForkPosition, PromptInput, ReplyOwnership, StreamingBehavior,
 };
 pub use outbound::{
     DaemonClosingReason, DaemonErrorInfo, DaemonEventEnvelope, DaemonOutbound,

@@ -57,7 +57,11 @@ pub(crate) fn convert_to_llm(
                 messages
                     .into_iter()
                     .filter_map(|message| match message {
-                        message @ pa_agent::types::AgentMessage::Custom(_) if message.role() == "focusedThreadUser" => Some(message),
+                        message @ pa_agent::types::AgentMessage::Custom(_)
+                            if message.role() == "focusedThreadUser" =>
+                        {
+                            Some(message)
+                        }
                         pa_agent::types::AgentMessage::Custom(custom) => {
                             let typed =
                                 serde_json::from_value(serde_json::to_value(custom).ok()?).ok()?;
@@ -114,16 +118,25 @@ mod tests {
         let mut settings = SettingsManager::create(tmp.path(), tmp.path().join("agent"));
         settings.set_harness_refinements(false).unwrap();
         let route = pa_types::daemon::FocusedThreadReply {
-            client_input_id:"input-a".to_string(), reply_to_message_id:"parent-a".to_string(),
-            reply_context:vec![pa_types::daemon::FocusedThreadContextRow {
-                id:"parent-a".to_string(), role:"user".to_string(), text:"prior context".to_string(),
+            client_input_id: "input-a".to_string(),
+            reply_to_message_id: "parent-a".to_string(),
+            reply_context: vec![pa_types::daemon::FocusedThreadContextRow {
+                id: "parent-a".to_string(),
+                role: "user".to_string(),
+                text: "prior context".to_string(),
             }],
         };
-        let images = vec![pa_agent::types::ImageContent {data:"image".to_string(), mime_type:"image/png".to_string()}];
+        let images = vec![pa_agent::types::ImageContent {
+            data: "image".to_string(),
+            mime_type: "image/png".to_string(),
+        }];
         let message = super::super::focused_user_prompt_message("normal", &images, Some(&route));
         let result = convert_to_llm(settings)(vec![message]).await.unwrap();
         let value = serde_json::to_value(&result[0]).unwrap();
-        assert!(value["content"][0]["text"].as_str().unwrap().contains("prior context"));
+        assert!(value["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("prior context"));
         assert_eq!(value["content"][1]["text"], "normal");
         assert_eq!(value["content"][2]["data"], "image");
     }

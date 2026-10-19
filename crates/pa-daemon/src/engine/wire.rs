@@ -176,7 +176,11 @@ pub enum EngineEvent {
 /// partial, converted only when a frame is built.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AssistantSnapshot {
-    Decorated { message: Box<AssistantSnapshot>, native_message_id: String, ownership: pa_types::daemon::ReplyOwnership },
+    Decorated {
+        message: Box<AssistantSnapshot>,
+        native_message_id: String,
+        ownership: pa_types::daemon::ReplyOwnership,
+    },
     Wire(Value),
     Loop(Arc<pa_agent::types::AgentMessage>),
 }
@@ -184,7 +188,11 @@ pub enum AssistantSnapshot {
 impl AssistantSnapshot {
     pub(crate) fn into_wire(self) -> Option<Value> {
         match self {
-            Self::Decorated { message, native_message_id, ownership } => {
+            Self::Decorated {
+                message,
+                native_message_id,
+                ownership,
+            } => {
                 let mut value = message.into_wire()?;
                 value["nativeMessageId"] = json!(native_message_id);
                 value["replyOwnership"] = json!(ownership);

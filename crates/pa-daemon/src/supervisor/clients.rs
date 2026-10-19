@@ -656,7 +656,9 @@ impl Supervisor {
                     _ => None,
                 };
                 let result = tokio::task::spawn_blocking(move || match patch {
-                    Some(patch) => crate::global_harness_defaults::set(&agent_dir, &patch, app_version()),
+                    Some(patch) => {
+                        crate::global_harness_defaults::set(&agent_dir, &patch, app_version())
+                    }
                     None => crate::global_harness_defaults::get(&agent_dir, app_version()),
                 })
                 .await;
@@ -667,12 +669,14 @@ impl Supervisor {
                         }
                         response_success(Some(&command_id), &type_name, Some(json!(data)))
                     }
-                    Ok(Err(error)) => response_failure(
-                        Some(&command_id), &type_name, &format!("{error:#}"), None,
-                    ),
+                    Ok(Err(error)) => {
+                        response_failure(Some(&command_id), &type_name, &format!("{error:#}"), None)
+                    }
                     Err(error) => response_failure(
-                        Some(&command_id), &type_name,
-                        &format!("Global settings task failed: {error}"), None,
+                        Some(&command_id),
+                        &type_name,
+                        &format!("Global settings task failed: {error}"),
+                        None,
                     ),
                 };
                 (vec![response_line(&response)], false)
@@ -695,11 +699,11 @@ impl Supervisor {
                     DaemonCommand::SetSubagentModelDefault { model, .. } => Some(model.clone()),
                     _ => None,
                 };
-                let result = tokio::task::spawn_blocking(move || {
-                    match model {
-                        Some(model) => crate::subagent_model_defaults::set(&agent_dir, model.as_deref()),
-                        None => crate::subagent_model_defaults::get(&agent_dir),
+                let result = tokio::task::spawn_blocking(move || match model {
+                    Some(model) => {
+                        crate::subagent_model_defaults::set(&agent_dir, model.as_deref())
                     }
+                    None => crate::subagent_model_defaults::get(&agent_dir),
                 })
                 .await;
                 let response = match result {
@@ -709,12 +713,14 @@ impl Supervisor {
                         }
                         response_success(Some(&command_id), &type_name, Some(json!(data)))
                     }
-                    Ok(Err(error)) => response_failure(
-                        Some(&command_id), &type_name, &format!("{error:#}"), None,
-                    ),
+                    Ok(Err(error)) => {
+                        response_failure(Some(&command_id), &type_name, &format!("{error:#}"), None)
+                    }
                     Err(error) => response_failure(
-                        Some(&command_id), &type_name,
-                        &format!("Global settings task failed: {error}"), None,
+                        Some(&command_id),
+                        &type_name,
+                        &format!("Global settings task failed: {error}"),
+                        None,
                     ),
                 };
                 (vec![response_line(&response)], false)
@@ -1212,34 +1218,65 @@ mod tests {
     #[tokio::test]
     async fn subagent_default_is_available_without_a_worker_and_rejects_session_fields() {
         let dir = tempfile::TempDir::new().unwrap();
-        let supervisor = Arc::new(Supervisor::new(SupervisorOptions {
-            socket_path: dir.path().join("daemon.sock"),
-            agent_dir: dir.path().join("agent"),
-        }).unwrap());
+        let supervisor = Arc::new(
+            Supervisor::new(SupervisorOptions {
+                socket_path: dir.path().join("daemon.sock"),
+                agent_dir: dir.path().join("agent"),
+            })
+            .unwrap(),
+        );
         let effective = Arc::new(std::sync::Mutex::new("settings-client".to_string()));
         let (targeted_tx, _targeted_rx) = tokio::sync::mpsc::channel(1);
-        let attached = subscribers::ClientSubscriptions::new("settings-client".to_string(), targeted_tx);
+        let attached =
+            subscribers::ClientSubscriptions::new("settings-client".to_string(), targeted_tx);
         let roster = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let connection = Arc::new(crate::input_pause_lease::ClientConnectionState::new());
         let (dispatch_tx, _dispatch_rx) = tokio::sync::mpsc::channel(1);
         for (command, expected_success) in [
             (json!({"type":"get_global_harness_defaults"}), true),
-            (json!({"type":"set_global_harness_defaults","patch":{"maxDepth":0,"autoCompactionEnabled":false}}), true),
-            (json!({"type":"set_global_harness_defaults","patch":{"maxDepth":9},"activeSessionId":"root"}), false),
+            (
+                json!({"type":"set_global_harness_defaults","patch":{"maxDepth":0,"autoCompactionEnabled":false}}),
+                true,
+            ),
+            (
+                json!({"type":"set_global_harness_defaults","patch":{"maxDepth":9},"activeSessionId":"root"}),
+                false,
+            ),
             (json!({"type":"get_subagent_model_default"}), true),
-            (json!({"type":"set_subagent_model_default","model":null}), true),
-            (json!({"type":"set_subagent_model_default","model":null,"activeSessionId":"root"}), false),
+            (
+                json!({"type":"set_subagent_model_default","model":null}),
+                true,
+            ),
+            (
+                json!({"type":"set_subagent_model_default","model":null,"activeSessionId":"root"}),
+                false,
+            ),
         ] {
             let line = json!({"type":"command","id":"settings", "protocol":current_protocol_info(),"command":command}).to_string();
-            let (lines, stop) = supervisor.dispatch_client(
-                &line, &effective, &attached, &roster, &connection, "settings-client", &dispatch_tx,
-            ).await;
+            let (lines, stop) = supervisor
+                .dispatch_client(
+                    &line,
+                    &effective,
+                    &attached,
+                    &roster,
+                    &connection,
+                    "settings-client",
+                    &dispatch_tx,
+                )
+                .await;
             assert!(!stop);
-            let Outbound::Line(response) = &lines[0] else { panic!("expected JSON response") };
+            let Outbound::Line(response) = &lines[0] else {
+                panic!("expected JSON response")
+            };
             assert_eq!(response["success"], json!(expected_success));
         }
         assert!(supervisor.registry.list().await.is_empty());
-        assert_eq!(crate::subagent_model_defaults::get(&supervisor.options.agent_dir).unwrap().model, None);
+        assert_eq!(
+            crate::subagent_model_defaults::get(&supervisor.options.agent_dir)
+                .unwrap()
+                .model,
+            None
+        );
     }
 
     /// A response-write failure can retire the serve loop while an accepted

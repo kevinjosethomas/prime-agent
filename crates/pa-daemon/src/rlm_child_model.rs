@@ -266,15 +266,32 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         write_catalog(dir.path());
         let parent = Some("test-provider/glm-5.3");
-        assert_eq!(resolve_spawn_model_unchecked(dir.path(), None, parent).unwrap(), parent.unwrap());
+        assert_eq!(
+            resolve_spawn_model_unchecked(dir.path(), None, parent).unwrap(),
+            parent.unwrap()
+        );
         let mut settings = pa_core::settings::SettingsManager::create(dir.path(), dir.path());
-        settings.set_subagent_default_model(Some("test-provider/glm-5.3-turbo".to_string())).unwrap();
-        assert_eq!(resolve_spawn_model_unchecked(dir.path(), None, parent).unwrap(), "test-provider/glm-5.3-turbo");
-        assert_eq!(resolve_spawn_model_unchecked(dir.path(), Some("glm-5.3"), parent).unwrap(), parent.unwrap());
+        settings
+            .set_subagent_default_model(Some("test-provider/glm-5.3-turbo".to_string()))
+            .unwrap();
+        assert_eq!(
+            resolve_spawn_model_unchecked(dir.path(), None, parent).unwrap(),
+            "test-provider/glm-5.3-turbo"
+        );
+        assert_eq!(
+            resolve_spawn_model_unchecked(dir.path(), Some("glm-5.3"), parent).unwrap(),
+            parent.unwrap()
+        );
         // Top-level creation keeps its old resolution, ignoring the global child preference.
-        assert_eq!(resolve_child_model_unchecked(dir.path(), None, parent, "session").unwrap(), parent.unwrap());
+        assert_eq!(
+            resolve_child_model_unchecked(dir.path(), None, parent, "session").unwrap(),
+            parent.unwrap()
+        );
         settings.set_subagent_default_model(None).unwrap();
-        assert_eq!(resolve_spawn_model_unchecked(dir.path(), None, parent).unwrap(), parent.unwrap());
+        assert_eq!(
+            resolve_spawn_model_unchecked(dir.path(), None, parent).unwrap(),
+            parent.unwrap()
+        );
     }
 
     #[test]

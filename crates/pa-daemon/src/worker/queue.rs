@@ -339,7 +339,8 @@ pub(crate) fn gather_delivery_batch(core: &mut SessionCore, lane: Lane) -> Vec<Q
     {
         core.forced_all_steering = false;
     }
-    if first.focused_reply.is_some() || first.custom_message.is_some()
+    if first.focused_reply.is_some()
+        || first.custom_message.is_some()
         || first.policy == TurnPolicy::Direct
         || crate::session_commands::parse_prompt_session_command(&first.message).is_some()
     {
@@ -350,7 +351,8 @@ pub(crate) fn gather_delivery_batch(core: &mut SessionCore, lane: Lane) -> Vec<Q
     batch.push(items.pop_front().expect("front checked"));
     if forced || mode == "all" {
         while let Some(next) = items.front() {
-            if next.focused_reply.is_some() || next.policy != first_policy
+            if next.focused_reply.is_some()
+                || next.policy != first_policy
                 || next.custom_message.is_some()
                 || (forced && !next.forced_batch)
                 || crate::session_commands::parse_prompt_session_command(&next.message).is_some()

@@ -1088,10 +1088,19 @@ mod tests {
         ] {
             let parsed = parse_daemon_command_line(&command.to_string()).unwrap();
             assert_eq!(command_active_session_id(&parsed.command), None);
-            assert!(!pa_types::daemon::is_session_plane_daemon_command(command_type_name(&parsed.command)));
+            assert!(!pa_types::daemon::is_session_plane_daemon_command(
+                command_type_name(&parsed.command)
+            ));
         }
-        for patch in [json!({"activeSessionId":"root"}), json!({"maxDepth":null}), json!({"steeringMode":"bad"})] {
-            assert!(parse_daemon_command_line(&json!({"type":"set_global_harness_defaults","patch":patch}).to_string()).is_err());
+        for patch in [
+            json!({"activeSessionId":"root"}),
+            json!({"maxDepth":null}),
+            json!({"steeringMode":"bad"}),
+        ] {
+            assert!(parse_daemon_command_line(
+                &json!({"type":"set_global_harness_defaults","patch":patch}).to_string()
+            )
+            .is_err());
         }
     }
 
@@ -1104,10 +1113,18 @@ mod tests {
         ] {
             let parsed = parse_daemon_command_line(&command.to_string()).unwrap();
             assert_eq!(command_active_session_id(&parsed.command), None);
-            assert!(!pa_types::daemon::is_session_plane_daemon_command(command_type_name(&parsed.command)));
+            assert!(!pa_types::daemon::is_session_plane_daemon_command(
+                command_type_name(&parsed.command)
+            ));
         }
-        assert!(parse_daemon_command_line(&json!({"type":"set_subagent_model_default"}).to_string()).is_err());
-        assert!(parse_daemon_command_line(&json!({"type":"set_subagent_model_default","model":42}).to_string()).is_err());
+        assert!(parse_daemon_command_line(
+            &json!({"type":"set_subagent_model_default"}).to_string()
+        )
+        .is_err());
+        assert!(parse_daemon_command_line(
+            &json!({"type":"set_subagent_model_default","model":42}).to_string()
+        )
+        .is_err());
     }
 
     #[test]

@@ -1316,9 +1316,17 @@ mod tests {
             subagent_default_model: Some("provider/runtime".to_string()),
             ..Settings::default()
         });
-        assert_eq!(manager.get_subagent_default_model().as_deref(), Some("provider/global"));
-        manager.set_subagent_default_model(Some("provider/new".to_string())).unwrap();
-        assert_eq!(manager.reopen().get_subagent_default_model().as_deref(), Some("provider/new"));
+        assert_eq!(
+            manager.get_subagent_default_model().as_deref(),
+            Some("provider/global")
+        );
+        manager
+            .set_subagent_default_model(Some("provider/new".to_string()))
+            .unwrap();
+        assert_eq!(
+            manager.reopen().get_subagent_default_model().as_deref(),
+            Some("provider/new")
+        );
         manager.set_subagent_default_model(None).unwrap();
         let fresh = manager.reopen();
         assert_eq!(fresh.get_subagent_default_model(), None);

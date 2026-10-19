@@ -332,7 +332,10 @@ impl SessionFile {
                     let mut message = entry.fields.clone();
                     if let Some(object) = message.as_object_mut() {
                         object.insert("role".to_string(), Value::String("custom".to_string()));
-                        object.insert("nativeMessageId".to_string(), Value::String(entry.id.clone()));
+                        object.insert(
+                            "nativeMessageId".to_string(),
+                            Value::String(entry.id.clone()),
+                        );
                         object.insert(
                             "timestamp".to_string(),
                             Value::String(entry.timestamp.clone()),

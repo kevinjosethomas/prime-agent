@@ -470,7 +470,9 @@ fn focused_user_prompt_message(
     route: Option<&pa_types::daemon::FocusedThreadReply>,
 ) -> AgentMessage {
     let message = user_prompt_message(text, images);
-    let Some(route) = route else { return message; };
+    let Some(route) = route else {
+        return message;
+    };
     let mut message = serde_json::to_value(message).expect("user message serializes");
     message["clientInputId"] = serde_json::json!(route.client_input_id);
     message["replyToMessageId"] = serde_json::json!(route.reply_to_message_id);
@@ -529,12 +531,18 @@ mod focused_reply_tests {
     #[test]
     fn quote_context_is_input_local_and_normal_user_content_round_trips() {
         let route = pa_types::daemon::FocusedThreadReply {
-            client_input_id:"input-a".to_string(), reply_to_message_id:"parent-a".to_string(),
+            client_input_id: "input-a".to_string(),
+            reply_to_message_id: "parent-a".to_string(),
             reply_context: vec![pa_types::daemon::FocusedThreadContextRow {
-                id:"parent-a".to_string(), role:"user".to_string(), text:"quoted prior request".to_string(),
+                id: "parent-a".to_string(),
+                role: "user".to_string(),
+                text: "quoted prior request".to_string(),
             }],
         };
-        let images = vec![pa_agent::types::ImageContent {data:"image".to_string(),mime_type:"image/png".to_string()}];
+        let images = vec![pa_agent::types::ImageContent {
+            data: "image".to_string(),
+            mime_type: "image/png".to_string(),
+        }];
         let input = focused_user_prompt_message("normal text", &images, Some(&route));
         let persisted = loop_message_to_session(&input).unwrap();
         let value = serde_json::to_value(&persisted).unwrap();
@@ -545,10 +553,15 @@ mod focused_reply_tests {
         let restored = rebuilt_loop_messages(vec![persisted]).remove(0);
         let llm = messages::loop_convert_to_llm(vec![restored]);
         let model = serde_json::to_value(&llm[0]).unwrap();
-        assert!(model["content"][0]["text"].as_str().unwrap().contains("quoted prior request"));
+        assert!(model["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("quoted prior request"));
         assert_eq!(model["content"][1]["text"], "normal text");
         let ordinary = user_prompt_message("ordinary", &[]);
         let ordinary = messages::loop_convert_to_llm(vec![ordinary]);
-        assert!(!serde_json::to_string(&ordinary).unwrap().contains("quoted prior request"));
+        assert!(!serde_json::to_string(&ordinary)
+            .unwrap()
+            .contains("quoted prior request"));
     }
 }

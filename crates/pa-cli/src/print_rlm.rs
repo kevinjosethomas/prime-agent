@@ -633,7 +633,9 @@ impl RlmSubagentHost for InlineHost {
                     )
                 })
                 .await
-                .map_err(|error| anyhow::anyhow!("Child model resolution task failed: {error}"))??;
+                .map_err(|error| {
+                    anyhow::anyhow!("Child model resolution task failed: {error}")
+                })??;
                 pa_daemon::rlm_child_model::assert_thinking_supported(
                     &config.agent_dir,
                     request.thinking.as_deref(),

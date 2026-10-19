@@ -21,9 +21,13 @@ pub(crate) fn read_model(agent_dir: &Path) -> Result<Option<String>> {
         ));
     }
     if let Some(raw) = settings.global_raw() {
-        ensure!(raw.is_object(), "Global settings must contain a JSON object");
         ensure!(
-            raw.get("subagentDefaultModel").is_none_or(|model| model.is_null() || model.is_string()),
+            raw.is_object(),
+            "Global settings must contain a JSON object"
+        );
+        ensure!(
+            raw.get("subagentDefaultModel")
+                .is_none_or(|model| model.is_null() || model.is_string()),
             "subagentDefaultModel must be a selector string or null"
         );
     }
@@ -61,7 +65,9 @@ pub(crate) fn get(agent_dir: &Path) -> Result<SubagentModelDefault> {
 }
 
 pub(crate) fn set(agent_dir: &Path, reference: Option<&str>) -> Result<SubagentModelDefault> {
-    let model = reference.map(|reference| validate_model(agent_dir, reference)).transpose()?;
+    let model = reference
+        .map(|reference| validate_model(agent_dir, reference))
+        .transpose()?;
     // Refuse unreadable input before the manager's lenient settings loader can treat it as unset.
     read_model(agent_dir)?;
     let mut settings = SettingsManager::create(agent_dir, agent_dir);
@@ -90,24 +96,40 @@ mod tests {
     fn exact_selector_persists_canonical_identity_and_reset_preserves_other_fields() {
         let dir = tempfile::TempDir::new().unwrap();
         catalog(dir.path());
-        std::fs::write(dir.path().join("settings.json"), json!({
-            "defaultModel":"root-model", "unrelated":{"kept":true}
-        }).to_string()).unwrap();
+        std::fs::write(
+            dir.path().join("settings.json"),
+            json!({
+                "defaultModel":"root-model", "unrelated":{"kept":true}
+            })
+            .to_string(),
+        )
+        .unwrap();
         assert!(set(dir.path(), Some("nested/model")).is_err());
         assert!(set(dir.path(), Some("")).is_err());
         assert!(set(dir.path(), Some("other-provider/nested/model")).is_err());
         std::fs::create_dir_all(dir.path().join(".prime/agent")).unwrap();
-        std::fs::write(dir.path().join(".prime/agent/settings.json"), json!({
-            "subagentDefaultModel":"other-provider/project"
-        }).to_string()).unwrap();
+        std::fs::write(
+            dir.path().join(".prime/agent/settings.json"),
+            json!({
+                "subagentDefaultModel":"other-provider/project"
+            })
+            .to_string(),
+        )
+        .unwrap();
         let saved = set(dir.path(), Some("TEST-PROVIDER/nested/model")).unwrap();
         assert_eq!(saved.model.as_deref(), Some("test-provider/nested/model"));
         assert_eq!(get(dir.path()).unwrap(), saved);
         let cleared = set(dir.path(), None).unwrap();
         assert_eq!(cleared.source, SubagentModelDefaultSource::InheritParent);
         assert_eq!(cleared.model, None);
-        let raw: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.path().join("settings.json")).unwrap()).unwrap();
-        assert_eq!(raw, json!({"defaultModel":"root-model", "unrelated":{"kept":true}}));
+        let raw: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.path().join("settings.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            raw,
+            json!({"defaultModel":"root-model", "unrelated":{"kept":true}})
+        );
     }
 
     #[cfg(unix)]
@@ -119,7 +141,10 @@ mod tests {
         std::os::unix::fs::symlink("settings.json", &path).unwrap();
         assert!(get(dir.path()).is_err());
         assert!(set(dir.path(), None).is_err());
-        assert!(std::fs::symlink_metadata(path).unwrap().file_type().is_symlink());
+        assert!(std::fs::symlink_metadata(path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 
     #[test]

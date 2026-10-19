@@ -183,7 +183,10 @@ mod tests {
             "test-version",
         )
         .is_err());
-        assert!(std::fs::symlink_metadata(path).unwrap().file_type().is_symlink());
+        assert!(std::fs::symlink_metadata(path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 
     #[test]

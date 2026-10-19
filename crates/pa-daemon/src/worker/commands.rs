@@ -414,7 +414,8 @@ impl Worker {
         let (core, inputs) = self.summary_inputs();
         let summary = self.summary_locked(&core, inputs);
         let mut state = serde_json::to_value(&summary).unwrap_or(Value::Null);
-        state["inputCapabilities"] = json!({"focusedThreadReplyV1": true, "focusedThreadOutputV1": true});
+        state["inputCapabilities"] =
+            json!({"focusedThreadReplyV1": true, "focusedThreadOutputV1": true});
         state["activeInputOwnership"] = json!(core.active_input_ownership);
         response_success(None, "get_state", Some(state))
     }

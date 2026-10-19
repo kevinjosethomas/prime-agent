@@ -470,8 +470,14 @@ mod tests {
         let expected = fs::metadata(&settings).unwrap_err().kind();
         assert_ne!(expected, std::io::ErrorKind::NotFound);
         let error = storage.read(SettingsScope::Global).unwrap_err();
-        assert_eq!(error.downcast_ref::<std::io::Error>().unwrap().kind(), expected);
-        assert!(fs::symlink_metadata(settings).unwrap().file_type().is_symlink());
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            expected
+        );
+        assert!(fs::symlink_metadata(settings)
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use super::slash_commands::parse_session_command;
 use super::{
-    session_message_to_loop, AgentSession, PromptOptions, PromptOutcome,
-    SessionAgentMessage, SessionSlashCommand, StreamingBehavior,
+    session_message_to_loop, AgentSession, PromptOptions, PromptOutcome, SessionAgentMessage,
+    SessionSlashCommand, StreamingBehavior,
 };
 
 impl AgentSession {
@@ -122,7 +122,11 @@ impl AgentSession {
         // double-persist.
 
         if busy {
-            let message = super::focused_user_prompt_message(&normalized, &images, options.focused_reply.as_ref());
+            let message = super::focused_user_prompt_message(
+                &normalized,
+                &images,
+                options.focused_reply.as_ref(),
+            );
             match options.streaming_behavior {
                 Some(StreamingBehavior::Steer) => self.agent.steer(message),
                 Some(StreamingBehavior::FollowUp) => self.agent.follow_up(message),
@@ -143,7 +147,11 @@ impl AgentSession {
                 prompt_messages.push(digest_row);
             }
             prompt_messages.extend(self.take_next_turn_rows().await);
-            prompt_messages.push(super::focused_user_prompt_message(&normalized, &images, options.focused_reply.as_ref()));
+            prompt_messages.push(super::focused_user_prompt_message(
+                &normalized,
+                &images,
+                options.focused_reply.as_ref(),
+            ));
             // Each batched action contributes its user row after the
             // primary, through the same admission normalization (TS
             // normalizes each submission at queue time; this engine

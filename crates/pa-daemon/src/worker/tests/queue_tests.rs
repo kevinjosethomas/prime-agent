@@ -511,20 +511,32 @@ fn focused_routes_stay_solo_and_survive_queue_recovery_with_images() {
     core.steering_mode = "all".to_string();
     let mut a = priority_test_item("same", TurnPolicy::Queued);
     a.focused_reply = Some(pa_types::daemon::FocusedThreadReply {
-        client_input_id: "a".to_string(), reply_to_message_id: "parent-a".to_string(), reply_context: vec![],
+        client_input_id: "a".to_string(),
+        reply_to_message_id: "parent-a".to_string(),
+        reply_context: vec![],
     });
-    a.images.push(pa_agent::types::ImageContent {data:"image".to_string(), mime_type:"image/png".to_string()});
+    a.images.push(pa_agent::types::ImageContent {
+        data: "image".to_string(),
+        mime_type: "image/png".to_string(),
+    });
     core.steering.push_back(a);
-    core.steering.push_back(priority_test_item("same", TurnPolicy::Queued));
+    core.steering
+        .push_back(priority_test_item("same", TurnPolicy::Queued));
     let lanes = queue_lanes(&core);
     let encoded = serde_json::to_value(&lanes.steering).unwrap();
-    let restored: Vec<crate::journal::WorkerQueueItemRecord> = serde_json::from_value(encoded).unwrap();
-    assert_eq!(restored[0].focused_reply.as_ref().unwrap().client_input_id, "a");
+    let restored: Vec<crate::journal::WorkerQueueItemRecord> =
+        serde_json::from_value(encoded).unwrap();
+    assert_eq!(
+        restored[0].focused_reply.as_ref().unwrap().client_input_id,
+        "a"
+    );
     assert_eq!(restored[0].images[0].data, "image");
     let dir = tempfile::tempdir().unwrap();
     let journal_path = dir.path().join("recovery.jsonl");
     let mut journal = WorkerRecoveryJournal::open(&journal_path).unwrap();
-    journal.record_queue_snapshot("session-a", &restored, &[]).unwrap();
+    journal
+        .record_queue_snapshot("session-a", &restored, &[])
+        .unwrap();
     drop(journal);
     let journal = WorkerRecoveryJournal::open(&journal_path).unwrap();
     let (recovered, _) = restore_queue_snapshot(&journal, "session-a");

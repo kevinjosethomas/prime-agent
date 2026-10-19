@@ -69,7 +69,10 @@ pub enum ReplyOwnership {
 
 impl Default for ReplyOwnership {
     fn default() -> Self {
-        Self::Unknown { input_ids: Vec::new(), reply_to_message_ids: Vec::new() }
+        Self::Unknown {
+            input_ids: Vec::new(),
+            reply_to_message_ids: Vec::new(),
+        }
     }
 }
 
