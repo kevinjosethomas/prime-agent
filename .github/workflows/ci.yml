@@ -73,7 +73,7 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, primer/native-release-integration]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     branches: [main]

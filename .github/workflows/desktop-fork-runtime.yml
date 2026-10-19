@@ -1,7 +1,7 @@
 name: Desktop fork runtime
 on:
   push:
-    branches: [feat/root-desktop-runtime, primer/runtime-followups-candidate, primer/runtime-prompt-metadata]
+    branches: [feat/root-desktop-runtime, primer/runtime-followups-candidate, primer/runtime-prompt-metadata, primer/native-release-integration]
   workflow_dispatch:
 permissions:
   contents: read
@@ -146,6 +146,14 @@ jobs:
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib session_store::info_tests
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib summary_tests
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib windowed_attach_tests
+      - name: Verify focused-thread, model-default, Harness-default and model-event regressions
+        run: |
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib focused
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib ownership
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib subagent_default
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib global_harness
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-core --lib settings
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-tui --lib model_and_thinking_switches
       - name: Verify Slack MCP login, callback, and catalog regressions
         run: |
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-core --lib mcp::
