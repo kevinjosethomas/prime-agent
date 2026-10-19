@@ -627,3 +627,55 @@ mod subscription_identity_tests {
         assert!(beta.contains("claude-code-20250219"));
     }
 }
+
+#[cfg(test)]
+mod image_limit_wire_tests {
+    use base64::Engine as _;
+    use serde_json::Value;
+
+    use super::convert::convert_messages;
+    use crate::providers::image_limits::tests::{model, png, user_with_image};
+    use crate::types::Context;
+
+    fn images(value: &Value, found: &mut Vec<(u32, u32)>) {
+        match value {
+            Value::Object(map) if map.get("type").and_then(Value::as_str) == Some("image") => {
+                let data = map["source"]["data"].as_str().expect("base64 data");
+                let raw = base64::engine::general_purpose::STANDARD
+                    .decode(data)
+                    .expect("valid base64");
+                let image = image::load_from_memory(&raw).expect("decodable image");
+                found.push((image.width(), image.height()));
+            }
+            Value::Object(map) => map.values().for_each(|value| images(value, found)),
+            Value::Array(items) => items.iter().for_each(|value| images(value, found)),
+            _ => {}
+        }
+    }
+
+    // The reported failure: a long session of 2576x1419 screenshots crosses 20 images and every
+    // later request is rejected for the many-image dimension limit.
+    #[test]
+    fn stuck_many_screenshot_session_serializes_within_limits() {
+        let screenshot = png(2576, 1419, false);
+        let context = Context {
+            system_prompt: None,
+            messages: (0..30).map(|_| user_with_image(&screenshot)).collect(),
+            tools: None,
+        };
+        let stored = context.messages.clone();
+        let request = convert_messages(
+            &context,
+            &model("anthropic-messages", "claude-opus-4-7"),
+            false,
+            None,
+        );
+        let mut found = Vec::new();
+        images(&Value::Array(request), &mut found);
+        assert_eq!(found.len(), 30);
+        assert!(found
+            .iter()
+            .all(|&(width, height)| width.max(height) <= 2000));
+        assert_eq!(context.messages, stored);
+    }
+}
