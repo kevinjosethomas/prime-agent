@@ -267,14 +267,19 @@ fn traces_target_accepts_only_login_and_logout_without_a_method() {
 
 #[tokio::test]
 async fn auth_url_without_instructions_still_emits_a_string() {
-    let (mut reader, _writer, task) = scripted(|panel| async move {
+    let (mut reader, mut writer, task) = scripted(|panel| async move {
         panel.auth_url("https://example.com/device", None);
-        ProviderAuthOutcome::Status("done".to_string())
+        let _ = panel
+            .paste_prompt("Code", PastePromptTone::Text, PasteStyle::Visible)
+            .await;
+        ProviderAuthOutcome::Cancelled
     });
     let url = event(&mut reader).await;
     assert_eq!(url["type"], "auth_url");
     assert_eq!(url["instructions"], "");
-    assert_eq!(event(&mut reader).await["status"], "success");
+    assert_eq!(event(&mut reader).await["type"], "input");
+    send(&mut writer, json!({"type":"cancel","id":"flow"})).await;
+    assert_eq!(event(&mut reader).await["status"], "cancelled");
     task.await.unwrap().unwrap();
 }
 
