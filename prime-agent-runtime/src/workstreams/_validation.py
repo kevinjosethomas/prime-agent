@@ -13,10 +13,14 @@ def text(value: Any, name: str, max_length: int = 512, *, empty: bool = False) -
     return value
 
 
+WRITABLE_STREAM_FIELDS = frozenset(
+    {"id", "title", "status", "summary", "description", "question", "owner", "steps", "parentId", "links"}
+)
+
+
 def validate_stream(value: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"id", "title", "status", "summary", "description", "question", "owner", "steps", "parentId", "links"}
-    if value.keys() - allowed:
-        raise TypeError(f"Unknown workstream fields: {', '.join(sorted(value.keys() - allowed))}")
+    if value.keys() - WRITABLE_STREAM_FIELDS:
+        raise TypeError(f"Unknown workstream fields: {', '.join(sorted(value.keys() - WRITABLE_STREAM_FIELDS))}")
     value = dict(value)
     text(value["id"], "workstream ID")
     text(value["title"], "title", 160)

@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 from ._models import Link, Status, Step, Workstream, STATUSES
 from ._transport import AssignmentError, DeliveryError, Report, Reporter
-from ._validation import text, validate_stream
+from ._validation import WRITABLE_STREAM_FIELDS, text, validate_stream
 
 
 class Client:
@@ -94,7 +94,8 @@ class Client:
         current = next((value for value in (await self.context())["workstreams"] if value["id"] == id), None)
         if current is None:
             raise KeyError(f"Unknown workstream: {id}")
-        value = {key: item for key, item in current.items() if key not in {"updatedAt", "archived"}}
+        # Host-owned read fields (updatedAt, archived, workstreamUrl, ...) are not upsertable.
+        value = {key: item for key, item in current.items() if key in WRITABLE_STREAM_FIELDS}
         if "id" in changes:
             raise TypeError("Workstream IDs are immutable")
         if "parent_id" in changes:

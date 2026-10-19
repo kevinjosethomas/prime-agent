@@ -216,6 +216,20 @@ class WorkstreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((restored.archived, restored.updated_at, restored.status),
                          (False, changed.updated_at, changed.status))
 
+    async def test_update_keeps_only_writable_fields_from_host_read_records(self):
+        task = await self.client.create("primer", "Primer", status="active",
+                                        steps=[Step("layout", "Verify layout")])
+        await task.archive()
+        state = self.state()
+        state["workstreams"][0]["workstreamUrl"] = "primer://workstreams/primer"
+        self.store.write_text(json.dumps(state))
+        changed = await self.client.update("primer", summary="Layout verified")
+        checked = await changed.check("layout")
+        self.assertEqual((checked.summary, checked.steps[0].done, checked.archived),
+                         ("Layout verified", True, True))
+        for report in self.state()["reports"][-2:]:
+            self.assertFalse({"workstreamUrl", "archived", "updatedAt"} & report["workstream"].keys())
+
     async def test_timeout_terminates_child_and_does_not_block_event_loop(self):
         client = Client(command=[sys.executable, "-c", "import threading; threading.Event().wait()"], timeout=0.2)
         operation = asyncio.create_task(client.context())
