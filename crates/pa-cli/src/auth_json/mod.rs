@@ -40,7 +40,7 @@ where
     R: AsyncBufRead + Unpin + Send + 'static,
     W: AsyncWrite + Unpin,
 {
-    emit(&mut writer,json!({"type":"ready","protocolVersion":1,"capabilities":["providers","provider_login","provider_auth_methods","provider_logout","mcp_login","mcp_logout","mcp_paste","mcp_key","reply","cancel"]})).await?;
+    emit(&mut writer,json!({"type":"ready","protocolVersion":1,"capabilities":["providers","provider_login","provider_auth_methods","provider_logout","mcp_login","mcp_logout","mcp_paste","mcp_key","traces_login","traces_logout","reply","cancel"]})).await?;
     let (tx, mut input) = mpsc::channel(8);
     let reader_task = tokio::spawn(protocol::pump(reader, tx));
     let request = tokio::time::timeout(Duration::from_secs(30), input.recv()).await;

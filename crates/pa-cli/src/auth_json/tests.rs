@@ -243,3 +243,94 @@ async fn external_panel_cancellation_wakes_a_pending_native_input() {
     assert_eq!(task.await.unwrap(), None);
     assert!(panel.cancelled());
 }
+
+#[test]
+fn traces_target_accepts_only_login_and_logout_without_a_method() {
+    for action in ["login", "logout"] {
+        let request = json!({"type":"begin","id":"flow","target":"traces","key":"prime-agent-traces","action":action});
+        assert!(matches!(
+            protocol::decode(&serde_json::to_vec(&request).unwrap()),
+            Ok(Request::Begin {
+                target: protocol::Target::Traces,
+                ..
+            })
+        ));
+    }
+    for request in [
+        json!({"type":"begin","id":"flow","target":"traces","key":"prime-agent-traces","action":"paste"}),
+        json!({"type":"begin","id":"flow","target":"traces","key":"prime-agent-traces","action":"key"}),
+        json!({"type":"begin","id":"flow","target":"traces","key":"prime-agent-traces","action":"login","methodId":"oauth"}),
+    ] {
+        assert!(protocol::decode(&serde_json::to_vec(&request).unwrap()).is_err());
+    }
+}
+
+#[tokio::test]
+async fn auth_url_without_instructions_still_emits_a_string() {
+    let (mut reader, mut writer, task) = scripted(|panel| async move {
+        panel.auth_url("https://example.com/device", None);
+        let _ = panel
+            .paste_prompt("Code", PastePromptTone::Text, PasteStyle::Visible)
+            .await;
+        ProviderAuthOutcome::Cancelled
+    });
+    let url = event(&mut reader).await;
+    assert_eq!(url["type"], "auth_url");
+    assert_eq!(url["instructions"], "");
+    assert_eq!(event(&mut reader).await["type"], "input");
+    send(&mut writer, json!({"type":"cancel","id":"flow"})).await;
+    assert_eq!(event(&mut reader).await["status"], "cancelled");
+    task.await.unwrap().unwrap();
+}
+
+async fn exchange(dir: &std::path::Path, request: Value) -> Value {
+    let (server, client) = tokio::io::duplex(65536);
+    let (reader, writer) = tokio::io::split(server);
+    let task = tokio::spawn(serve(
+        BufReader::new(reader),
+        writer,
+        dir.to_path_buf(),
+        dir.to_path_buf(),
+    ));
+    let (reader, mut writer) = tokio::io::split(client);
+    let mut reader = BufReader::new(reader);
+    let ready = event(&mut reader).await;
+    assert!(ready["capabilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|value| value == "traces_login"));
+    send(&mut writer, request).await;
+    let reply = event(&mut reader).await;
+    task.await.unwrap().unwrap();
+    reply
+}
+
+#[tokio::test]
+async fn traces_catalog_state_and_logout_use_the_native_store_in_a_temporary_home() {
+    let temp = tempfile::tempdir().unwrap();
+    let list = json!({"type":"list","id":"flow"});
+    assert_eq!(
+        exchange(temp.path(), list.clone()).await["traces"]["stored"],
+        false
+    );
+    let mut auth = pa_core::auth::AuthStorage::create(temp.path());
+    auth.set(
+        pa_core::auth::PRIME_AGENT_TRACES_PROVIDER_ID,
+        pa_core::auth::AuthCredential::ApiKey {
+            key: "fixture-traces-key".to_string(),
+            prime_team: None,
+        },
+    );
+    let listed = exchange(temp.path(), list.clone()).await;
+    assert_eq!(listed["traces"]["stored"], true);
+    assert_eq!(listed["traces"]["configured"], true);
+    assert!(!listed.to_string().contains("fixture-traces-key"));
+    let settled = exchange(
+        temp.path(),
+        json!({"type":"begin","id":"flow","target":"traces","key":"prime-agent-traces","action":"logout"}),
+    )
+    .await;
+    assert_eq!(settled["status"], "success");
+    assert_eq!(exchange(temp.path(), list).await["traces"]["stored"], false);
+}
