@@ -2232,55 +2232,60 @@ mod tests {
 
     #[tokio::test]
     async fn the_install_refuses_a_stop_marked_while_the_client_guard_holds() {
-        // P-4, the REAL contention — no sleeps: a VALID fresh client (a
-        // completed handshake against a real mock), the test HOLDS the
-        // client WRITE guard, the install helper's future is POLLED
-        // PENDING (its receipt — the install is genuinely parked at the
-        // client-guard await), the stop's marks then land under the
-        // registry gate, and the release lets the install proceed to the
-        // gate where it REFUSES: no Connected, no install, the fresh
-        // connection joined, a subsequent request NotSent.
+        // P-4, the REAL contention — no sleeps as receipts: a two-accept
+        // mock (the driver's own connection AND a fresh client with a
+        // completed handshake), the test HOLDS the client WRITE guard, the
+        // install helper's future is observed PENDING under a real-waker
+        // timeout (its receipt — genuinely parked at the client-guard
+        // await), the stop's synchronous marks land under the registry
+        // gate (guaranteed by the yield before the release), and the
+        // release lets both installs proceed to the gate where they REFUSE
+        // the mark: no Connected, no install, the fresh connections
+        // joined, a subsequent request NotSent.
         let dir = tempfile::TempDir::new().unwrap();
         let socket = dir.path().join("p4.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.expect("accept");
-            let mut writer = stream;
-            let hello = json!({
-                "type": "daemon_hello",
-                "protocol": { "name": "prime-agent.daemon", "version": 7 },
-            });
-            writer
-                .write_all(format!("{hello}\n").as_bytes())
-                .await
-                .unwrap();
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().await.expect("accept");
+                let mut writer = stream;
+                let hello = json!({
+                    "type": "daemon_hello",
+                    "protocol": { "name": "prime-agent.daemon", "version": 7 },
+                });
+                writer
+                    .write_all(format!("{hello}\n").as_bytes())
+                    .await
+                    .unwrap();
+            }
             std::future::pending::<()>().await;
         });
-        let (session, events) = DaemonClientSession::start(config(&socket)).await.unwrap();
-        // A REAL fresh client with a completed handshake (the driver's
-        // own connection, resolved before the install).
+        let (session, mut events) = DaemonClientSession::start(config(&socket)).await.unwrap();
+        wait_connected(&mut events).await;
+        // A REAL fresh client with a completed handshake (its own accept).
         let (fresh, _fresh_events) = DaemonClient::connect(&socket).await.unwrap();
         // The test holds the client WRITE guard.
         let guard = session.state.client.write().await;
         // The install helper's future — parked at the client-guard await.
         let cancel = session.state.cancel.subscribe();
         let mut install = Box::pin(install_fresh(&session.state, &fresh, &cancel));
-        // The PENDING receipt: poll once with a noop waker — the helper is
-        // genuinely parked at the write-guard await (no sleep).
-        let waker = futures_noop_waker();
-        let mut context = std::task::Context::from_waker(&waker);
+        // The PENDING receipt: a bounded timeout on the future (the runtime
+        // drives it with a real waker; no sleep, no noop-waker loss).
         assert!(
-            std::future::Future::poll(install.as_mut(), &mut context).is_pending(),
+            tokio::time::timeout(Duration::from_millis(200), &mut install)
+                .await
+                .is_err(),
             "the install is genuinely parked at the client-guard await"
         );
-        // The stop's marks land under the registry gate while the guard is
-        // held; the spawned stop parks on the client guard like the
-        // install.
+        // The stop's synchronous marks (registry bump + invalidate +
+        // stopping) land under the registry gate; the yield guarantees the
+        // spawned stop ran its sync prefix BEFORE the release.
         let stop_task = {
             let session = session.clone();
             tokio::spawn(async move { session.stop().await })
         };
-        // Release: the install proceeds to the registry gate and REFUSES
+        tokio::task::yield_now().await;
+        // Release: both installs proceed to the registry gate and REFUSE
         // on the mark.
         drop(guard);
         tokio::time::timeout(Duration::from_secs(10), stop_task)
@@ -2288,14 +2293,15 @@ mod tests {
             .expect("the stop settles after the guard release")
             .unwrap()
             .expect("the stop completed honestly");
-        let installed = tokio::time::timeout(Duration::from_millis(500), install)
-            .await
-            .expect("the install helper resolves after the release");
+        let installed =
+            tokio::time::timeout(Duration::from_secs(5), install).await.expect(
+                "the install helper resolves after the release",
+            );
         assert!(
             installed.is_none(),
             "the install REFUSED on the stop mark — no epoch, no install"
         );
-        // The refused fresh connection is joined by the stop's settle.
+        // The refused fresh connection is joined.
         let joined = fresh.join_tasks().await;
         assert_eq!(joined, 2, "the fresh connection's tasks joined");
         assert_ne!(
@@ -2315,18 +2321,6 @@ mod tests {
             .await
             .unwrap_err();
         assert!(crate::daemon_client::is_command_not_sent(&error), "unexpected: {error}");
-        drop(events);
-    }
-
-    /// A no-op waker for the pending poll receipt.
-    fn futures_noop_waker() -> std::task::Waker {
-        use std::sync::Arc;
-        use std::task::{Wake, Waker};
-        struct NoopWake;
-        impl Wake for NoopWake {
-            fn wake(self: Arc<Self>) {}
-        }
-        Waker::from(Arc::new(NoopWake))
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
