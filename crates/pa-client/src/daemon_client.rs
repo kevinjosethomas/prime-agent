@@ -778,6 +778,21 @@ impl DaemonClient {
                 }
                 true
             };
+            // The handshake's coalesced read-ahead rides in `partial`: every
+            // complete seeded line dispatches BEFORE the first socket fill —
+            // nothing buffered at handover is ever stranded.
+            loop {
+                let Some(newline) = partial.iter().position(|byte| *byte == b'\n') else {
+                    break;
+                };
+                if max_frame_bytes.is_some_and(|cap| newline > cap) {
+                    break;
+                }
+                let line: Vec<u8> = partial.drain(..=newline).collect();
+                if !dispatch(&line) {
+                    break;
+                }
+            }
             loop {
                 let buffer = match reader.fill_buf().await {
                     // The socket closed: a trailing unterminated line still

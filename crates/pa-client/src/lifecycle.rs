@@ -493,16 +493,16 @@ impl DaemonClientSession {
                 }
                 registry.record_attach(id, capabilities, &data, *token);
             }
-            Some(Bookkeeping::Detach { id, epoch }) => {
-                // A refused detach keeps the attachment (the desktop machine
-                // deletes only on a resolved request); a successful one
-                // drops it — and the pending attach was invalidated at SEND
-                // time, so nothing can resurrect afterwards.
-                if response.success && registry_epoch(self, *epoch) {
-                    self.state.registry.lock().unwrap().forget(id);
-                }
+            // A refused detach keeps the attachment (the desktop machine
+            // deletes only on a resolved request); a successful one drops
+            // it — and the pending attach was invalidated at SEND time, so
+            // nothing can resurrect afterwards.
+            Some(Bookkeeping::Detach { id, epoch })
+                if response.success && registry_epoch(self, *epoch) =>
+            {
+                self.state.registry.lock().unwrap().forget(id);
             }
-            None => {}
+            Some(Bookkeeping::Detach { .. }) | None => {}
         }
     }
 }
