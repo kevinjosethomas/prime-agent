@@ -2358,14 +2358,22 @@ mod tests {
         // Give the driver a beat to park at the guard.
         tokio::time::sleep(Duration::from_millis(100)).await;
         // The stop's marks land under the registry gate while the client
-        // guard is held by the test.
-        session
-            .stop()
-            .await
-            .expect("the stop settles honestly against the parked install");
-        // Release: the install proceeds to the registry gate and REFUSES
-        // on the mark.
+        // guard is held by the test — the spawned stop parks on the
+        // client-guard await exactly like the parked install.
+        let stop_task = {
+            let session = session.clone();
+            tokio::spawn(async move { session.stop().await })
+        };
+        // Give the stop a beat to mark and park on the client guard.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        // Release: the parked install (and the stop's cleanup) proceed;
+        // the install REFUSES on the mark.
         drop(guard);
+        tokio::time::timeout(Duration::from_secs(10), stop_task)
+            .await
+            .expect("the stop settles after the guard release")
+            .unwrap()
+            .expect("the stop completed honestly");
         drop(events);
         // No Connected past the boundary; the request refused.
         assert_ne!(
