@@ -51,9 +51,17 @@ mod compaction_row;
 pub mod config_selector;
 pub mod confirm;
 pub mod custom_message;
-pub mod daemon_client;
+pub mod daemon_client {
+    //! Re-export: the shared transport lives in `pa-client`; the `crate::daemon_client`
+    //! paths of this crate's callers and tests stay as they were.
+    pub use pa_client::daemon_client::*;
+}
 pub mod daemon_reconnect;
-pub mod direct_transport;
+pub mod direct_transport {
+    //! Re-export: the direct worker link lives in `pa-client`; the half stays
+    //! crate-internal there, so this module's public surface is empty by design.
+    pub use pa_client::direct_transport::*;
+}
 pub mod editor;
 pub mod effort_picker;
 mod enhanced_keys;
