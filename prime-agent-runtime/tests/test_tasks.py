@@ -167,8 +167,13 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
         resumed = await blocked.update(status="active")
         self.assertEqual((resumed.status, resumed.summary), ("active", "Which sidebar width?"))
         self.assertEqual(self.state()["reports"][-1]["changes"]["question"], "")
+        # Re-entering needs_input reuses the current nonempty summary as the question.
+        again = await resumed.update(status="needs_input")
+        self.assertEqual(again.summary, "Which sidebar width?")
+        self.assertEqual(self.state()["reports"][-1]["changes"]["question"], "Which sidebar width?")
+        cleared = await resumed.update(summary="")
         with self.assertRaises(ValueError):
-            await resumed.update(status="needs_input")
+            await cleared.update(status="needs_input")
         second = await self.client.create("blocked", "Starts blocked", status="needs_input",
                                          summary="Is the fixture green?")
         self.assertEqual(second.status, "needs_input")
@@ -297,10 +302,11 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
         for timeout in (0, -1, float("nan"), float("inf")):
             with self.assertRaises(ValueError):
                 Client(command=[sys.executable], timeout=timeout)
+        expected = {**self.config, "timeout": 15}
         exported = self.client.configuration()
         exported["command"].append("mutated")
         exported["env"]["TASKS_TEST_STORE"] = "mutated"
-        self.assertEqual(self.client.configuration(), self.config)
+        self.assertEqual(self.client.configuration(), expected)
 
 
 if __name__ == "__main__":
