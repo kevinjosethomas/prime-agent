@@ -22,6 +22,8 @@ enum FakeKill {
 #[derive(Clone, Copy)]
 enum FakeChild {
     Healthy,
+    /// Hold kickoff admission while concurrent collect reads the idle worker.
+    PromptHeld,
     PromptFails,
     Unreachable,
     /// The first `get_last_assistant_text` reads no text (the settle raced
@@ -148,6 +150,11 @@ async fn spawn_fake_supervisor(
                                 "sessionName": "f20-worker",
                             })),
                         ),
+                        "prompt" if matches!(child, FakeChild::PromptHeld) => {
+                            child_subagents.prompt_seen.notify_one();
+                            child_subagents.prompt_release.notified().await;
+                            response_success(Some(&id), command_type, None)
+                        }
                         "prompt" => response_success(Some(&id), command_type, None),
                         "wait_for_idle" => {
                             child_subagents.wait_budget_ms.store(
@@ -266,6 +273,53 @@ struct FakeChildSubagents {
     quiescent_waits: std::sync::atomic::AtomicUsize,
     answer_reads: AtomicU32,
     wait_budget_ms: std::sync::atomic::AtomicU64,
+    prompt_seen: tokio::sync::Notify,
+    prompt_release: tokio::sync::Notify,
+}
+
+/// An idle snapshot before kickoff admission is not a completed child task.
+/// The prompt request stays parked at an explicit barrier while a real collect
+/// reads that worker over independent supervisor connections.
+#[tokio::test]
+async fn collect_during_kickoff_admission_keeps_the_child_running() {
+    let (follow_up_tx, mut follow_up_rx) = mpsc::unbounded_channel();
+    let child = Arc::new(FakeChildSubagents::default());
+    let (sessions, _kill_rx) = sessions_with_fake_child_subagents(
+        follow_up_tx,
+        0,
+        FakeKill::Success,
+        FakeChild::PromptHeld,
+        Arc::clone(&child),
+    )
+    .await;
+    let handle = spawn_child(&sessions).await;
+    sessions.notify_turn_done();
+    tokio::time::timeout(Duration::from_secs(10), child.prompt_seen.notified())
+        .await
+        .expect("kickoff must reach the admission barrier");
+    let before = sessions
+        .collect(vec![handle.rlm_child_id.clone()], 0)
+        .await
+        .expect("collect while kickoff admission is pending");
+    assert_eq!(before.len(), 1);
+    assert_eq!(
+        (before[0].status.as_str(), before[0].settled),
+        ("running", false),
+        "a pre-admission idle worker has not completed its child task"
+    );
+    assert!(sessions.any_running().await);
+    assert!(follow_up_rx.try_recv().is_err());
+
+    child.prompt_release.notify_one();
+    tokio::time::timeout(Duration::from_secs(10), follow_up_rx.recv())
+        .await
+        .expect("the admitted task must settle")
+        .expect("settle notice channel stays open");
+    let after = sessions
+        .collect(vec![handle.rlm_child_id], 0)
+        .await
+        .expect("collect the completed admitted task");
+    assert_eq!((after[0].status.as_str(), after[0].settled), ("done", true));
 }
 
 #[tokio::test]
@@ -648,8 +702,8 @@ async fn a_verdict_landing_inside_the_unreachable_give_up_still_runs_the_settle_
 }
 
 /// The review's C1 interleaving: a `collect` that lands inside the
-/// prompt-failure window (after the detached task flips
-/// `prompt_admitted`, before the retry verdict) reads the alive-but-idle
+/// legacy prompt-failure window (with an injected early `prompt_admitted`
+/// flag, before the retry verdict) reads the alive-but-idle
 /// worker as `done` — `refresh_record`'s admission-window misread, not a
 /// settle verdict. The prompt arm's failure claim must ignore it: the
 /// failure row still lands, the roster reports `error`, the hook fires,
@@ -667,9 +721,9 @@ async fn a_collect_inside_the_prompt_failure_window_does_not_swallow_the_failure
     }));
     let handle = spawn_child(&sessions).await;
     // The window's entry condition, set deterministically: the detached
-    // prompt task flips `prompt_admitted` BEFORE its first
-    // `prompt_child` (host.rs), and the collect below races that task in
-    // production. With the flag set and the worker alive-but-idle, the
+    // old prompt task flipped `prompt_admitted` before `prompt_child`.
+    // Inject that legacy state to keep verifying that a prompt failure
+    // wins an already-recorded idle verdict. With the worker alive-but-idle,
     // real collect path scores the misread.
     sessions.inner.children.lock().await[0]
         .lock()
