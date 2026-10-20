@@ -12,6 +12,8 @@ const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
 
 async function main() {
+  const { spawn } = require('node:child_process');
+  const { join } = require('node:path');
   const dist = pathToFileURL(join(__dirname, '..', 'dist', 'index.js')).href;
   const helpers = pathToFileURL(join(__dirname, '..', 'tests', 'helpers.mjs')).href;
   const { DaemonConnection, NotSentError, OverflowError, UncertainError } = await import(dist);
@@ -73,8 +75,6 @@ async function main() {
   // from the Electron host: each child exits with NO app.quit and NO
   // process.exit - the addon releasing the Node loop is the exit proof.
   // The host itself ends through the app lifecycle (app.quit only here).
-  const { spawn } = require('node:child_process');
-  const { join } = require('node:path');
   const childScript = (kind) => `
     globalThis.gc?.();
     const { DaemonConnection } = await import(${JSON.stringify(pathToFileURL(join(__dirname, '..', 'dist', 'index.js')).href)});
