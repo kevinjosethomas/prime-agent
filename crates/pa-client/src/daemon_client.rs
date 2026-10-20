@@ -398,7 +398,7 @@ impl TaskSet {
     /// Whether shutdown already marked the set dead.
     fn is_dead(&self) -> bool {
         let dead = self.state.lock().unwrap().done;
-        eprintln!("DBG is_dead: ptr {:p} = {}", std::sync::Arc::as_ptr(self), dead);
+        eprintln!("DBG is_dead: set = {:p} = {dead}", self);
         dead
     }
 
