@@ -1,0 +1,35 @@
+name: Recovery render performance baseline
+on:
+  push:
+    branches: [diagnostic/recovery-render-perf]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  installed-baseline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 204cfaa71e1d9eb409239f599a102cf0ec7dd65c
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          shared-key: test-shards
+      - name: Measure unchanged installed-baseline drag selection
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/render-baseline"
+          git rev-parse HEAD > "$RUNNER_TEMP/render-baseline/source.txt"
+          cargo test --locked -p pa-tui --test drag_select_perf 2>&1 | tee "$RUNNER_TEMP/render-baseline/test.log"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: installed-render-performance-baseline
+          path: ${{ runner.temp }}/render-baseline
+          if-no-files-found: error
