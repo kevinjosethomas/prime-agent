@@ -16,8 +16,8 @@ use pa_core::cron::store::{
 };
 use pa_core::cron::{
     is_heartbeat_cron_job, normalize_heartbeat_delivery_mode, normalize_heartbeat_schedule,
-    should_defer_heartbeat_cron_job, AgentCronJob, DeliveryMode, HeartbeatSessionActivity,
-    JobStatus,
+    should_defer_heartbeat_cron_job, AgentCronJob, DeliveryMode, HeartbeatJobUpdate,
+    HeartbeatSessionActivity, JobStatus,
 };
 
 use crate::protocol::{response_failure, response_success, DaemonResponse};

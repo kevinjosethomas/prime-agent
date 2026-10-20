@@ -1147,6 +1147,19 @@ impl Supervisor {
                 )
                 .await
             }
+            DaemonCommand::HeartbeatUpdateJob { .. } => {
+                // `heartbeat_update_job`: passive jobs are edited against their durable store,
+                // live ones route to their worker.
+                let client_id = effective_client_id.lock().unwrap().clone();
+                self.handle_heartbeat_update_job_catalog(
+                    command,
+                    &client_id,
+                    attached,
+                    &command_id,
+                    &type_name,
+                )
+                .await
+            }
             DaemonCommand::CronAdd { .. } => {
                 // `cron_add`: the routed add plus the ownership promotion the command may
                 // ask for.

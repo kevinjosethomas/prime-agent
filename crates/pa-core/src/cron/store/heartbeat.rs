@@ -10,7 +10,7 @@ use super::{
 };
 use crate::cron::{
     is_heartbeat_cron_job, next_run_at_for_schedule, parse_agent_cron_schedule, parse_iso_millis,
-    AgentCronJob, JobStatus, ScheduleKind, DEFAULT_HEARTBEAT_DELIVERY_MODE,
+    AgentCronJob, HeartbeatJobUpdate, JobStatus, ScheduleKind, DEFAULT_HEARTBEAT_DELIVERY_MODE,
 };
 
 impl AgentCronJobStore {
@@ -287,12 +287,86 @@ impl AgentCronJobStore {
         self.write_jobs(&jobs)?;
         Ok(Some(updated_job))
     }
+
+    /// Edit one heartbeat job (user or RLM) by job id: instruction, interval,
+    /// delivery mode, and label. The job id and status are preserved, and a
+    /// paused job keeps its null next run.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the instruction is blank or the interval does not
+    /// parse to a recurring schedule.
+    pub fn update_heartbeat_job(
+        &self,
+        active_session_id: &str,
+        id: &str,
+        update: &HeartbeatJobUpdate,
+        now: u64,
+    ) -> anyhow::Result<Option<AgentCronJob>> {
+        if let Some(instruction) = &update.instruction {
+            anyhow::ensure!(
+                !instruction.trim().is_empty(),
+                "Heartbeat instruction cannot be empty"
+            );
+        }
+        let parsed_schedule = match &update.interval {
+            Some(interval) => {
+                let parsed = parse_agent_cron_schedule(interval, now)?;
+                anyhow::ensure!(
+                    parsed.0.kind != ScheduleKind::Once,
+                    "Heartbeat schedule must be recurring"
+                );
+                Some(parsed)
+            }
+            None => None,
+        };
+        let now_iso = iso_from_millis(now);
+        let mut updated: Option<AgentCronJob> = None;
+        let jobs: Vec<AgentCronJob> = self
+            .read_jobs()
+            .into_iter()
+            .map(|job| {
+                if job.id != id
+                    || job.active_session_id != active_session_id
+                    || !is_heartbeat_cron_job(&job)
+                    || matches!(job.status, JobStatus::Cancelled | JobStatus::Completed)
+                {
+                    return job;
+                }
+                let mut next = job;
+                if let Some(label) = &update.label {
+                    next.label = normalize_optional_label(Some(label));
+                }
+                if let Some(delivery_mode) = update.delivery_mode {
+                    next.delivery_mode = Some(delivery_mode);
+                }
+                if let Some(instruction) = &update.instruction {
+                    next.prompt = instruction.trim().to_string();
+                }
+                if let Some((schedule, next_run)) = &parsed_schedule {
+                    next.schedule = schedule.clone();
+                    next.next_run_at =
+                        (next.status != JobStatus::Paused).then(|| iso_from_millis(*next_run));
+                }
+                next.updated_at.clone_from(&now_iso);
+                updated = Some(next.clone());
+                next
+            })
+            .collect();
+        let Some(updated) = updated else {
+            // No matching active job: cancelled and completed rows stay untouched.
+            return Ok(None);
+        };
+        self.write_jobs(&jobs)?;
+        Ok(Some(updated))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cron::store::input;
+    use crate::cron::DeliveryMode;
 
     #[test]
     fn pause_does_not_ack_when_state_lock_is_held() {
@@ -341,5 +415,215 @@ mod tests {
         assert!(store
             .create_heartbeat(&input("nope", "in 10m", now))
             .is_err());
+    }
+
+    fn rlm_input(prompt: &str, schedule_text: &str, now: u64) -> crate::cron::store::CreateAgentCronJobInput {
+        let mut rlm_input = input(prompt, schedule_text, now);
+        rlm_input.source = Some("rlm_heartbeat".to_string());
+        rlm_input
+    }
+
+    #[test]
+    fn heartbeat_update_job_edits_both_sources_and_preserves_the_job() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = AgentCronJobStore::new(dir.path().join("jobs.json"));
+        let now = 1_700_000_000_000;
+        let heartbeat = store
+            .create_heartbeat(&input("continue the mission", "every 5m", now))
+            .unwrap();
+        let rlm = store.create_rlm_heartbeat(&rlm_input("watch pods", "every 10m", now)).unwrap();
+
+        // The full edit set on the user heartbeat, addressed by job id.
+        let edited = store
+            .update_heartbeat_job(
+                "live-1",
+                &heartbeat.id,
+                &HeartbeatJobUpdate {
+                    instruction: Some("  revised instruction  ".to_string()),
+                    interval: Some("every 2m".to_string()),
+                    delivery_mode: Some(DeliveryMode::FollowUp),
+                    label: Some("  ops  ".to_string()),
+                },
+                now + 1,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(edited.id, heartbeat.id, "the job id is preserved");
+        assert_eq!(edited.status, JobStatus::Active, "the status is preserved");
+        assert_eq!(edited.prompt, "revised instruction");
+        assert_eq!(edited.schedule.expression, "every 2m");
+        assert_eq!(edited.delivery_mode, Some(DeliveryMode::FollowUp));
+        assert_eq!(edited.label.as_deref(), Some("ops"));
+        assert!(edited.next_run_at.is_some());
+        // The RLM job in the same session stays untouched by the other job's edit.
+        let listed_rlm = store.list_rlm_heartbeats("live-1", false).remove(0);
+        assert_eq!(listed_rlm.id, rlm.id);
+        assert_eq!(listed_rlm.prompt, "watch pods");
+
+        // The RLM job edits through the same by-job-id path.
+        let edited_rlm = store
+            .update_heartbeat_job(
+                "live-1",
+                &rlm.id,
+                &HeartbeatJobUpdate {
+                    instruction: Some("watch pods closer".to_string()),
+                    ..Default::default()
+                },
+                now + 2,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(edited_rlm.id, rlm.id);
+        assert_eq!(edited_rlm.prompt, "watch pods closer");
+        assert_eq!(edited_rlm.status, JobStatus::Active);
+
+        // A paused job keeps its status and null next run across an interval edit.
+        store
+            .manage_heartbeat(
+                "live-1",
+                &heartbeat.id,
+                HeartbeatManagementAction::Pause,
+                now + 3,
+            )
+            .unwrap()
+            .unwrap();
+        let paused_edit = store
+            .update_heartbeat_job(
+                "live-1",
+                &heartbeat.id,
+                &HeartbeatJobUpdate {
+                    interval: Some("every 7m".to_string()),
+                    ..Default::default()
+                },
+                now + 4,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(paused_edit.status, JobStatus::Paused);
+        assert_eq!(paused_edit.next_run_at, None);
+        assert_eq!(paused_edit.schedule.expression, "every 7m");
+    }
+
+    #[test]
+    fn heartbeat_update_job_scopes_by_job_id_and_session() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = AgentCronJobStore::new(dir.path().join("jobs.json"));
+        let now = 1_700_000_000_000;
+        let heartbeat = store
+            .create_heartbeat(&input("continue", "every 5m", now))
+            .unwrap();
+        // A second session's job: a same-session-scoped edit must not reach it, and
+        // the wrong session selector must not match the first job either.
+        let mut other_input = input("other session", "every 3m", now);
+        other_input.active_session_id = "live-2".to_string();
+        let other = store.create_heartbeat(&other_input).unwrap();
+        let missing = store
+            .update_heartbeat_job(
+                "live-1",
+                &other.id,
+                &HeartbeatJobUpdate {
+                    label: Some("hijack".to_string()),
+                    ..Default::default()
+                },
+                now + 1,
+            )
+            .unwrap();
+        assert!(missing.is_none(), "the other session's job is not addressable");
+        let cross_session = store
+            .update_heartbeat_job(
+                "live-2",
+                &heartbeat.id,
+                &HeartbeatJobUpdate {
+                    label: Some("hijack".to_string()),
+                    ..Default::default()
+                },
+                now + 1,
+            )
+            .unwrap();
+        assert!(cross_session.is_none(), "the job is not addressable from live-2");
+        let untouched = store.get_heartbeat("live-1").unwrap();
+        assert_eq!(untouched.label, None);
+
+        // Unknown ids and terminal jobs are not editable.
+        assert!(store
+            .update_heartbeat_job(
+                "live-1",
+                "missing-id",
+                &HeartbeatJobUpdate {
+                    label: Some("nope".to_string()),
+                    ..Default::default()
+                },
+                now + 1,
+            )
+            .unwrap()
+            .is_none());
+        store
+            .manage_heartbeat(
+                "live-1",
+                &heartbeat.id,
+                HeartbeatManagementAction::Stop,
+                now + 2,
+            )
+            .unwrap()
+            .unwrap();
+        assert!(store
+            .update_heartbeat_job(
+                "live-1",
+                &heartbeat.id,
+                &HeartbeatJobUpdate {
+                    label: Some("nope".to_string()),
+                    ..Default::default()
+                },
+                now + 3,
+            )
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn heartbeat_update_job_rejects_bad_fields() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = AgentCronJobStore::new(dir.path().join("jobs.json"));
+        let now = 1_700_000_000_000;
+        let heartbeat = store
+            .create_heartbeat(&input("continue", "every 5m", now))
+            .unwrap();
+        let blank = store
+            .update_heartbeat_job(
+                "live-1",
+                &heartbeat.id,
+                &HeartbeatJobUpdate {
+                    instruction: Some("   ".to_string()),
+                    ..Default::default()
+                },
+                now + 1,
+            )
+            .unwrap_err();
+        assert_eq!(blank.to_string(), "Heartbeat instruction cannot be empty");
+        let once = store
+            .update_heartbeat_job(
+                "live-1",
+                &heartbeat.id,
+                &HeartbeatJobUpdate {
+                    interval: Some("in 10m".to_string()),
+                    ..Default::default()
+                },
+                now + 1,
+            )
+            .unwrap_err();
+        assert_eq!(once.to_string(), "Heartbeat schedule must be recurring");
+        // The wire parser demands one field and the TS delivery-mode spelling.
+        assert!(HeartbeatJobUpdate::from_wire(None, None, None, None).is_err());
+        assert_eq!(
+            HeartbeatJobUpdate::from_wire(None, None, Some("wrong"), None)
+                .unwrap_err()
+                .to_string(),
+            "Heartbeat delivery mode must be \"steer\" or \"follow_up\""
+        );
+        let update = HeartbeatJobUpdate::from_wire(None, None, Some("follow_up"), None).unwrap();
+        assert!(update.drops_queued_fire());
+        assert!(!HeartbeatJobUpdate::from_wire(None, None, None, Some("l"))
+            .unwrap()
+            .drops_queued_fire());
     }
 }

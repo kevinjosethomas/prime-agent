@@ -188,6 +188,7 @@ impl Worker {
             "heartbeat_get" => self.handle_heartbeat_get(payload),
             "heartbeat_set" => self.handle_heartbeat_set(payload).await,
             "heartbeat_update" => self.handle_heartbeat_update(payload).await,
+            "heartbeat_update_job" => self.handle_heartbeat_update_job(payload).await,
             other => response_failure(
                 None,
                 command_type,

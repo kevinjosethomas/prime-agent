@@ -913,6 +913,22 @@ pub enum DaemonCommand {
         #[serde(flatten)]
         rest: JsonMap,
     },
+    HeartbeatUpdateJob {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        active_session_id: String,
+        job_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        instruction: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        interval: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        delivery_mode: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
     SetModel {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,

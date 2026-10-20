@@ -345,6 +345,10 @@ const WIRE_FIXTURES: &[(&str, &str)] = &[
         r#"{"type": "heartbeat_update", "activeSessionId": "sess", "action": "pause"}"#,
     ),
     (
+        "heartbeat_update_job",
+        r#"{"type": "heartbeat_update_job", "activeSessionId": "sess", "jobId": "j", "instruction": "x"}"#,
+    ),
+    (
         "set_model",
         r#"{"type": "set_model", "activeSessionId": "sess", "provider": "prov", "modelId": "m"}"#,
     ),
@@ -568,6 +572,7 @@ fn known_command_types_match_the_ts_list() {
                     | "list_queued_inputs"
                     | "mutate_queued_input"
                     | "set_prompt_guidelines"
+                    | "heartbeat_update_job"
             ),
             "unexpected non-TS command type: {extra}"
         );
