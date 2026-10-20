@@ -2259,7 +2259,7 @@ mod tests {
         let (session, events) = DaemonClientSession::start(config(&socket)).await.unwrap();
         // A REAL fresh client with a completed handshake (the driver's
         // own connection, resolved before the install).
-        let fresh = DaemonClient::connect(&socket).await.unwrap();
+        let (fresh, _fresh_events) = DaemonClient::connect(&socket).await.unwrap();
         // The test holds the client WRITE guard.
         let guard = session.state.client.write().await;
         // The install helper's future — parked at the client-guard await.
