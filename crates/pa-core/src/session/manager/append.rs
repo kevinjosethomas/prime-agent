@@ -183,8 +183,8 @@ impl SessionManager {
     }
 
     /// `appendCompaction`: persist the compaction record with the full typed
-    /// payload (later compactions and branch summarization read `usage`,
-    /// `harnessDigest`, and friends back from the durable row).
+    /// payload (later compactions and branch summarization read `usage`
+    /// and friends back from the durable row).
     ///
     /// # Errors
     ///

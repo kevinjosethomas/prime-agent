@@ -351,8 +351,6 @@ pub fn compaction_entry_for(
     result: &CompactionResult,
     details: &CompactionDetails,
     custom_instructions: Option<&str>,
-    harness_digest: Option<String>,
-    harness_state_fingerprint: Option<String>,
 ) -> CompactionEntry {
     CompactionEntry {
         summary: result.summary.clone(),
@@ -362,8 +360,6 @@ pub fn compaction_entry_for(
         from_hook: Some(false),
         custom_instructions: custom_instructions.map(str::to_string),
         usage: result.usage,
-        harness_digest,
-        harness_state_fingerprint,
     }
 }
 
@@ -462,7 +458,7 @@ mod tests {
             modified_files: vec![],
         };
         assert_eq!(
-            compaction_entry_for(&result, &details, Some("focus"), None, None),
+            compaction_entry_for(&result, &details, Some("focus")),
             CompactionEntry {
                 summary: "the overflow summary".to_string(),
                 first_kept_entry_id: "e4".to_string(),
@@ -474,8 +470,6 @@ mod tests {
                 from_hook: Some(false),
                 custom_instructions: Some("focus".to_string()),
                 usage: Some(usage),
-                harness_digest: None,
-                harness_state_fingerprint: None,
             }
         );
     }
