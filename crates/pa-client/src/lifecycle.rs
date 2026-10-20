@@ -2169,7 +2169,7 @@ mod tests {
         drop(events);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_cancelled_join_keeps_the_shared_slot_owner() {
         // P-3: a REAL client TaskSet join, blocked by a hot-loop task
         // registered on the connection's TaskSet (the crate-private unit
