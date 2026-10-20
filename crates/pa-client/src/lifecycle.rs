@@ -141,6 +141,7 @@ pub struct LifecycleConfig {
 
 /// The clone-safe handle. Requests route directly through the live client;
 /// the registry mutex is held only for synchronous bookkeeping.
+#[derive(Clone)]
 pub struct DaemonClientSession {
     state: Arc<SessionState>,
 }
@@ -818,7 +819,7 @@ fn spawn_restores(
 mod tests {
     use super::*;
     use serde_json::json;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
     use tokio::net::UnixListener;
 
     fn config(socket: &std::path::Path) -> LifecycleConfig {
@@ -864,7 +865,7 @@ mod tests {
                 frames,
                 hold_attach,
                 drop_first_after_release,
-                release,
+                Arc::clone(&release),
             ));
             (
                 Supervisor {

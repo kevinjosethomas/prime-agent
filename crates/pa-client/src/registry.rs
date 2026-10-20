@@ -140,66 +140,62 @@ impl AttachmentRegistry {
         data: &Value,
         token: u64,
     ) -> bool {
-        let entry = match self.attachments.get_mut(id) {
-            // The live entry at the attempt's own token.
-            Some(entry) if entry.attempt == token => entry,
-            // A fresh id's live intent: create the entry.
-            None if self.intents.get(id) == Some(&token) => {
-                self.intents.remove(id);
-                let entry = self
-                    .attachments
-                    .entry(id.to_string())
-                    .or_insert(Attachment {
-                        cursor: None,
-                        capabilities: Vec::new(),
-                        attempt: token,
-                    });
-                entry.attempt = token;
-                entry
+        // Resolve the adoption and compute the cursor INSIDE one borrow; the
+        // marker bookkeeping below runs after the entry borrow ends.
+        let cursor = {
+            let entry = match self.attachments.get_mut(id) {
+                // The live entry at the attempt's own token.
+                Some(entry) if entry.attempt == token => entry,
+                // A fresh id's live intent: create the entry.
+                None if self.intents.get(id) == Some(&token) => {
+                    self.intents.remove(id);
+                    self.attachments
+                        .entry(id.to_string())
+                        .or_insert(Attachment {
+                            cursor: None,
+                            capabilities: Vec::new(),
+                            attempt: token,
+                        })
+                }
+                // Superseded, detached, or stale (a forget/reinsert cycle
+                // moved the tokens): never adopt, never resurrect.
+                _ => return false,
+            };
+            if !capabilities.is_empty() {
+                entry.capabilities = capabilities.to_vec();
             }
-            // Superseded, detached, or stale (a forget/reinsert cycle moved
-            // the tokens): never adopt, never resurrect.
-            _ => return false,
+            let snapshot = data.get("snapshot").unwrap_or(data);
+            let current = entry.cursor.clone();
+            if let Some(mut cursor) = snapshot.get("lastEventCursor").and_then(parse_cursor) {
+                cursor.active_session_id = Some(id.to_string());
+                if current
+                    .as_ref()
+                    .is_none_or(|c| c.generation != cursor.generation)
+                    || current.as_ref().and_then(|c| c.sequence).unwrap_or(0)
+                        < cursor.sequence.unwrap_or(0)
+                {
+                    entry.cursor = Some(cursor);
+                }
+            } else if let Some(sequence) =
+                snapshot.get("lastEventSequence").and_then(Value::as_u64)
+            {
+                if current.as_ref().and_then(|c| c.event_sequence).unwrap_or(0) < sequence {
+                    entry.cursor = Some(DaemonResumeCursor {
+                        active_session_id: Some(id.to_string()),
+                        generation: None,
+                        sequence: None,
+                        event_sequence: Some(sequence),
+                    });
+                }
+            }
+            entry.cursor.clone()
         };
-        if !capabilities.is_empty() {
-            entry.capabilities = capabilities.to_vec();
-        }
         // A successful adoption restores the attachment regardless of
         // whether a cursor exists.
         if self.order.iter().all(|registered| registered != id) {
             self.order.push(id.to_string());
         }
-        let snapshot = data.get("snapshot").unwrap_or(data);
-        let current = entry.cursor.clone();
-        if let Some(mut cursor) = snapshot.get("lastEventCursor").and_then(parse_cursor) {
-            cursor.active_session_id = Some(id.to_string());
-            if current
-                .as_ref()
-                .is_none_or(|c| c.generation != cursor.generation)
-                || current
-                    .as_ref()
-                    .and_then(|c| c.sequence)
-                    .unwrap_or(0)
-                    < cursor.sequence.unwrap_or(0)
-            {
-                entry.cursor = Some(cursor);
-            }
-        } else if let Some(sequence) = snapshot.get("lastEventSequence").and_then(Value::as_u64) {
-            if current
-                .as_ref()
-                .and_then(|c| c.event_sequence)
-                .unwrap_or(0)
-                < sequence
-            {
-                entry.cursor = Some(DaemonResumeCursor {
-                    active_session_id: Some(id.to_string()),
-                    generation: None,
-                    sequence: None,
-                    event_sequence: Some(sequence),
-                });
-            }
-        }
-        self.catch_up_marker(id, entry.cursor.as_ref());
+        self.catch_up_marker(id, cursor.as_ref());
         true
     }
 
@@ -384,7 +380,7 @@ mod tests {
         registry.register("s1", vec!["attach_snapshot".to_string()]);
         let actions: Vec<FrameAction> = [("g1", 2), ("g1", 2), ("g1", 1), ("g2", 1)]
             .iter()
-            .map(|(generation, sequence)| registry.observe_frame(&event(generation, sequence)))
+            .map(|(generation, sequence)| registry.observe_frame(&event(generation, *sequence)))
             .collect();
         assert_eq!(
             actions,
