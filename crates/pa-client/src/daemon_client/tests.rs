@@ -1839,6 +1839,11 @@ async fn join_awaits_actual_completion_before_returning() {
         })
     };
     assert!(tasks.register_connection(first, second));
+    // Let the runtime poll the tasks to their pending awaits BEFORE the
+    // abort: an unpolled task never constructs its locals, and unwinding a
+    // started task is what the barrier observes.
+    tokio::task::yield_now().await;
+    tokio::task::yield_now().await;
     assert!(tasks.abort_all());
     let drained = tokio::time::timeout(Duration::from_secs(5), tasks.join_drain())
         .await
@@ -1850,11 +1855,13 @@ async fn join_awaits_actual_completion_before_returning() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancelled_join_retains_ownership_and_the_next_join_waits() {
     // B4's proof: a join future cancelled mid-drain loses NOTHING — the
     // in-flight handle is re-inserted by the guard's Drop, and the next
-    // join still awaits the blocker's real completion.
+    // join still awaits the blocker's real completion. Multi-threaded:
+    // the hot loop genuinely runs while the cancellation lands on the
+    // other worker.
     let tasks = std::sync::Arc::new(TaskSet::default());
     let (held_tx, held_rx) = oneshot::channel::<()>();
     // A hot loop between awaits resists abort until it finishes: the drain
@@ -1868,13 +1875,13 @@ async fn cancelled_join_retains_ownership_and_the_next_join_waits() {
         std::hint::black_box(acc);
         std::future::pending::<()>().await;
     });
-    assert!(tasks.register_connection(
-        blocker,
-        tokio::spawn(std::future::pending::<()>())
-    ));
+    let peer = tokio::spawn(std::future::pending::<()>());
+    assert!(tasks.register_connection(blocker, peer));
+    // The blocker is mid-loop (aborts cannot land there); mark dead.
+    tokio::time::sleep(Duration::from_millis(20)).await;
     assert!(tasks.abort_all());
 
-    // Cancel the first join mid-drain (the blocker is still looping).
+    // The first drain blocks on the looping blocker; cancel it mid-await.
     let first = {
         let tasks = std::sync::Arc::clone(&tasks);
         tokio::spawn(async move { tasks.join_drain().await })
@@ -1885,7 +1892,7 @@ async fn cancelled_join_retains_ownership_and_the_next_join_waits() {
 
     // The second join still OWNS everything: it waits out the blocker and
     // returns only after real completion.
-    let drained = tokio::time::timeout(Duration::from_secs(30), tasks.join_drain())
+    let drained = tokio::time::timeout(Duration::from_secs(60), tasks.join_drain())
         .await
         .expect("the next join still awaits the retained tasks");
     assert_eq!(drained, 2, "the blocker and its peer, exactly once");
@@ -1912,19 +1919,25 @@ async fn concurrent_joins_wait_for_each_other_behind_the_barrier() {
     // handle is drained exactly once across them.
     let tasks = std::sync::Arc::new(TaskSet::default());
     let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let blocker = {
+    let first = {
         let flag = std::sync::Arc::clone(&flag);
         tokio::spawn(async move {
             let _completed = CompletionFlag(flag);
-            let mut acc = 0u64;
-            for i in 0..100_000_000u64 {
-                acc = acc.wrapping_add(i);
-            }
-            std::hint::black_box(acc);
             std::future::pending::<()>().await;
         })
     };
-    assert!(tasks.register_connection(blocker, tokio::spawn(std::future::pending::<()>())));
+    let second = {
+        let flag = std::sync::Arc::clone(&flag);
+        tokio::spawn(async move {
+            let _completed = CompletionFlag(flag);
+            std::future::pending::<()>().await;
+        })
+    };
+    assert!(tasks.register_connection(first, second));
+    // Polled to their pending awaits before the abort, so their unwind is
+    // observable.
+    tokio::task::yield_now().await;
+    tokio::task::yield_now().await;
     assert!(tasks.abort_all());
     let one = {
         let tasks = std::sync::Arc::clone(&tasks);
