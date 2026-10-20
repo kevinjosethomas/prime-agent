@@ -26,24 +26,32 @@ async function main() {
   mark('main-start');
   const dist = pathToFileURL(join(__dirname, '..', 'dist', 'index.js')).href;
   const helpers = pathToFileURL(join(__dirname, '..', 'tests', 'helpers.mjs')).href;
+  mark('imports-done');
   const { DaemonConnection, NotSentError, OverflowError, UncertainError } = await import(dist);
   const { startMock, tmpSocket } = await import(helpers);
 
   // 1. Connect + request round-trip against the echo mock.
   const echoPath = tmpSocket('electron-echo');
   const stopEcho = await startMock(echoPath, 'echo');
+  mark('echo-mock-up');
   const connection = await DaemonConnection.connect(echoPath);
   const response = await connection.request({ type: 'get_connection_state' });
   if (response.success !== true) throw new Error('request failed in Electron main');
+  mark('echo-closing');
   connection.close();
+  mark('echo-closed');
 
   // 2. The overflow fail-closed scenario in the flood mock. The in-flight
   // request is issued BEFORE the terminal mark (it must settle Uncertain
   // with cause overflow); a request AFTER the mark is the provable
   // NotSent with the overflow cause.
+  if (SECTION !== 'children') {
   const floodPath = tmpSocket('electron-overflow');
   const stopFlood = await startMock(floodPath, 'flood');
+  mark('flood-mock-up');
   const flooded = await DaemonConnection.connect(floodPath, { frameBuffer: 2 });
+  mark('flood-connected');
+  mark('premark-request-started');
   const preMarkRequest = flooded
     .request({ type: 'get_connection_state', activeSessionId: 'wire' }, 60_000)
     .then(
@@ -52,6 +60,7 @@ async function main() {
       },
       (error) => error,
     );
+  mark('flood-drain-start');
   let overflowed = false;
   try {
     while (true) {
@@ -62,7 +71,9 @@ async function main() {
     overflowed = true;
   }
   if (!overflowed) throw new Error('overflow never surfaced in Electron main');
+  mark('flood-overflow-marked');
   const tornDown = await preMarkRequest;
+  mark('premark-settled');
   if (!(tornDown instanceof UncertainError) || tornDown.cause !== 'overflow') {
     throw new Error(`pre-mark request class: ${tornDown?.kind}:${tornDown?.cause}`);
   }
@@ -78,8 +89,13 @@ async function main() {
     throw new Error(`post-mark request class: ${postMark?.kind}:${postMark?.cause}`);
   }
   flooded.close();
+  mark('flood-closed');
   await stopFlood();
+  mark('flood-mock-stopped');
   await stopEcho();
+  mark('echo-mock-stopped');
+  }
+  if (SECTION !== 'protocol') {
 
   // The natural-exit proofs run as ELECTRON_RUN_AS_NODE children spawned
   // from the Electron host: each child exits with NO app.quit and NO
@@ -120,7 +136,9 @@ async function main() {
         resolve(code);
       });
     });
+  mark('children-start');
   const closeExit = await runChild('close');
+  mark('close-child-exit');
   const gcExit = await runChild('gc');
   console.log(
     'ELECTRON_MAIN_PROTOCOL_OK',
@@ -132,11 +150,15 @@ async function main() {
     'gc-exit-code',
     gcExit,
   );
+  mark('gc-child-exit');
+  }
   app.quit();
 }
 
 app.whenReady().then(main).catch((error) => {
   console.error(error);
   process.exitCode = 1;
+  mark('gc-child-exit');
+  }
   app.quit();
 });
