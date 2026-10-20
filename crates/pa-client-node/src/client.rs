@@ -97,7 +97,7 @@ struct BridgeGuard {
 impl std::future::Future for BridgeGuard {
     type Output = std::result::Result<(), tokio::task::JoinError>;
 
-    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
         // SAFETY: the guard holds no self-referential data (plain Arc and
         // an Unpin JoinHandle), so &mut through the Pin is sound.
         let this = std::pin::Pin::into_inner(self);
@@ -733,7 +733,7 @@ pub async fn connect(
     // Both pumps are REGISTERED operations: the cleanup runner drains them
     // alongside the request/upgrade workers.
     {
-        let inner = Arc::clone(&inner);
+        let frame_inner = Arc::clone(&inner);
         let frame_tx = frame_tx;
         let mut tap_rx = tap_rx;
         inner
@@ -741,7 +741,7 @@ pub async fn connect(
             // The pump also exits on the binding-owned teardown wake (the
             // core tap closing is NOT a teardown trigger here: its chain
             // rides on socket EOF, which is the shutdown PR's to prove).
-            let notified = inner.teardown.notified();
+            let notified = frame_inner.teardown.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
             loop {
