@@ -2198,7 +2198,7 @@ mod tests {
             // the join for a bounded, observable window, then completes.
             let hot = tokio::spawn(async move {
                 let mut acc = 0u64;
-                for i in 0..600_000_000u64 {
+                for i in 0..4_000_000_000u64 {
                     acc = acc.wrapping_add(i);
                 }
                 std::hint::black_box(acc);
