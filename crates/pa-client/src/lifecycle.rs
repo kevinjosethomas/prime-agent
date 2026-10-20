@@ -743,43 +743,15 @@ async fn driver_run(
             };
             match result {
                 Ok((fresh, _legacy_events)) => {
-                    // The install linearization (item 7): the client WRITE
-                    // guard and the registry gate held together — check the
-                    // stop truth, bump the epoch, assign the client, and
-                    // publish Connected in ONE gate-held section with NO
-                    // await inside (lock order client -> registry; stop's
-                    // marks run under the same registry gate, so neither
-                    // can pass the other mid-section).
-                    let install = {
-                        let mut slot = state.client.write().await;
-                        let mut registry = state.registry.lock().unwrap();
-                        if stopped(&state, &cancel) {
-                            None
-                        } else {
-                            let epoch = registry.bump_epoch();
-                            *slot = Some(fresh.clone());
-                            let hello = fresh.hello().clone();
-                            publish(&state, |status| {
-                                status.state = ConnectionState::Connected;
-                                status.app_version = hello
-                                    .get("appVersion")
-                                    .and_then(Value::as_str)
-                                    .map(str::to_string);
-                                status.capabilities = hello
-                                    .get("serverCapabilities")
-                                    .and_then(Value::as_array)
-                                    .map(|values| {
-                                        values
-                                            .iter()
-                                            .filter_map(Value::as_str)
-                                            .map(str::to_string)
-                                            .collect()
-                                    })
-                                    .unwrap_or_default();
-                            });
-                            Some(epoch)
-                        }
-                    };
+                    // The install linearization (item 7), extracted as the
+                    // natural private helper the driver uses — the client
+                    // WRITE guard and the registry gate held together:
+                    // check the stop truth, bump the epoch, assign the
+                    // client, and publish Connected in ONE gate-held
+                    // section with NO await inside (lock order client ->
+                    // registry; stop's marks run under the same registry
+                    // gate, so neither can pass the other mid-section).
+                    let install = install_fresh(&state, &fresh, &cancel).await;
                     let Some(epoch) = install else {
                         // A stop landed: the fresh connection never
                         // installs; its settle runs outside the guards.
@@ -900,6 +872,49 @@ fn expire(state: &Arc<SessionState>, kind: ReconnectKind) {
             window_name(kind)
         ));
     });
+}
+
+/// The install linearization (item 7) — the natural private helper the
+/// driver calls after a fresh connect resolves: the client WRITE guard is
+/// awaited, then the registry gate is taken (client -> registry order) and
+/// the stop truth checked, the epoch bumped, the client assigned, and the
+/// Connected status published — all inside the one gate-held section, no
+/// await within it. `None` = a stop landed: the fresh connection installs
+/// nothing and its settle runs at the caller, outside the guards.
+pub(crate) async fn install_fresh(
+    state: &Arc<SessionState>,
+    fresh: &DaemonClient,
+    cancel: &watch::Receiver<bool>,
+) -> Option<u64> {
+    // The hello snapshot is taken BEFORE the gate (a pure read of the
+    // resolved connection; the publish itself stays inside).
+    let hello = fresh.hello().clone();
+    let mut slot = state.client.write().await;
+    let mut registry = state.registry.lock().unwrap();
+    if stopped(state, cancel) {
+        return None;
+    }
+    let epoch = registry.bump_epoch();
+    *slot = Some(fresh.clone());
+    publish(state, |status| {
+        status.state = ConnectionState::Connected;
+        status.app_version = hello
+            .get("appVersion")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        status.capabilities = hello
+            .get("serverCapabilities")
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+    });
+    Some(epoch)
 }
 
 fn window_name(kind: ReconnectKind) -> &'static str {
@@ -2131,216 +2146,100 @@ mod tests {
         session.stop().await.expect("the settle completed honestly");
     }
 
-    #[allow(clippy::too_many_lines)]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn an_old_client_attach_response_never_adopts_past_a_swap() {
-        // Item 10 (the capture tie, swap-interleaving): the OLD client's
-        // attach response — held past the loss — never adopts across the
-        // swap; a request on the NEW client adopts validly at the current
-        // epoch.
-        let dir = tempfile::TempDir::new().unwrap();
-        let socket = dir.path().join("i10.sock");
-        let listener = UnixListener::bind(&socket).unwrap();
-        // The oneshot hold: deterministic wake — no permit races.
-        let (release_old_tx, release_old_rx) = tokio::sync::oneshot::channel::<()>();
-        let release_old_tx = std::sync::Mutex::new(Some(release_old_tx));
-        {
-            let mut release_old_rx = release_old_rx;
-            tokio::spawn(async move {
-                let hello = json!({
-                    "type": "daemon_hello",
-                    "protocol": { "name": "prime-agent.daemon", "version": 7 },
-                });
-                // Connection 1: HOLD the attach response across the loss.
-                {
-                    let (stream, _) = listener.accept().await.expect("accept one");
-                    let (reader, mut writer) = stream.into_split();
-                    let mut reader = tokio::io::BufReader::new(reader);
-                    let mut line = String::new();
-                    writer
-                        .write_all(format!("{hello}\n").as_bytes())
-                        .await
-                        .unwrap();
-                    loop {
-                        line.clear();
-                        match reader.read_line(&mut line).await {
-                            Ok(0) | Err(_) => break,
-                            Ok(_) => {}
-                        }
-                        let envelope: Value = serde_json::from_str(line.trim()).unwrap();
-                        let command = envelope["command"]["type"].as_str().unwrap_or_default();
-                        if command == "attach" {
-                            let _ = (&mut release_old_rx).await;
-                        }
-                        let response = json!({
-                            "type": "response",
-                            "id": envelope["id"],
-                            "command": command,
-                            "success": true,
-                            "data": if command == "attach" {
-                                json!({ "lastEventCursor": { "generation": "gold", "sequence": 1 } })
-                            } else {
-                                json!({ "ok": true })
-                            },
-                        });
-                        writer
-                            .write_all(format!("{response}\n").as_bytes())
-                            .await
-                            .unwrap();
-                    }
-                }
-                // Connection 2: answer everything immediately.
-                let (stream, _) = listener.accept().await.expect("accept two");
-                let (reader, mut writer) = stream.into_split();
-                let mut reader = tokio::io::BufReader::new(reader);
-                let mut line = String::new();
-                writer
-                    .write_all(format!("{hello}\n").as_bytes())
-                    .await
-                    .unwrap();
-                loop {
-                    line.clear();
-                    match reader.read_line(&mut line).await {
-                        Ok(0) | Err(_) => break,
-                        Ok(_) => {}
-                    }
-                    let envelope: Value = serde_json::from_str(line.trim()).unwrap();
-                    let command = envelope["command"]["type"].as_str().unwrap_or_default();
-                    let response = json!({
-                        "type": "response",
-                        "id": envelope["id"],
-                        "command": command,
-                        "success": true,
-                        "data": if command == "attach" {
-                            json!({ "lastEventCursor": { "generation": "gnew", "sequence": 2 } })
-                        } else {
-                            json!({ "ok": true })
-                        },
-                    });
-                    writer
-                        .write_all(format!("{response}\n").as_bytes())
-                        .await
-                        .unwrap();
-                }
-            });
-        }
-        let (session, mut events) = DaemonClientSession::start(config(&socket)).await.unwrap();
-        wait_connected(&mut events).await;
-        // The OLD client's attach — its response is HELD at the mock.
-        session.register_attachment("s1", None);
-        let old_attach = {
-            let session = session.clone();
-            tokio::spawn(async move {
-                session
-                    .request_ok(DaemonCommand::Attach {
-                        id: None,
-                        active_session_id: "s1".to_string(),
-                        client_id: None,
-                        capabilities: None,
-                        resume_cursor: None,
-                        telemetry_disabled: None,
-                        recovery_config: None,
-                        env: None,
-                        launch_env: None,
-                        rest: Map::new(),
-                    })
-                    .await
-            })
-        };
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        // The loss: connection 1 drops while the OLD attach is still held.
-        // Force the boundary: drop connection 1 by... the mock's conn-1
-        // block above only exits at EOF; the drop is driven by the RELEASED
-        // response followed by the driver's own loss detection — instead,
-        // release the held response FIRST (it resolves on the OLD client,
-        // pre-loss), then hold the SECOND... simplest faithful shape: the
-        // old response resolves pre-loss and adopts (the baseline), the
-        // swap lands, and a POST-swap request on the NEW client adopts
-        // validly. The stale-adoption case needs the response past the
-        // boundary — covered by the registry's epoch gate; here we assert
-        // the coherent capture: the post-swap request adopts the NEW
-        // cursor and the registry holds ONLY the new adoption.
-        release_old_tx
-            .lock()
-            .unwrap()
-            .take()
-            .expect("released once")
-            .send(())
-            .expect("the mock lives");
-        let baseline = tokio::time::timeout(Duration::from_secs(10), old_attach)
-            .await
-            .expect("the held old attach settled")
-            .unwrap()
-            .unwrap();
-        assert_eq!(baseline["lastEventCursor"]["generation"], "gold");
-        // The scripted death of connection 1: shut it from the mock side.
-        // The mock's conn-1 loop is response-blocked; force the loss by
-        // dropping the client through a restart of the session's socket —
-        // use the direct shutdown on the live client instead (the same
-        // loss the driver takes).
-        {
-            let client = session
-                .state
-                .client
-                .read()
+    #[tokio::test]
+    async fn the_old_capture_after_a_boundary_never_adopts() {
+        // Item-10, the direct bookkeeping unit: the OLD capture (its
+        // Bookkeeping with the old token and old epoch) invoked AFTER the
+        // registry bump and the new-client install — the stale response is
+        // REJECTED; the CURRENT capture's after() with the NEW response
+        // ADOPTS. No network pretend: this drives the exact adoption
+        // boundary the wire cannot deterministically deliver.
+        let (session, _events) =
+            DaemonClientSession::start(config(std::path::Path::new("/dev/null")))
                 .await
-                .clone()
-                .expect("the connection is live");
-            client.shutdown();
+                .unwrap();
+        // The OLD capture, taken as a real request would (under the
+        // registry lock, the token minted on the entry).
+        let (old_id, old_bookkeeping) = {
+            let mut registry = session.state.registry.lock().unwrap();
+            registry.register("s1", vec![]);
+            let token = registry.attempt_token("s1");
+            let epoch = registry.current_epoch();
+            (
+                "s1".to_string(),
+                Bookkeeping::Attach {
+                    id: "s1".to_string(),
+                    token,
+                    capabilities: vec![],
+                    epoch,
+                },
+            )
+        };
+        // The old response (what the OLD connection would have answered).
+        let old_response = DaemonResponse {
+            id: None,
+            command: "attach".to_string(),
+            success: true,
+            data: Some(json!({
+                "lastEventCursor": { "generation": "gold", "sequence": 1 }
+            })),
+            error: None,
+            error_info: None,
+        };
+        // THE BOUNDARY: the registry bump (the loss/stop/install boundary).
+        session.state.registry.lock().unwrap().bump_epoch();
+        // The old capture's after() — REJECTED: no adoption of "gold".
+        session.after(Some(&old_bookkeeping), &old_response);
+        {
+            let entries = session.state.registry.lock().unwrap().restore_entries();
+            assert!(
+                entries.iter().all(|(_, entry)| entry.cursor.is_none()),
+                "the stale old capture never adopts"
+            );
+            let _ = old_id;
         }
-        // The driver takes the loss, reconnects (connection 2).
-        tokio::time::timeout(Duration::from_secs(20), async {
-            loop {
-                if let ConnectionEvent::Status(status) = next_event(&mut events).await {
-                    if status.state == ConnectionState::Connected {
-                        return;
-                    }
-                }
+        // The CURRENT capture's after() with the NEW response — ADOPTS
+        // "gnew" coherently.
+        let new_bookkeeping = {
+            let mut registry = session.state.registry.lock().unwrap();
+            let token = registry.attempt_token("s1");
+            let epoch = registry.current_epoch();
+            Bookkeeping::Attach {
+                id: "s1".to_string(),
+                token,
+                capabilities: vec![],
+                epoch,
             }
-        })
-        .await
-        .expect("the driver reconnected");
-        // A POST-swap request on the NEW client adopts validly.
-        let adopted = session
-            .request_ok(DaemonCommand::Attach {
-                id: None,
-                active_session_id: "s1".to_string(),
-                client_id: None,
-                capabilities: None,
-                resume_cursor: None,
-                telemetry_disabled: None,
-                recovery_config: None,
-                env: None,
-                launch_env: None,
-                rest: Map::new(),
-            })
-            .await
-            .unwrap();
-        assert_eq!(
-            adopted["lastEventCursor"]["generation"], "gnew",
-            "the new client's response: {adopted}"
-        );
-        let entries = session.state.registry.lock().unwrap().restore_entries();
-        assert_eq!(entries.len(), 1);
-        let cursor = entries[0].1.cursor.as_ref().unwrap();
-        assert_eq!(
-            cursor.generation.as_deref(),
-            Some("gnew"),
-            "the coherent capture holds the CURRENT client's adoption"
-        );
-        session.stop().await.expect("the settle completed honestly");
+        };
+        let new_response = DaemonResponse {
+            id: None,
+            command: "attach".to_string(),
+            success: true,
+            data: Some(json!({
+                "lastEventCursor": { "generation": "gnew", "sequence": 2 }
+            })),
+            error: None,
+            error_info: None,
+        };
+        session.after(Some(&new_bookkeeping), &new_response);
+        {
+            let entries = session.state.registry.lock().unwrap().restore_entries();
+            let cursor = entries[0].1.cursor.as_ref().expect("the current capture adopts");
+            assert_eq!(cursor.generation.as_deref(), Some("gnew"));
+            assert_eq!(cursor.sequence, Some(2));
+        }
     }
 
     #[tokio::test]
-    async fn a_stop_during_a_hung_hello_never_installs_past_the_mark() {
-        // P-4 (the REAL install contention): a VALID hello first (the
-        // connect resolves Ok and the core completes the handshake), the
-        // test HOLDS the client WRITE guard BEFORE the driver's install can
-        // take it, the stop marks under the registry gate and awaits the
-        // client guard; the release lets the install proceed to the
-        // registry gate where it REFUSES on the mark — no Connected, no
-        // install, the fresh connection joined, a subsequent request
-        // NotSent.
+    async fn the_install_refuses_a_stop_marked_while_the_client_guard_holds() {
+        // P-4, the REAL contention — no sleeps: a VALID fresh client (a
+        // completed handshake against a real mock), the test HOLDS the
+        // client WRITE guard, the install helper's future is POLLED
+        // PENDING (its receipt — the install is genuinely parked at the
+        // client-guard await), the stop's marks then land under the
+        // registry gate, and the release lets the install proceed to the
+        // gate where it REFUSES: no Connected, no install, the fresh
+        // connection joined, a subsequent request NotSent.
         let dir = tempfile::TempDir::new().unwrap();
         let socket = dir.path().join("p4.sock");
         let listener = UnixListener::bind(&socket).unwrap();
@@ -2358,31 +2257,47 @@ mod tests {
             std::future::pending::<()>().await;
         });
         let (session, events) = DaemonClientSession::start(config(&socket)).await.unwrap();
-        // Hold the client WRITE guard BEFORE the driver can install: the
-        // connect resolves and the driver parks at the guard await (never
-        // inside the registry gate — no deadlock by design).
+        // A REAL fresh client with a completed handshake (the driver's
+        // own connection, resolved before the install).
+        let fresh = DaemonClient::connect(&socket).await.unwrap();
+        // The test holds the client WRITE guard.
         let guard = session.state.client.write().await;
-        // Give the driver a beat to park at the guard.
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        // The stop's marks land under the registry gate while the client
-        // guard is held by the test — the spawned stop parks on the
-        // client-guard await exactly like the parked install.
+        // The install helper's future — parked at the client-guard await.
+        let cancel = session.state.cancel.subscribe();
+        let mut install = Box::pin(install_fresh(&session.state, &fresh, &cancel));
+        // The PENDING receipt: poll once with a noop waker — the helper is
+        // genuinely parked at the write-guard await (no sleep).
+        let waker = futures_noop_waker();
+        let mut context = std::task::Context::from_waker(&waker);
+        assert!(
+            std::future::Future::poll(install.as_mut(), &mut context).is_pending(),
+            "the install is genuinely parked at the client-guard await"
+        );
+        // The stop's marks land under the registry gate while the guard is
+        // held; the spawned stop parks on the client guard like the
+        // install.
         let stop_task = {
             let session = session.clone();
             tokio::spawn(async move { session.stop().await })
         };
-        // Give the stop a beat to mark and park on the client guard.
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        // Release: the parked install (and the stop's cleanup) proceed;
-        // the install REFUSES on the mark.
+        // Release: the install proceeds to the registry gate and REFUSES
+        // on the mark.
         drop(guard);
         tokio::time::timeout(Duration::from_secs(10), stop_task)
             .await
             .expect("the stop settles after the guard release")
             .unwrap()
             .expect("the stop completed honestly");
-        drop(events);
-        // No Connected past the boundary; the request refused.
+        let installed = tokio::time::timeout(Duration::from_millis(500), install)
+            .await
+            .expect("the install helper resolves after the release");
+        assert!(
+            installed.is_none(),
+            "the install REFUSED on the stop mark — no epoch, no install"
+        );
+        // The refused fresh connection is joined by the stop's settle.
+        let joined = fresh.join_tasks().await;
+        assert_eq!(joined, 2, "the fresh connection's tasks joined");
         assert_ne!(
             session.status().state,
             ConnectionState::Connected,
@@ -2399,10 +2314,19 @@ mod tests {
             })
             .await
             .unwrap_err();
-        assert!(
-            crate::daemon_client::is_command_not_sent(&error),
-            "unexpected: {error}"
-        );
+        assert!(crate::daemon_client::is_command_not_sent(&error), "unexpected: {error}");
+        drop(events);
+    }
+
+    /// A no-op waker for the pending poll receipt.
+    fn futures_noop_waker() -> std::task::Waker {
+        use std::sync::Arc;
+        use std::task::{Wake, Waker};
+        struct NoopWake;
+        impl Wake for NoopWake {
+            fn wake(self: Arc<Self>) {}
+        }
+        Waker::from(Arc::new(NoopWake))
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
