@@ -2023,16 +2023,16 @@ mod tests {
             }
         })
         .await;
-        assert!(delivered.is_ok(), "only the current-epoch outcome delivered");
+        assert!(
+            delivered.is_ok(),
+            "only the current-epoch outcome delivered"
+        );
         // Drain briefly: no second event may arrive (the suppressed pair
         // must stay silent, not merely ordered later).
         if let Ok(event) = tokio::time::timeout(Duration::from_millis(300), events.recv()).await {
             panic!("a stale outcome surfaced after the current one: {event:?}");
         }
-        session
-            .stop()
-            .await
-            .expect("the settle completed honestly");
+        session.stop().await.expect("the settle completed honestly");
     }
 
     #[tokio::test]
@@ -2066,7 +2066,10 @@ mod tests {
                     let envelope: Value = serde_json::from_str(line.trim()).unwrap();
                     let command = envelope["command"]["type"].as_str().unwrap_or_default();
                     let (success, data) = if command == "attach" {
-                        (true, json!({ "lastEventCursor": { "generation": "g", "sequence": 9 } }))
+                        (
+                            true,
+                            json!({ "lastEventCursor": { "generation": "g", "sequence": 9 } }),
+                        )
                     } else if command == "detach" {
                         refused.store(true, Ordering::SeqCst);
                         (false, Value::Null)
@@ -2125,10 +2128,7 @@ mod tests {
             Some(9),
             "the cursor is retained"
         );
-        session
-            .stop()
-            .await
-            .expect("the settle completed honestly");
+        session.stop().await.expect("the settle completed honestly");
     }
 
     #[allow(clippy::too_many_lines)]
@@ -2323,10 +2323,7 @@ mod tests {
             Some("gnew"),
             "the coherent capture holds the CURRENT client's adoption"
         );
-        session
-            .stop()
-            .await
-            .expect("the settle completed honestly");
+        session.stop().await.expect("the settle completed honestly");
     }
 
     #[tokio::test]
@@ -2397,7 +2394,10 @@ mod tests {
             })
             .await
             .unwrap_err();
-        assert!(crate::daemon_client::is_command_not_sent(&error), "unexpected: {error}");
+        assert!(
+            crate::daemon_client::is_command_not_sent(&error),
+            "unexpected: {error}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
