@@ -206,7 +206,7 @@ impl Inner {
     /// chain marked the connection (checked under the registry lock, so no
     /// late op can escape the drain), else spawns the worker onto the
     /// owned runtime and retains its handle in the registry.
-    fn spawn_tracked<F>(&self, worker: F) -> std::result::Result<(), ErrorPayload>
+    fn spawn_tracked<F>(&self, worker: F) -> std::result::Result<(), Box<ErrorPayload>>
     where
         F: std::future::Future<Output = ()> + Send + 'static,
     {
@@ -218,7 +218,7 @@ impl Inner {
         // does not retain one dead entry per completed operation.
         registry.retain(|handle| !handle.is_finished());
         if self.closed.load(Ordering::SeqCst) {
-            return Err(self.closed_refusal());
+            return Err(Box::new(self.closed_refusal()));
         }
         registry.push(bridge(worker));
         Ok(())
@@ -440,7 +440,7 @@ impl PrimeDaemonClient {
                 };
                 let _ = result_tx.send(outcome);
             })
-            .map_err(napi_error)?;
+            .map_err(|payload| napi_error(*payload))?;
         result_rx
             .await
             .map_err(|_| {
@@ -586,7 +586,7 @@ impl PrimeDaemonClient {
                 };
                 let _ = result_tx.send(outcome);
             })
-            .map_err(napi_error)?;
+            .map_err(|payload| napi_error(*payload))?;
         result_rx
             .await
             .map_err(|_| {
@@ -632,7 +632,7 @@ impl PrimeDaemonClient {
                 };
                 let _ = result_tx.send(outcome);
             })
-            .map_err(napi_error)?;
+            .map_err(|payload| napi_error(*payload))?;
         result_rx
             .await
             .map_err(|_| {
