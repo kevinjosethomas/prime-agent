@@ -228,7 +228,7 @@ pub(super) struct SessionScanAccumulator {
     last_activity_ms: Option<u64>,
     last_user_prompt_ms: Option<u64>,
     usage_scan: crate::session_usage::UsageScan,
-    /// The response-timing twin of usage_scan.
+    /// The response-timing twin of `usage_scan`.
     timing_scan: crate::session_timing::ResponseTimingScan,
 }
 

@@ -564,10 +564,10 @@ fn a_persisted_scan_state_resumes_like_the_full_fold() {
     fs::remove_dir_all(dir).unwrap();
 }
 
-/// responseTiming parity across warm resume (clone_for_resume), sidecar
-/// reload after drop_state, and cold whole-file rescan through the real
-/// read_session_info.
-/// Dropping the timing scan from clone_for_resume or the sidecar starves
+/// `responseTiming` parity across warm resume (`clone_for_resume`), sidecar
+/// reload after `drop_state`, and cold whole-file rescan through the real
+/// `read_session_info`.
+/// Dropping the timing scan from `clone_for_resume` or the sidecar starves
 /// the later rounds (red-first).
 #[cfg(unix)]
 #[test]
