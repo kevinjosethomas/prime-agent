@@ -409,10 +409,9 @@ mod tests {
 
     #[test]
     fn non_display_rows_render_nothing() {
-        // TS skips display=false rows everywhere (refinement
-        // notices, worker recovery are bookkeeping).
+        // TS skips display=false rows everywhere (worker
+        // recovery and like bookkeeping are examples).
         for custom_type in [
-            "refinement_notice",
             "prime-agent.worker_recovery",
             AGENT_MESSAGE_CUSTOM_TYPE,
         ] {
@@ -432,7 +431,6 @@ mod tests {
         // A stray display=true bookkeeping row falls through to the
         // generic box (in practice these persist with display=false).
         for custom_type in [
-            "refinement_notice",
             "prime-agent.worker_recovery",
             "ipython_state",
             "thread_goal_state",
