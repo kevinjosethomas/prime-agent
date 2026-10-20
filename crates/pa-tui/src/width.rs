@@ -465,15 +465,6 @@ pub(crate) fn wrapped_line_count(line: &Line, width: usize) -> usize {
     wrapping::count_line(line, width)
 }
 
-/// Count wrapping over borrowed span contents, preserving run boundaries.
-/// Newlines are not split, matching [`wrap_line`] rather than [`wrap_text`].
-pub(crate) fn wrapped_runs_count<'a>(
-    runs: impl IntoIterator<Item = &'a str>,
-    width: usize,
-) -> usize {
-    wrapping::count_runs(runs, width)
-}
-
 /// Exact row count of [`wrap_text`] without constructing output lines or spans.
 pub(crate) fn wrapped_text_count(text: &str, width: usize) -> usize {
     wrapping::count_text(text, width)

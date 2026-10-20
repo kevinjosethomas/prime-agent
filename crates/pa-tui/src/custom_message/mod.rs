@@ -41,7 +41,6 @@ use injected_prompt::injected_prompt_row;
 pub use injected_prompt::{InjectedPromptKind, InjectedPromptRow};
 
 use crate::chat::{ChatEntry, StatusKind};
-use crate::theme::ThemeColor;
 use serde_json::Value;
 
 /// Custom types with a dedicated component (pa-core owns the engine-side
@@ -400,6 +399,7 @@ pub(crate) fn custom_content_text(message: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::theme::ThemeColor;
     use crate::{Line, Span};
     use serde_json::json;
 

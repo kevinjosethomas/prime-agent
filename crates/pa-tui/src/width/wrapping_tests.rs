@@ -40,10 +40,6 @@ fn shared_wrap_matches_original_output_and_counts() {
                     "text {text:?}, width {width}"
                 );
                 assert_eq!(wrapped_line_count(&line, width), reference.len());
-                assert_eq!(
-                    wrapped_runs_count(line.iter().map(|span| span.content.as_str()), width),
-                    reference.len()
-                );
             }
             let reference_count: usize = text
                 .split('\n')
