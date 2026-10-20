@@ -38,9 +38,9 @@ impl AgentSessionEngine {
         let has_pending = {
             let guard = self.session.blocking_lock();
             match guard.as_deref() {
-                Some(engine) => self.runtime.block_on(async {
-                    engine.turn_boundary.compaction_scheduled().await
-                }),
+                Some(engine) => self
+                    .runtime
+                    .block_on(async { engine.turn_boundary.compaction_scheduled().await }),
                 None => false,
             }
         };
