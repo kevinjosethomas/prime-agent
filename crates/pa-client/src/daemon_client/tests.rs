@@ -2337,16 +2337,18 @@ async fn a_cancelled_connect_aborts_its_spawned_tasks() {
     // Drive the connect into its hello wait, then cancel the future: the
     // guard must abort the spawned tasks (the pre-fix code detached them,
     // and this write below would have buffered forever).
-    let connect = DaemonClient::connect_with_options(&socket, DaemonClientOptions::default());
-    tokio::pin!(connect);
+    let mut connect = Box::pin(DaemonClient::connect_with_options(
+        &socket,
+        DaemonClientOptions::default(),
+    ));
     assert!(
-        tokio::time::timeout(Duration::from_millis(500), &mut connect)
+        tokio::time::timeout(Duration::from_millis(500), &mut *connect)
             .await
             .is_err(),
         "the never-greeting daemon keeps the connect pending"
     );
-    // Drop the owned connect future NOW (a select arm drops it in the
-    // driver; a binding would keep the socket halves alive here).
+    // Drop the OWNED connect future NOW (a select arm drops it in the
+    // driver; a pinned binding would keep the socket halves alive here).
     drop(connect);
     tokio::time::timeout(Duration::from_secs(5), async {
         while !(read_ended.load(std::sync::atomic::Ordering::SeqCst)
