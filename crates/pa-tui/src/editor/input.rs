@@ -135,6 +135,16 @@ impl Editor {
             return;
         }
 
+        // An edit can park a refresh while the previous menu is still visible.
+        // Resolve it before accepting, so a stale slash-name item cannot
+        // overwrite arguments typed since the last idle tick.
+        if self.autocomplete.is_some()
+            && self.pending_autocomplete.is_some()
+            && (self.kb_matches(input, "tui.input.tab")
+                || self.kb_matches(input, "tui.select.confirm"))
+        {
+            self.materialize_autocomplete();
+        }
         if self.autocomplete.is_some() {
             if self.kb_matches(input, "tui.select.cancel") {
                 self.cancel_autocomplete();
@@ -415,6 +425,37 @@ mod tests {
             .iter()
             .any(|event| matches!(event, EditorEvent::Submitted(_))));
         assert_eq!(e.get_text(), "/goal ");
+    }
+
+    #[test]
+    fn stale_slash_menu_does_not_overwrite_new_prompt_arguments() {
+        let mut e = ed();
+        for ch in "/ne".chars() {
+            e.handle_input(&ch.to_string());
+        }
+        e.materialize_autocomplete();
+        assert!(e.is_showing_autocomplete());
+        let command = "/new --name \"Fresh session\" -- Keep this complete prompt";
+        for ch in command[3..].chars() {
+            e.handle_input(&ch.to_string());
+        }
+        assert!(
+            e.is_showing_autocomplete(),
+            "previous menu remains until refresh"
+        );
+        assert!(e.has_pending_autocomplete());
+        assert_eq!(e.get_text(), command);
+        e.handle_input("enter");
+        let submitted = e
+            .take_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                EditorEvent::Submitted(text) => Some(text),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(submitted, vec![command]);
+        assert_eq!(e.get_text(), "");
     }
 
     /// A typed ZWJ family sequence lands in the buffer byte-exact: one key

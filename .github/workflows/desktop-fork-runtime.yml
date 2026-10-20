@@ -111,6 +111,7 @@ jobs:
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-ai --lib providers::anthropic
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib restore_child
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib bounded_idle_wait
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-tui --lib editor::input::tests
       - name: Verify native desktop auth broker and reused login flows
         run: |
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-cli --lib auth_json

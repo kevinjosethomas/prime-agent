@@ -27,3 +27,4 @@ jobs:
       - run: cargo test --locked -p pa-ai --lib providers::anthropic
       - run: cargo test --locked -p pa-daemon --lib restore_child
       - run: cargo test --locked -p pa-daemon --lib bounded_idle_wait
+      - run: cargo test --locked -p pa-tui --lib editor::input::tests
