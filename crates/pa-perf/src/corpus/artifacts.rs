@@ -49,7 +49,6 @@ const EMPTY_PICKLE: &[u8] = b"\x80\x04}\x94.";
 pub(crate) fn write_artifact_dir(
     dir: &Path,
     session_id: &str,
-    seed_text: &str,
     rng: &mut Rng,
 ) -> anyhow::Result<()> {
     std::fs::create_dir_all(dir)?;
@@ -142,7 +141,6 @@ pub(crate) fn spawn_child(
                     .join("session-artifacts")
                     .join(&child_session_id),
                 &child_session_id,
-                &child_session_id,
                 rng,
             )?;
         }
@@ -175,13 +173,8 @@ mod tests {
     #[test]
     fn generated_kernel_snapshot_unpickles_to_an_empty_dictionary() {
         let directory = tempfile::tempdir().expect("artifact directory");
-        super::write_artifact_dir(
-            directory.path(),
-            "session",
-            "seed",
-            &mut crate::rng::Rng::new(7),
-        )
-        .expect("write real artifact partition");
+        super::write_artifact_dir(directory.path(), "session", &mut crate::rng::Rng::new(7))
+            .expect("write real artifact partition");
         let output = std::process::Command::new("python3")
             .arg("-c")
             .arg("import pickle,sys; value=pickle.load(open(sys.argv[1],'rb')); assert type(value) is dict and not value")
