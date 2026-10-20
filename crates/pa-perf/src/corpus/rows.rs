@@ -335,8 +335,6 @@ pub(crate) fn write_session_file(
                     from_hook: Some(false),
                     custom_instructions: None,
                     usage: Some(usage(rng)),
-                    harness_digest: None,
-                    harness_state_fingerprint: None,
                 })?,
                 rng,
             )?;

@@ -26,11 +26,7 @@ pub(crate) fn without_refinements(messages: Vec<AgentMessage>) -> Vec<AgentMessa
             {
                 None
             }
-            AgentMessage::CompactionSummary(mut summary) => {
-                summary.harness_digest = None;
-                summary.harness_state_fingerprint = None;
-                Some(AgentMessage::CompactionSummary(summary))
-            }
+            message @ AgentMessage::CompactionSummary(_) => Some(message),
             message @ (AgentMessage::User(_)
             | AgentMessage::Assistant(_)
             | AgentMessage::ToolResult(_)
@@ -93,17 +89,27 @@ mod tests {
         })
     }
 
+    fn saved_notice_row() -> AgentMessage {
+        AgentMessage::Custom(pa_types::session::CustomMessage {
+            custom_type: "refinement_notice".to_string(),
+            content: UserContent::Text("saved memory".to_string()),
+            display: false,
+            details: None,
+            timestamp: 0,
+            rest: serde_json::Map::default(),
+        })
+    }
+
     #[tokio::test]
     async fn live_request_gate_filters_saved_rows_and_preserves_quoted_user_content() {
         let tmp = tempfile::tempdir().unwrap();
         let mut settings = SettingsManager::create(tmp.path(), tmp.path().join("agent"));
         let convert = convert_to_llm(settings.reopen());
-        let digest =
-            super::super::harness_digest::harness_digest_prompt_row("saved memory", 1, "fp");
+        let notice = saved_notice_row();
         let quote =
-            super::super::session_message_to_loop(&user("[harness-digest] quoted user content"))
+            super::super::session_message_to_loop(&user("[refinement-notice] quoted user content"))
                 .unwrap();
-        let messages = vec![digest.clone(), quote.clone()];
+        let messages = vec![notice.clone(), quote.clone()];
         assert_eq!(convert(messages.clone()).await.unwrap().len(), 2);
         settings.set_harness_refinements(false).unwrap();
         let expected = super::super::messages::loop_convert_to_llm(vec![quote]);
@@ -163,7 +169,7 @@ mod tests {
             if resumed {
                 manager
                     .append_custom_message(
-                        "harness_digest",
+                        "refinement_notice",
                         UserContent::Text("saved memory".to_string()),
                         false,
                         None,
@@ -185,13 +191,6 @@ mod tests {
                 })
                 .await
                 .unwrap();
-            assert!(engine.session.harness_digest_inputs().await.is_none());
-            assert!(engine
-                .session
-                .pending_digest_prompt_row()
-                .await
-                .unwrap()
-                .is_none());
             let live = engine.session.agent().state().await.messages;
             assert_eq!(
                 super::super::messages::loop_convert_to_llm(live).len(),
@@ -199,55 +198,27 @@ mod tests {
             );
             // Re-enable without a reload (the busy-session case): the next admission loads state.
             settings.set_harness_refinements(true).unwrap();
-            assert!(engine
-                .session
-                .pending_digest_prompt_row()
-                .await
-                .unwrap()
-                .is_some());
-            settings.set_harness_refinements(false).unwrap();
-            assert!(engine
-                .session
-                .pending_digest_prompt_row()
-                .await
-                .unwrap()
-                .is_none());
-            settings.set_harness_refinements(true).unwrap();
-            assert!(
-                engine
-                    .session
-                    .pending_digest_prompt_row()
-                    .await
-                    .unwrap()
-                    .is_none(),
-                "a consumed digest must not be re-armed by disabling and enabling"
-            );
             settings.set_harness_refinements(false).unwrap();
             // The history remains inspectable even though it is absent from model context.
             if resumed {
                 assert!(engine.session.entries().await.iter().any(|entry| matches!(entry,
-                    pa_types::session::FileEntry::CustomMessage { payload, .. } if payload.custom_type == "harness_digest")));
+                    pa_types::session::FileEntry::CustomMessage { payload, .. } if payload.custom_type == "refinement_notice")));
             }
         }
     }
 
     #[test]
-    fn disabled_context_removes_compaction_digest_but_keeps_the_summary() {
+    fn disabled_context_keeps_the_compaction_summary() {
         let summary = pa_types::session::CompactionSummaryMessage {
             summary: "Earlier decisions still apply".to_string(),
             tokens_before: 10,
             retained_message_count: None,
             custom_instructions: None,
-            harness_digest: Some("saved memory".to_string()),
-            harness_state_fingerprint: Some("fp".to_string()),
             timestamp: 0,
         };
-        let mut expected = summary.clone();
-        expected.harness_digest = None;
-        expected.harness_state_fingerprint = None;
         assert_eq!(
-            without_refinements(vec![AgentMessage::CompactionSummary(summary)]),
-            vec![AgentMessage::CompactionSummary(expected)]
+            without_refinements(vec![AgentMessage::CompactionSummary(summary.clone())]),
+            vec![AgentMessage::CompactionSummary(summary)]
         );
     }
 }

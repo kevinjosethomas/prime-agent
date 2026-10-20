@@ -371,7 +371,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             config
                 .conversation_log_path
                 .as_deref()
-                .and_then(super::harness_digest::session_artifact_dir_for_log)
+                .and_then(super::session_artifact_dir_for_log)
         });
     let local_harness_dir =
         crate::refinement::get_local_harness_state_dir(session_artifact_dir.as_deref());
@@ -555,23 +555,10 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         prompt_vision_capable,
     );
 
-    // Captured before the digest context moves the local harness dir and
-    // the loop wiring moves the session model: the factory host bridge's
-    // config (the #3184 capture pattern).
+    // Captured before the loop wiring moves the session model: the
+    // factory host bridge's config (the #3184 capture pattern).
     let factory_local_harness_dir = local_harness_dir.clone();
     let factory_session_model = Some(model.clone());
-    // Harness digest inputs: global state from the agent dir, local state
-    // from the session artifacts (or the daemon-owned conversation log), and
-    // the interfaces the digest may reference.
-    let digest_context = super::harness_digest::HarnessDigestContext {
-        global_dir: crate::refinement::get_global_harness_state_dir(&config.agent_dir),
-        local_dir: local_harness_dir,
-        include_ipython: active_tool_names
-            .iter()
-            .any(|name| name == PYTHON_TOOL_NAME),
-        include_shell_examples: active_tool_names.iter().any(|name| name == "bash"),
-        include_refine: false,
-    };
     let (existing_messages, has_thinking_entry, has_service_tier_entry) = {
         let session = wiring.session.lock().await;
         let messages = super::compact_session::rebuilt_context_after_compaction(&session);
@@ -648,7 +635,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         stream_fn: Some(agent_stream_fn),
         // The session conversion rules apply at the loop's LLM boundary
         // (TS `convertToLlm`): bookkeeping custom rows drop, everything
-        // else (the harness digest included) becomes a user turn.
+        // else becomes a user turn.
         convert_to_llm: Some(super::request_timing::instrument_convert_to_llm(
             std::sync::Arc::clone(&request_timing_wiring),
             super::refinement_gate::convert_to_llm(refinement_settings.reopen()),
@@ -701,23 +688,12 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         agent.clone(),
         wiring.session.clone(),
         resources.prompts.clone(),
-        super::refinement_gate::enabled(Some(&refinement_settings))
-            .then_some(digest_context.clone()),
     )
     .await?;
     session.prompt_sources = Some(prompt_sources);
     *session.pinned_prompt.write().unwrap() = Some(system_prompt.clone());
     session.set_agent_dir(config.agent_dir.clone());
-    // Keep the context descriptor even while disabled, so re-enabling can load it.
-    session.harness_digest = Some(digest_context);
     session.refinement_settings = Some(refinement_settings);
-    // A disabled startup has never delivered its filtered digest. Defer that
-    // first delivery without re-arming digests already consumed in a live session.
-    if !session.harness_refinements_enabled() {
-        session
-            .digest_pending
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-    }
     // Every compaction path reads the session's resolved compaction
     // settings (TS `getCompactionSettings`): `/compact` matches the
     // `compact.*` turn-boundary tool's `keepRecentTokens`/`reserveTokens`.
@@ -828,8 +804,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // pattern), so the daemon/TUI factory surface resolves against this
     // session's harness dirs, model registry, and the allowlist pin. The
     // kernel owns the runs; the bridge prefights and tunnels. Captured
-    // before the loop wiring moves the session model and the digest moves
-    // the local harness dir.
+    // before the loop wiring moves the session model.
     let factory_host =
         super::factory_host::FactoryHost::new(super::factory_host::FactoryHostConfig {
             agent_dir: config.agent_dir.clone(),

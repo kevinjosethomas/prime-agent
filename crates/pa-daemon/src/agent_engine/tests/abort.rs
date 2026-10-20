@@ -316,21 +316,16 @@ fn settled_turn_emits_the_run_agent_end_payload() {
         .collect::<Vec<&str>>();
     assert_eq!(
         roles,
-        ["custom", "user", "assistant"],
-        "the run's message set (the deferred harness digest rides first)"
+        ["user", "assistant"],
+        "the run's message set"
     );
     assert_eq!(
-        messages[0]["customType"],
-        json!("harness_digest"),
-        "the deferred digest row is the run's first message"
-    );
-    assert_eq!(
-        messages[1]["content"],
+        messages[0]["content"],
         json!([{ "type": "text", "text": "plain turn" }]),
         "the accepted user row rides the payload"
     );
     assert_eq!(
-        messages[2]["content"],
+        messages[1]["content"],
         json!([{ "type": "text", "text": "settled reply" }]),
         "the settled assistant row rides the payload"
     );
@@ -407,11 +402,11 @@ fn retried_run_restarts_with_its_own_agent_frames() {
         .collect::<Vec<&str>>();
     assert_eq!(
         roles,
-        ["custom", "user", "assistant"],
-        "the failed run's message set (the digest row rides first)"
+        ["user", "assistant"],
+        "the failed run's message set"
     );
     assert_eq!(
-        first[2]["stopReason"],
+        first[1]["stopReason"],
         json!("error"),
         "the failed run ends on the error row"
     );

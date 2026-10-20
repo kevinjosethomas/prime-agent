@@ -16,7 +16,6 @@ pub mod error_classify;
 pub mod factory_host;
 pub mod goal_boundary;
 pub mod goal_driver;
-pub mod harness_digest;
 pub mod headless;
 pub mod host_requests;
 pub mod image_model_routing;
@@ -123,11 +122,6 @@ pub struct AgentSession {
     session: Arc<tokio::sync::Mutex<SessionManager>>,
     prompt_templates: Vec<PromptTemplate>,
     slash_commands: SlashCommandRegistry,
-    /// Harness digest inputs; `None` without harness state.
-    harness_digest: Option<harness_digest::HarnessDigestContext>,
-    /// Fresh sessions defer the first-turn digest so untouched sessions
-    /// stay empty.
-    digest_pending: std::sync::atomic::AtomicBool,
     /// Compaction settings; defaults until the engine wiring resolves
     /// them.
     compaction: std::sync::RwLock<compaction::CompactionSettings>,
@@ -192,13 +186,8 @@ impl AgentSession {
         session: SessionManager,
         prompt_templates: Vec<PromptTemplate>,
     ) -> anyhow::Result<Self> {
-        Self::from_session_arc(
-            agent,
-            Arc::new(tokio::sync::Mutex::new(session)),
-            prompt_templates,
-            None,
-        )
-        .await
+        Self::from_session_arc(agent, Arc::new(tokio::sync::Mutex::new(session)), prompt_templates)
+            .await
     }
 
     /// Build a session from an already-shared session manager handle, so the
@@ -213,7 +202,6 @@ impl AgentSession {
         agent: Arc<Agent>,
         session: Arc<tokio::sync::Mutex<SessionManager>>,
         prompt_templates: Vec<PromptTemplate>,
-        harness_digest: Option<harness_digest::HarnessDigestContext>,
     ) -> anyhow::Result<Self> {
         let persistence = session.clone();
         agent
@@ -230,8 +218,6 @@ impl AgentSession {
             session,
             prompt_templates,
             slash_commands: SlashCommandRegistry::builtin(),
-            harness_digest,
-            digest_pending: std::sync::atomic::AtomicBool::new(false),
             compaction: std::sync::RwLock::new(compaction::CompactionSettings::default()),
             auxiliary_model: None,
             refinement_settings: None,
@@ -249,7 +235,6 @@ impl AgentSession {
             prompt_guidelines: std::sync::RwLock::new(None),
             compaction_flight: tokio::sync::Mutex::new(()),
         };
-        this.ensure_harness_digest_context().await?;
         Ok(this)
     }
 
@@ -501,6 +486,16 @@ pub fn rebuilt_loop_messages(rebuilt: Vec<SessionAgentMessage>) -> Vec<AgentMess
         .into_iter()
         .filter_map(|message| session_message_to_loop(&message))
         .collect()
+}
+
+/// Session-artifact directory implied by a conversation-log path (the
+/// `session-artifacts/<id>` sibling tree). Shared by the engine's
+/// session-local resolution and the daemon's semantic-edge identity.
+#[must_use]
+pub fn session_artifact_dir_for_log(log: &std::path::Path) -> Option<std::path::PathBuf> {
+    let id = log.file_stem()?.to_string_lossy().to_string();
+    let artifacts_root = log.parent()?.parent()?.join("session-artifacts");
+    Some(artifacts_root.join(id))
 }
 
 fn now_millis() -> u64 {

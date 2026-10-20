@@ -464,8 +464,6 @@ mod tests {
             from_hook: Some(false),
             custom_instructions: None,
             usage: result.usage,
-            harness_digest: None,
-            harness_state_fingerprint: None,
         };
         // The TS `compact` response dataKeys (the live golden,
         // `tests/goldens/compaction-live-ts.json`): summary,

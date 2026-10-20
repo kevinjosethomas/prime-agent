@@ -16,7 +16,7 @@
 //! The dispatch follows the TS live path
 //! (`createDisplayedCustomMessageComponent`): non-display rows render
 //! nothing, every displayed type without a dedicated component (engine
-//! bookkeeping like `harness_digest`, unknown types) renders the generic
+//! bookkeeping, unknown types) renders the generic
 //! `[<customType>]` panel. (The TS replay path `buildConversationComponents`
 //! drops unknown types instead; the live interactive path is the TUI ground
 //! truth, and the Rust engine persists those types with `display: false`.)
@@ -229,8 +229,8 @@ pub fn custom_message_entries(message: &Value) -> Vec<ChatEntry> {
                 message, details,
             )))]
         }
-        // Everything else - engine bookkeeping (`harness_digest`,
-        // `refinement_notice`, worker recovery) and unknown types - renders
+        // Everything else - engine bookkeeping (`refinement_notice`,
+        // worker recovery) and unknown types - renders
         // the generic panel, exactly like the TS live dispatch fallthrough
         // (those types persist with `display: false` and render nothing).
         _ => vec![generic_panel_entry(custom_type, message)],
@@ -450,10 +450,9 @@ mod tests {
 
     #[test]
     fn non_display_rows_render_nothing() {
-        // TS skips display=false rows everywhere (harness digests,
-        // refinement notices, worker recovery are bookkeeping).
+        // TS skips display=false rows everywhere (refinement
+        // notices, worker recovery are bookkeeping).
         for custom_type in [
-            "harness_digest",
             "refinement_notice",
             "prime-agent.worker_recovery",
             AGENT_MESSAGE_CUSTOM_TYPE,
@@ -474,7 +473,6 @@ mod tests {
         // A stray display=true bookkeeping row falls through to the
         // generic box (in practice these persist with display=false).
         for custom_type in [
-            "harness_digest",
             "refinement_notice",
             "prime-agent.worker_recovery",
             "ipython_state",
