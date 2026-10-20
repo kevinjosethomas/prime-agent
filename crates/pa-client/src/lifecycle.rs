@@ -1189,6 +1189,8 @@ mod tests {
                     }
                 }
                 // Connection 2: the held restore and the streamed frame.
+                // The attach response is HELD (a pending slot + the release
+                // signal) while every other command flows immediately.
                 let (stream, _) = listener.accept().await.expect("accept two");
                 let (reader, mut writer) = stream.into_split();
                 let mut reader = tokio::io::BufReader::new(reader);
@@ -1206,33 +1208,52 @@ mod tests {
                     .write_all(format!("{event}\n").as_bytes())
                     .await
                     .unwrap();
+                let mut pending_attach: Option<Value> = None;
                 loop {
                     line.clear();
-                    if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
-                        break;
+                    tokio::select! {
+                        read = reader.read_line(&mut line) => {
+                            if read.unwrap_or(0) == 0 {
+                                break;
+                            }
+                            let envelope: Value =
+                                serde_json::from_str(line.trim()).unwrap();
+                            let command =
+                                envelope["command"]["type"].as_str().unwrap_or_default();
+                            if command == "attach" {
+                                pending_attach = Some(envelope);
+                            } else {
+                                let response = json!({
+                                    "type": "response",
+                                    "id": envelope["id"],
+                                    "command": command,
+                                    "success": true,
+                                    "data": { "ok": true },
+                                });
+                                writer
+                                    .write_all(format!("{response}\n").as_bytes())
+                                    .await
+                                    .unwrap();
+                            }
+                        }
+                        () = release_second.notified() => {
+                            if let Some(envelope) = pending_attach.take() {
+                                let response = json!({
+                                    "type": "response",
+                                    "id": envelope["id"],
+                                    "command": "attach",
+                                    "success": true,
+                                    "data": {
+                                        "lastEventCursor": { "generation": "g", "sequence": 6 }
+                                    },
+                                });
+                                writer
+                                    .write_all(format!("{response}\n").as_bytes())
+                                    .await
+                                    .unwrap();
+                            }
+                        }
                     }
-                    let envelope: Value = serde_json::from_str(line.trim()).unwrap();
-                    let command = envelope["command"]["type"].as_str().unwrap_or_default();
-                    if command == "attach" {
-                        // The held restore.
-                        release_second.notified().await;
-                    }
-                    let data = if command == "attach" {
-                        json!({ "lastEventCursor": { "generation": "g", "sequence": 6 } })
-                    } else {
-                        json!({ "ok": true })
-                    };
-                    let response = json!({
-                        "type": "response",
-                        "id": envelope["id"],
-                        "command": command,
-                        "success": true,
-                        "data": data,
-                    });
-                    writer
-                    .write_all(format!("{response}\n").as_bytes())
-                    .await
-                    .unwrap();
                 }
             });
         }
