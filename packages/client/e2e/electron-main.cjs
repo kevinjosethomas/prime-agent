@@ -48,11 +48,58 @@ async function main() {
   await stopFlood();
   await stopEcho();
 
+  // The natural-exit proofs run as ELECTRON_RUN_AS_NODE children spawned
+  // from the Electron host: each child exits with NO app.quit and NO
+  // process.exit - the addon releasing the Node loop is the exit proof.
+  // The host itself ends through the app lifecycle (app.quit only here).
+  const { spawn } = require('node:child_process');
+  const { join } = require('node:path');
+  const childScript = (kind) => `
+    globalThis.gc?.();
+    const { DaemonConnection } = await import(${JSON.stringify(pathToFileURL(join(__dirname, '..', 'dist', 'index.js')).href)});
+    const { startMock, tmpSocket } = await import(${JSON.stringify(pathToFileURL(join(__dirname, '..', 'tests', 'helpers.mjs')).href)});
+    const socketPath = tmpSocket('electron-${kind}');
+    const stop = await startMock(socketPath, 'echo');
+    ${
+      kind === 'close'
+        ? `const connection = await DaemonConnection.connect(socketPath);
+           await connection.request({ type: 'get_connection_state', activeSessionId: 'wire' });
+           await connection.close();`
+        : `{
+             const connection = await DaemonConnection.connect(socketPath);
+             await connection.request({ type: 'get_connection_state', activeSessionId: 'wire' });
+           }
+           globalThis.gc();`
+    }
+    await stop();
+  `;
+  const runChild = (kind) =>
+    new Promise((resolve) => {
+      const child = spawn(
+        process.execPath,
+        ['--expose-gc', '--input-type=module', '--eval', childScript(kind)],
+        { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['ignore', 'inherit', 'inherit'] },
+      );
+      const guard = setTimeout(() => {
+        child.kill('SIGKILL');
+        resolve('timeout');
+      }, 30000);
+      child.on('exit', (code) => {
+        clearTimeout(guard);
+        resolve(code);
+      });
+    });
+  const closeExit = await runChild('close');
+  const gcExit = await runChild('gc');
   console.log(
     'ELECTRON_MAIN_PROTOCOL_OK',
     process.versions.electron,
     'napi',
     process.versions.napi,
+    'child-exit-code',
+    closeExit,
+    'gc-exit-code',
+    gcExit,
   );
   app.quit();
 }

@@ -14,7 +14,7 @@ const gitHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root })
   .toString()
   .trim();
 const schemaLine = readFileSync(
-  `${root}/../crates/pa-types/src/daemon/mod.rs`,
+  `${root}/../../crates/pa-types/src/daemon/mod.rs`,
   'utf8',
 )
   .split('\n')

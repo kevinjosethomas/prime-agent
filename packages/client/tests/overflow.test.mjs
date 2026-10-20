@@ -34,6 +34,23 @@ test('a full frame queue tears the connection down with a sticky Overflow', asyn
   await stop();
 });
 
+test('a PARKED nextFrame pull observes the sticky overflow branch', async () => {
+  const socketPath = tmpSocket('overflow-parked');
+  const stop = await startMock(socketPath, 'flood');
+  // frameBuffer 1: the parked pull takes the one queued frame, then parks
+  // awaiting more; the flood keeps coming and the queue refuses - the
+  // PARKED pull (not a fresh one) must reject with the terminal Overflow.
+  const connection = await DaemonConnection.connect(socketPath, { frameBuffer: 1 });
+  await connection.nextFrame();
+  const parked = connection.nextFrame();
+  await assert.rejects(parked, (error) => error instanceof OverflowError);
+  // Sticky thereafter.
+  await assert.rejects(connection.nextFrame(), (error) => error instanceof OverflowError);
+  assert.equal(connection.currentStatus().type, 'overflow');
+  connection.close();
+  await stop();
+});
+
 test('in-flight requests at overflow stay Uncertain with cause overflow', async () => {
   const socketPath = tmpSocket('overflow-inflight');
   const stop = await startMock(socketPath, 'flood');
