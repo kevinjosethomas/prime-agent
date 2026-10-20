@@ -1,7 +1,7 @@
 name: Codex stream inactivity regression
 on:
   push:
-    branches: [fix/codex-stream-idle-deadline]
+    branches: [fix/codex-stream-idle-deadline, fix/restore-completed-child-safeguards]
   workflow_dispatch:
 permissions:
   contents: read
@@ -24,3 +24,6 @@ jobs:
       - run: cargo test --locked -p pa-daemon --lib human_follow_up_runs_before_background
       - run: cargo test --locked -p pa-daemon --lib queue_priority
       - run: cargo test --locked -p pa-daemon --lib update_snapshot
+      - run: cargo test --locked -p pa-ai --lib providers::anthropic
+      - run: cargo test --locked -p pa-daemon --lib restore_child
+      - run: cargo test --locked -p pa-daemon --lib bounded_idle_wait

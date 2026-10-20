@@ -1,7 +1,7 @@
 name: Desktop fork runtime
 on:
   push:
-    branches: [feat/root-desktop-runtime, primer/runtime-followups-candidate, primer/runtime-prompt-metadata, primer/native-release-integration]
+    branches: [feat/root-desktop-runtime, primer/runtime-followups-candidate, primer/runtime-prompt-metadata, primer/native-release-integration, fix/restore-completed-child-safeguards]
   workflow_dispatch:
 permissions:
   contents: read
@@ -106,6 +106,11 @@ jobs:
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib queue_priority
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib update_restore
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib update_restart
+      - name: Verify image, observer and child restoration safeguards
+        run: |
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-ai --lib providers::anthropic
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib restore_child
+          cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib bounded_idle_wait
       - name: Verify native desktop auth broker and reused login flows
         run: |
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-cli --lib auth_json

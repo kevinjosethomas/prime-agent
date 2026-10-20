@@ -400,7 +400,17 @@ impl Supervisor {
         // Update boot (spec §6): consume the roster from the spawn env BEFORE the sweep deletes
         // the file it points at, then run the restore + re-arm pass concurrently with serving —
         // reconnecting clients must see the resume contract (§10.3).
-        let roster = crate::update_restore::consume_roster_env();
+        let mut roster = crate::update_restore::consume_roster_env();
+        let passive_workers = roster
+            .as_mut()
+            .map(crate::update_restore::prepare_roster)
+            .unwrap_or_default();
+        if !passive_workers.is_empty() {
+            self.log_line(&format!(
+                "update restore: {} completed idle child workers stay passive",
+                passive_workers.len()
+            ));
+        }
         self.restore.begin(roster.as_ref());
         crate::update_restore::boot_sweep(&self.options.agent_dir, &self.options.socket_path);
         // Descriptor adoption runs concurrently with the accept loop: a
@@ -419,6 +429,7 @@ impl Supervisor {
             let supervisor = Arc::clone(&self);
             let boot = match roster.as_ref() {
                 Some(roster) => AdoptionBoot::UpdateRoster {
+                    passive: Arc::new(passive_workers),
                     kept: Arc::new(
                         roster
                             .workers
@@ -535,3 +546,6 @@ pub async fn run_supervisor(options: SupervisorOptions) -> Result<()> {
     let supervisor = Arc::new(Supervisor::new(options)?);
     supervisor.run().await
 }
+
+#[cfg(test)]
+mod restore_admission_tests;

@@ -598,6 +598,25 @@ impl Worker {
     /// (the parent-side settle watcher and `collect` wait out a child's
     /// whole subtree this way).
     pub(crate) async fn handle_wait_for_idle(&self, payload: &Value) -> DaemonResponse {
+        if let Some(timeout) = payload.get("timeoutMs") {
+            let Some(timeout_ms) = timeout.as_u64() else {
+                return response_failure(
+                    None,
+                    "wait_for_idle",
+                    "timeoutMs must be a non-negative integer",
+                    None,
+                );
+            };
+            // Observation expiry releases the waiter only. It neither aborts the live
+            // turn nor delivers queued work, and never reports a busy session as idle.
+            let idle = tokio::time::timeout(
+                std::time::Duration::from_millis(timeout_ms.min(24 * 60 * 60 * 1_000)),
+                self.wait_until_quiescent(payload),
+            )
+            .await
+            .is_ok();
+            return response_success(None, "wait_for_idle", Some(json!({ "idle": idle })));
+        }
         self.wait_until_quiescent(payload).await;
         response_success(None, "wait_for_idle", None)
     }

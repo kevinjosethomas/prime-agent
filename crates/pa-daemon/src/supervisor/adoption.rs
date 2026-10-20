@@ -53,6 +53,7 @@ pub(super) enum AdoptionBoot {
     /// pass; busy-at-crash workers revive too. The kept set is shared (an `Arc`).
     UpdateRoster {
         kept: Arc<std::collections::HashSet<String>>,
+        passive: Arc<std::collections::HashSet<String>>,
     },
     /// Plain startup: only journal-proven live work revives.
     PlainStartup,
@@ -295,13 +296,17 @@ impl Supervisor {
             // so the boot reap needs the same positive owner-death evidence
             // the tombstone probes use (TS `recoverWorker` runs its orphan
             // sweep only once the recorded process identity is gone).
+            if matches!(&boot, AdoptionBoot::UpdateRoster { passive, .. } if passive.contains(&worker_id))
+            {
+                return AdoptionOutcome::SkippedIdle;
+            }
             if self.recorded_worker_is_gone(&resident).await {
                 self.reap_dead_worker_orphans(&resident).await;
             }
             let interrupted =
                 crate::journal::WorkerRecoveryJournal::read_interrupted(&journal_path);
             let kept = match &boot {
-                AdoptionBoot::UpdateRoster { kept } => kept.contains(&worker_id),
+                AdoptionBoot::UpdateRoster { kept, .. } => kept.contains(&worker_id),
                 AdoptionBoot::PlainStartup => false,
             };
             if !interrupted && !kept {
@@ -765,6 +770,28 @@ impl Supervisor {
                 str::to_string,
             );
         let ledger = self.rlm_spawn_ledger_for(None).await?;
+        let edges = ledger.edges(/*include_deleted*/ true)?;
+        if edges.iter().any(|edge| {
+            crate::lease::canonical_session_path(Path::new(&edge.child))
+                == crate::lease::canonical_session_path(Path::new(child))
+        }) {
+            let edge = crate::update_restore::verified_edge(
+                &edges,
+                Path::new(child),
+                Some(&child_id),
+                depth,
+            )?;
+            if crate::lease::canonical_session_path(Path::new(parent))
+                != crate::lease::canonical_session_path(Path::new(&edge.parent))
+            {
+                return Err(anyhow!(
+                    "existing child admission has a different ledger parent"
+                ));
+            }
+            // An existing edge is a reopen/retry, never a new spawn. Its display status,
+            // original timestamps and optional metadata must survive byte-for-byte.
+            return Ok(());
+        }
         ledger
             .append_spawn(&crate::rlm_ledger::RlmSpawnInput {
                 child_id: child_id.clone(),

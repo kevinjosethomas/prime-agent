@@ -65,6 +65,74 @@ mod tests {
     use crate::supervisor::{Supervisor, SupervisorOptions};
     use pa_types::daemon::{DaemonErrorInfo, DaemonWorkerDescriptor};
 
+    #[test]
+    fn bounded_idle_wait_uses_the_observers_budget_instead_of_a_day() {
+        let command: pa_types::daemon::DaemonCommand = serde_json::from_value(
+            serde_json::json!({"type":"wait_for_idle", "activeSessionId":"busy", "timeoutMs":10}),
+        )
+        .unwrap();
+        assert_eq!(
+            super::super::supervisor::client_route_timeout(&command),
+            5_010
+        );
+        let legacy: pa_types::daemon::DaemonCommand = serde_json::from_value(
+            serde_json::json!({"type":"wait_for_idle", "activeSessionId":"busy"}),
+        )
+        .unwrap();
+        assert_eq!(
+            super::super::supervisor::client_route_timeout(&legacy),
+            86_400_000
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn bounded_idle_wait_repeated_expiry_releases_request_slots() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let supervisor = supervisor(dir.path());
+        let resident = resident("w-observed");
+        let (_cmd_tx, mut cmd_rx) = wedged_worker(&resident).await;
+        let command: pa_types::daemon::DaemonCommand = serde_json::from_value(
+            serde_json::json!({"type":"wait_for_idle", "activeSessionId":"busy", "timeoutMs":1}),
+        )
+        .unwrap();
+        for _ in 0..WORKER_INFLIGHT_CAPACITY * 2 {
+            let start = tokio::time::Instant::now();
+            let result = supervisor
+                .route_command_typed(
+                    &resident,
+                    "wait_for_idle",
+                    serde_json::json!({"timeoutMs":1}),
+                    super::super::supervisor::client_route_timeout(&command),
+                    RouteAdmission::ClientRequest,
+                )
+                .await;
+            assert_eq!(result.unwrap_err().to_string(), "Session worker timed out");
+            assert!(start.elapsed() <= std::time::Duration::from_millis(5_001));
+            assert_eq!(
+                resident.inflight.available_permits(),
+                WORKER_INFLIGHT_CAPACITY
+            );
+            assert!(resident.pending.lock().await.is_empty());
+            cmd_rx
+                .try_recv()
+                .expect("the request reached the silent worker");
+        }
+        let read = supervisor
+            .route_command_typed(
+                &resident,
+                "get_state",
+                serde_json::json!({}),
+                1,
+                RouteAdmission::ClientRequest,
+            )
+            .await;
+        assert_eq!(
+            read.unwrap_err().to_string(),
+            "Session worker timed out",
+            "control reads remain admitted instead of being refused as overloaded"
+        );
+    }
+
     fn resident(worker_id: &str) -> Arc<ResidentWorker> {
         let descriptor: DaemonWorkerDescriptor = serde_json::from_value(serde_json::json!({
             "version": 2,

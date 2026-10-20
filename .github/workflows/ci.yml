@@ -73,7 +73,7 @@ name: ci
 
 on:
   push:
-    branches: [main, primer/native-release-integration]
+    branches: [main, primer/native-release-integration, fix/restore-completed-child-safeguards]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     branches: [main]

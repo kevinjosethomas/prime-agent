@@ -22,6 +22,9 @@ use crate::backpressure::RouteAdmission;
 use crate::registry::ResidentWorker;
 use crate::supervisor::Supervisor;
 
+mod children;
+pub(crate) use children::{prepare_roster, verified_edge};
+
 /// The client id the supervisor uses for roster-row creates.
 pub(crate) const UPDATE_RESTORE_CLIENT_ID: &str = "update-restore";
 
@@ -693,6 +696,11 @@ async fn restore_session(
     let durable: pa_types::daemon::DurableDaemonCreateCommand =
         serde_json::from_value(durable).context("parse the roster row's create command")?;
     let mut payload = crate::descriptor::create_command_payload(&durable);
+    if row.kind == pa_types::daemon::update_flow::UpdateRosterSessionKind::Subagent {
+        let ledger = supervisor.rlm_spawn_ledger_for(None).await?;
+        let edges = ledger.live_edges()?;
+        children::hydrate_create(&mut payload, row, &edges)?;
+    }
     if let Some(restored_ids) = restored_ids {
         remap_legacy_parent(&mut payload, restored_ids);
     }
