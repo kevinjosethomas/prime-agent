@@ -76,7 +76,9 @@ on:
     branches: [main, primer/native-release-integration]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    branches: [main]
+    # The integration branch is a PR target too: its stacked PRs gate the
+    # same merge candidates the push wave re-proves on the tip.
+    branches: [main, primer/native-release-integration]
   merge_group:
     types: [checks_requested]
 
