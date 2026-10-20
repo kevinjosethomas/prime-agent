@@ -107,10 +107,10 @@ class McpRegistryTest(unittest.TestCase):
         return generation
 
     def test_status_reports_tools_and_errors_per_server(self):
-        async def ok_listing(server):
+        async def ok_listing(self_, server):
             return [{"name": f"{server}.tool", "description": "fixture description", "inputSchema": {}}]
 
-        with mock.patch.object(mcp, "list_tools", ok_listing):
+        with mock.patch.object(mcp._Registry, "tools", ok_listing):
             result = run(mcp.status(["alpha", "beta"], 60_000.0))
         self.assertEqual(
             result,
@@ -121,19 +121,19 @@ class McpRegistryTest(unittest.TestCase):
         )
 
     def test_status_isolates_failures_and_timeouts(self):
-        async def failing_listing(server):
+        async def failing_listing(self_, server):
             raise RuntimeError(f"no config for {server}")
 
-        async def slow_listing(server):
+        async def slow_listing(self_, server):
             await asyncio.sleep(1.0)
             return []
 
-        with mock.patch.object(mcp, "list_tools", failing_listing):
+        with mock.patch.object(mcp._Registry, "tools", failing_listing):
             result = run(mcp.status(["broken"], 60_000.0))
         self.assertIsNone(result[0]["tools"])
         self.assertEqual(result[0]["error"], "RuntimeError: no config for broken")
 
-        with mock.patch.object(mcp, "list_tools", slow_listing):
+        with mock.patch.object(mcp._Registry, "tools", slow_listing):
             result = run(mcp.status(["slow"], 50.0))
         self.assertIsNone(result[0]["tools"])
         self.assertIn("TimeoutError", result[0]["error"])
@@ -159,9 +159,10 @@ class McpRegistryTest(unittest.TestCase):
         )
         async def scenario():
             with mock.patch.object(mcp._registry, "_get_locked", mock.AsyncMock(return_value=generation)):
-                self.assertEqual([tool["name"] for tool in await mcp.list_tools("svc")], ["yes"])
+                listed = await mcp.tools("svc")
+                self.assertEqual([(tool.name, tool.description) for tool in listed], [("yes", "")])
                 with self.assertRaises(PermissionError):
-                    await mcp.call_tool("svc", "denied")
+                    await mcp.call("svc", "denied")
 
         run(scenario())
 
@@ -202,37 +203,6 @@ class McpRegistryTest(unittest.TestCase):
         run(scenario())
         self.assertFalse(generation.closed)
         self.assertIs(mcp._registry._generations["svc"], generation)
-
-    def test_reload_waits_for_in_flight_first_open(self):
-        opening = asyncio.Event()
-        release = asyncio.Event()
-        opened = []
-
-        async def config(_server):
-            return {"type": "http", "url": "a"}
-
-        async def open_generation(generation):
-            opened.append(generation)
-            generation.session = FakeSession([])
-            opening.set()
-            await release.wait()
-
-        async def scenario():
-            with mock.patch.object(mcp, "_config", config), mock.patch.object(
-                mcp._Generation, "open", open_generation
-            ):
-                first_open = asyncio.create_task(mcp._registry.get("svc"))
-                await opening.wait()
-                reload_all = asyncio.create_task(mcp._registry.reload())
-                await asyncio.sleep(0)
-                self.assertFalse(reload_all.done())
-                release.set()
-                await first_open
-                await reload_all
-
-        run(scenario())
-        self.assertTrue(opened[0].closed)
-        self.assertNotIn("svc", mcp._registry._generations)
 
     def test_startup_failure_cleanup_and_server_isolation(self):
         async def config(server):
@@ -447,7 +417,7 @@ class McpRegistryTest(unittest.TestCase):
 
         with mock.patch.object(mcp, "host_request", host_request):
             with self.assertRaises(RuntimeError) as caught:
-                run(mcp.call_tool("svc", "tool", {"secret": "do-not-print"}))
+                run(mcp.call("svc", "tool", secret="do-not-print"))
         self.assertNotIn("do-not-print", str(caught.exception))
 
     def test_startup_cancellation_is_not_wrapped(self):
@@ -609,32 +579,6 @@ class McpRegistryTest(unittest.TestCase):
         self.assertEqual(output["env"], "task-secret")
         self.assertIsNone(output["ambient"])
 
-    def test_reload_reaps_real_acp_stdio_process(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            fixture = Path(tmp) / "stdio_server.py"
-            pid_file = Path(tmp) / "stdio.pid"
-            fixture.write_text(_STDIO_FIXTURE)
-            config = {
-                "type": "stdio",
-                "command": sys.executable,
-                "args": [str(fixture)],
-                "cwd": str(fixture.parent),
-                "env": {"FIXTURE_PID_FILE": str(pid_file)},
-                "credentialSource": "acp",
-            }
-
-            async def scenario():
-                with mock.patch.object(mcp, "_config", new=mock.AsyncMock(return_value=config)):
-                    await mcp._registry.tools("task-tools")
-                    pid = int(pid_file.read_text())
-                    os.kill(pid, 0)
-                    await mcp._registry.reload("task-tools")
-                    return pid
-
-            pid = run(scenario())
-            with self.assertRaises(ProcessLookupError):
-                os.kill(pid, 0)
-
     def test_real_stdio_startup_diagnostic_is_safe_bounded_and_reaped(self):
         secret = "stdio-secret-SENTINEL"
         with tempfile.TemporaryDirectory() as tmp:
@@ -765,7 +709,7 @@ class McpRegistryTest(unittest.TestCase):
 
         run(scenario())
 
-    def test_reload_remains_reusable_but_shutdown_is_terminal(self):
+    def test_shutdown_is_terminal(self):
         async def config(_server):
             return {"type": "http", "url": "a"}
 
@@ -777,13 +721,10 @@ class McpRegistryTest(unittest.TestCase):
             with mock.patch.object(mcp, "_config", config), mock.patch.object(
                 mcp._Generation, "open", open_generation
             ):
-                first = await registry.get("svc")
-                await registry.reload("svc")
-                second = await registry.get("svc")
-                self.assertIsNot(first, second)
+                await registry.get("svc")
                 await registry.shutdown()
                 with self.assertRaises(RuntimeError):
-                    await registry.reload("svc")
+                    await registry.get("svc")
 
         run(scenario())
 
@@ -853,14 +794,16 @@ class McpDiscoveryInventoryTest(unittest.TestCase):
 
         return mock.patch.object(mcp, "host_request", host_request)
 
-    def test_list_connections_passes_through_and_scrubs_secret_keys(self):
+    def test_connections_maps_host_records_to_typed_rows(self):
         responses = {
             "mcp.list_connections": {
                 "connections": [
                     {
                         "connectionId": "notion",
                         "label": "Notion",
+                        "service": "notion",
                         "status": "connected",
+                        "account": "kevin@example.test",
                         "accessToken": "tok",
                         "oauth": {"clientSecret": "cs", "kind": "oauth"},
                     },
@@ -869,27 +812,28 @@ class McpDiscoveryInventoryTest(unittest.TestCase):
             }
         }
         with self._patch_host(responses):
-            connections = run(mcp.list_connections())
-        self.assertEqual([entry["connectionId"] for entry in connections], ["notion", "acme"])
-        notion = connections[0]
-        self.assertEqual(notion["label"], "Notion")
-        self.assertNotIn("accessToken", notion)
-        self.assertEqual(notion["oauth"], {"kind": "oauth"})
-        self.assertEqual(connections[1]["setupHint"], "configure API key")
+            connections = run(mcp.connections())
+        self.assertEqual(
+            connections,
+            [
+                mcp.Connection(id="notion", label="Notion", service="notion", status="connected", account="kevin@example.test"),
+                mcp.Connection(id="acme", label=None, service=None, status="error", account=None),
+            ],
+        )
 
-    def test_list_connections_rejects_malformed_host_data(self):
+    def test_connections_rejects_malformed_host_data(self):
         # One table: each malformed host reply must fail the whole call instead
         # of passing a broken inventory shape through to the agent.
         for reply in ({"connections": [{"label": "no-connection-id"}]}, {"connections": ["not-a-dict"]}, {"connections": "no"}, ["not", "a", "dict"]):
             with self.subTest(reply=reply):
                 with self._patch_host({"mcp.list_connections": reply}):
                     with self.assertRaises(RuntimeError):
-                        run(mcp.list_connections())
+                        run(mcp.connections())
 
     def test_inventory_wraps_host_failures_without_echoing_them(self):
         with self._patch_host({"mcp.list_connections": RuntimeError("bridge is down")}):
             with self.assertRaises(RuntimeError) as caught:
-                run(mcp.list_connections())
+                run(mcp.connections())
         error = caught.exception
         self.assertEqual(str(error), "MCP mcp.list_connections request failed")
         self.assertIsNone(error.__cause__)
@@ -897,65 +841,9 @@ class McpDiscoveryInventoryTest(unittest.TestCase):
         formatted = "".join(traceback.format_exception(type(error), error, error.__traceback__))
         self.assertNotIn("bridge is down", formatted)
 
-    def test_list_plugins_forwards_filters_limit_and_cursor(self):
-        captured = {}
-
-        async def host_request(request_type, payload):
-            captured["type"] = request_type
-            captured["payload"] = payload
-            return {
-                "plugins": [{"serviceId": "notion", "label": "Notion", "connectionStatus": "not_connected"}],
-                "nextCursor": "page-2",
-            }
-
-        with mock.patch.object(mcp, "host_request", host_request):
-            page = run(mcp.list_plugins(connection_status="not_connected", limit=5, cursor="page-1"))
-        self.assertEqual(captured["type"], "mcp.list_plugins")
-        self.assertEqual(
-            captured["payload"], {"connectionStatus": "not_connected", "limit": 5, "cursor": "page-1"}
-        )
-        self.assertEqual(page["nextCursor"], "page-2")
-        self.assertEqual(page["plugins"][0]["serviceId"], "notion")
-
-        with mock.patch.object(mcp, "host_request", host_request):
-            run(mcp.list_plugins())
-        self.assertEqual(captured["payload"], {"limit": 50})
-
-    def test_list_plugins_validates_inputs_and_host_shapes(self):
-        for kwargs in ({"connection_status": "maybe"}, {"limit": 0}, {"limit": 201}, {"limit": True}, {"cursor": "x" * 600}):
-            with self._patch_host({"mcp.list_plugins": {"plugins": []}}):
-                with self.assertRaises((ValueError, TypeError)):
-                    run(mcp.list_plugins(**kwargs))
-        for reply in ({"plugins": ["no"]}, {"plugins": [], "nextCursor": ""}):
-            with self._patch_host({"mcp.list_plugins": reply}):
-                with self.assertRaises(RuntimeError):
-                    run(mcp.list_plugins())
-
-    def test_search_plugins_sends_query_and_limit(self):
-        captured = {}
-
-        async def host_request(request_type, payload):
-            captured["type"] = request_type
-            captured["payload"] = payload
-            return {"plugins": [{"serviceId": "notion", "apiKey": "leak"}], "nextCursor": None}
-
-        with mock.patch.object(mcp, "host_request", host_request):
-            page = run(mcp.search_plugins("  Notion  "))
-        self.assertEqual(captured["type"], "mcp.search_plugins")
-        self.assertEqual(captured["payload"], {"query": "Notion", "limit": 10})
-        self.assertIsNone(page["nextCursor"])
-        self.assertNotIn("apiKey", page["plugins"][0])
-        for bad in ("", "   "):
-            with self._patch_host({"mcp.search_plugins": {"plugins": []}}):
-                with self.assertRaises(TypeError):
-                    run(mcp.search_plugins(bad))
-        with self._patch_host({"mcp.search_plugins": {"plugins": []}}):
-            with self.assertRaises(ValueError):
-                run(mcp.search_plugins("notion", limit=51))
-
     # -- live tool discovery ------------------------------------------------
 
-    def test_describe_tool_returns_schema_copy(self):
+    def test_describe_returns_one_tool_with_its_schema_copy(self):
         schema = {"type": "object", "properties": {"query": {"type": "string"}}}
         generation = self.generation(
             {"type": "http", "enabledTools": ["search-docs"]},
@@ -968,23 +856,22 @@ class McpDiscoveryInventoryTest(unittest.TestCase):
 
         async def scenario():
             with mock.patch.object(mcp._registry, "_get_locked", mock.AsyncMock(return_value=generation)):
-                described = await mcp.describe_tool("notion-work", "search-docs")
+                described = await mcp.tools("notion-work", tool="search-docs")
                 with self.assertRaises(KeyError):
-                    await mcp.describe_tool("notion-work", "missing-tool")
+                    await mcp.tools("notion-work", tool="missing-tool")
                 with self.assertRaises(PermissionError):
-                    await mcp.describe_tool("notion-work", "delete-docs")
+                    await mcp.tools("notion-work", tool="delete-docs")
             return described
 
         described = run(scenario())
-        self.assertEqual(described["inputSchema"], schema)
+        self.assertEqual(described.input_schema, schema)
+        self.assertEqual(described.server, "notion-work")
         # Isolated copies: mutating the returned schema (nested included) must
         # never reach the cached canonical inventory.
-        described["inputSchema"]["injected"] = True
-        described["name"] = "mutated"
+        described.input_schema["injected"] = True
         self.assertNotIn("injected", generation.tools["search-docs"]["inputSchema"])
-        self.assertEqual(generation.tools["search-docs"]["name"], "search-docs")
 
-    def test_list_tools_returns_isolated_copies(self):
+    def test_tools_lists_one_server_with_the_connection_set(self):
         schema = {"type": "object", "properties": {"query": {"type": "string"}}}
         generation = self.generation(
             {"type": "http"},
@@ -994,13 +881,10 @@ class McpDiscoveryInventoryTest(unittest.TestCase):
 
         async def scenario():
             with mock.patch.object(mcp._registry, "_get_locked", mock.AsyncMock(return_value=generation)):
-                tools = await mcp.list_tools("notion")
-                tools[0]["inputSchema"]["injected"] = True
-                return await mcp.list_tools("notion")
+                return await mcp.tools("notion")
 
-        again = run(scenario())
-        self.assertNotIn("injected", again[0]["inputSchema"])
-        self.assertNotIn("injected", generation.tools["search-docs"]["inputSchema"])
+        listed = run(scenario())
+        self.assertEqual(listed, [mcp.Tool(name="search-docs", description="Search docs", server="notion")])
 
     def test_search_tools_scoped_connection_matches_policy_and_limit(self):
         tools = [
@@ -1012,36 +896,31 @@ class McpDiscoveryInventoryTest(unittest.TestCase):
 
         async def scenario():
             with mock.patch.object(mcp._registry, "_get_locked", mock.AsyncMock(return_value=generation)):
-                by_description = await mcp.search_tools("DOCUMENTS", connection_id="notion-work")
-                no_match = await mcp.search_tools("query", connection_id="notion-work")
-                limited = await mcp.search_tools("doc", connection_id="notion-work", limit=1)
+                by_description = await mcp.tools("notion-work", query="DOCUMENTS")
+                no_match = await mcp.tools("notion-work", query="query")
+                limited = await mcp.tools("notion-work", query="doc", limit=1)
             with mock.patch.object(
                 mcp._registry, "_get_locked", mock.AsyncMock(side_effect=KeyError("unknown connection"))
             ):
                 error = None
                 try:
-                    await mcp.search_tools("documents", connection_id="notion-work")
+                    await mcp.tools("notion-work", query="documents")
                 except KeyError as exc:
                     error = exc
             return by_description, no_match, limited, error
 
         by_description, no_match, limited, error = run(scenario())
         self.assertEqual(
-            by_description["tools"],
-            [{"connectionId": "notion-work", "name": "search-docs", "description": "Search workspace documents"}],
+            by_description,
+            [mcp.Tool(name="search-docs", description="Search workspace documents", server="notion-work")],
         )
-        self.assertEqual(by_description["searched"], ["notion-work"])
-        self.assertEqual(by_description["unavailable"], [])
-        self.assertFalse(by_description["truncated"])
         # No match is not an error, and the policy-disabled tool never matches.
-        self.assertEqual(no_match["tools"], [])
-        self.assertFalse(no_match["truncated"])
-        # Hitting the limit on the only policy-allowed match reports truncation.
-        self.assertTrue(limited["truncated"])
-        # A failing connection surfaces its error instead of hiding it.
+        self.assertEqual(no_match, [])
+        self.assertEqual(limited, [mcp.Tool(name="search-docs", description="Search workspace documents", server="notion-work")])
+        # A failing scoped connection surfaces its error instead of hiding it.
         self.assertIsNotNone(error)
 
-    def test_search_tools_without_connection_searches_connected_only(self):
+    def test_search_without_connection_searches_connected_only(self):
         tools = [SimpleNamespace(name="search-docs", description="Search workspace documents", inputSchema={})]
         generation = self.generation({"type": "http"}, tools)
         generation.server = "a"
@@ -1070,22 +949,15 @@ class McpDiscoveryInventoryTest(unittest.TestCase):
             with self._patch_host(responses), mock.patch.object(
                 mcp._registry, "_get_locked", side_effect=get_locked
             ):
-                return await mcp.search_tools("documents")
+                return await mcp.tools(query="documents")
 
         result = run(scenario())
-        self.assertEqual(result["tools"], [
-            {"connectionId": "a", "name": "search-docs", "description": "Search workspace documents"}
-        ])
-        self.assertEqual(result["searched"], ["a"])
-        self.assertEqual([entry["connectionId"] for entry in result["unavailable"]], ["b"])
         self.assertEqual(
-            result["unavailable"][0]["error"],
-            "McpCredentialsUnavailable: credentials for this connection are not available; "
-            "the user must connect it",
+            result,
+            [mcp.Tool(name="search-docs", description="Search workspace documents", server="a")],
         )
-        self.assertFalse(result["truncated"])
 
-    def test_search_tools_bounds_servers_and_reports_truncation(self):
+    def test_search_bounds_servers_and_results(self):
         connections = {
             "connections": [
                 {"connectionId": f"svc-{index}", "status": "connected"} for index in range(10)
@@ -1103,14 +975,13 @@ class McpDiscoveryInventoryTest(unittest.TestCase):
             with self._patch_host({"mcp.list_connections": connections}), mock.patch.object(
                 mcp._registry, "_get_locked", side_effect=get_locked
             ):
-                return await mcp.search_tools("anything")
+                return await mcp.tools(query="anything")
 
-        result = run(scenario())
+        run(scenario())
         self.assertEqual(len(calls), mcp._MAX_TOOL_SEARCH_SERVERS)
-        self.assertEqual(result["searched"], [f"svc-{index}" for index in range(mcp._MAX_TOOL_SEARCH_SERVERS)])
-        self.assertTrue(result["truncated"])
+        self.assertEqual(calls, [f"svc-{index}" for index in range(mcp._MAX_TOOL_SEARCH_SERVERS)])
 
-    def test_search_unavailable_never_echoes_raw_exception_text(self):
+    def test_search_unavailable_connections_are_skipped_not_surfaced(self):
         connections = {"connections": [{"connectionId": "leaky", "status": "connected"}]}
         raw = "Connection failed: https://user:hunter2@evil.test/mcp?api_key=abc123 Authorization: Bearer tok-123-secret"
 
@@ -1121,13 +992,17 @@ class McpDiscoveryInventoryTest(unittest.TestCase):
             with self._patch_host({"mcp.list_connections": connections}), mock.patch.object(
                 mcp._registry, "_get_locked", side_effect=get_locked
             ):
-                return await mcp.search_tools("documents")
+                return await mcp.tools(query="documents")
 
-        result = run(scenario())
-        error = result["unavailable"][0]["error"]
-        self.assertEqual(error, "RuntimeError: the connection could not be opened or searched")
-        for leaked in ("hunter2", "abc123", "tok-123-secret", "evil.test", "Bearer"):
-            self.assertNotIn(leaked, error)
+        self.assertEqual(run(scenario()), [])
+
+    def test_tools_validates_its_call_forms(self):
+        with self.assertRaisesRegex(TypeError, "needs a server, a tool, or a query"):
+            run(mcp.tools())
+        with self.assertRaisesRegex(TypeError, "requires a server"):
+            run(mcp.tools(tool="x"))
+        with self.assertRaisesRegex(TypeError, "exclusive"):
+            run(mcp.tools("svc", tool="x", query="y"))
 
     def test_host_inventory_failures_never_expose_the_original_exception(self):
         raw = (
@@ -1140,7 +1015,7 @@ class McpDiscoveryInventoryTest(unittest.TestCase):
 
         with mock.patch.object(mcp, "host_request", host_request):
             with self.assertRaises(RuntimeError) as caught:
-                run(mcp.list_connections())
+                run(mcp.connections())
         error = caught.exception
         self.assertEqual(str(error), "MCP mcp.list_connections request failed")
         self.assertIsNone(error.__cause__)
@@ -1160,8 +1035,9 @@ class McpDiscoveryInventoryTest(unittest.TestCase):
             mcp, "_INVENTORY_TIMEOUT", 0.01
         ):
             with self.assertRaises(RuntimeError) as caught:
-                run(mcp.list_connections())
+                run(mcp.connections())
         self.assertEqual(str(caught.exception), "MCP mcp.list_connections request timed out")
+
 
     # -- tools/list pagination ----------------------------------------------
 
