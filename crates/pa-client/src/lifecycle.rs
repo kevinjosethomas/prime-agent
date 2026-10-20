@@ -1193,6 +1193,11 @@ mod tests {
                 let (reader, mut writer) = stream.into_split();
                 let mut reader = tokio::io::BufReader::new(reader);
                 let mut line = String::new();
+                let hello = json!({
+                    "type": "daemon_hello",
+                    "protocol": { "name": "prime-agent.daemon", "version": 7 },
+                    "serverCapabilities": [],
+                });
                 writer
                     .write_all(format!("{hello}\n").as_bytes())
                     .await
