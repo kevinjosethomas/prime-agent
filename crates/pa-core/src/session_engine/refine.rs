@@ -7,7 +7,6 @@ use pa_types::ai::{UserContent, UserMessage};
 use pa_types::session::{AgentMessage, CustomMessage, FileEntry};
 use serde_json::json;
 
-use super::AgentSession;
 use crate::refinement::executor::{
     apply_refinement_plan, plan_refinement, RefineOptions as CoreRefineOptions, RefinementPlan,
 };
