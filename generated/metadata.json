@@ -435,6 +435,13 @@
       "longRunning": false
     },
     {
+      "type": "set_mcp_connection_label",
+      "plane": "control",
+      "mutating": true,
+      "sessionPlane": false,
+      "longRunning": false
+    },
+    {
       "type": "replace_acp_mcp_servers",
       "plane": "session",
       "mutating": true,
@@ -970,6 +977,7 @@
       "subagent_model_defaults",
       "global_harness_defaults",
       "prompt_guidelines",
+      "mcp_multi_account",
       "workstream_classification",
       "side_question_transcript",
       "transient_bash",

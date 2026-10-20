@@ -2141,6 +2141,38 @@
       "additionalProperties": true
     },
     {
+      "description": "Rename one MCP account's identity label (the inline rename surface).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "set_mcp_connection_label"
+        },
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "activeSessionId": {
+          "type": "string"
+        },
+        "connectionId": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "activeSessionId",
+        "connectionId",
+        "label"
+      ],
+      "additionalProperties": true
+    },
+    {
       "type": "object",
       "properties": {
         "type": {

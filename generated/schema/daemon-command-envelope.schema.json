@@ -1,16 +1,58 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "DaemonCommandWire",
-  "description": "A bare command or a command envelope, both accepted on one socket line.",
-  "anyOf": [
-    {
-      "$ref": "#/$defs/DaemonCommand"
+  "title": "DaemonCommandEnvelope",
+  "description": "`type: \"command\"` envelope wrapping a [`DaemonCommand`].",
+  "type": "object",
+  "properties": {
+    "type": {
+      "$ref": "#/$defs/DaemonCommandFrameType"
     },
-    {
-      "$ref": "#/$defs/DaemonCommandEnvelope"
+    "id": {
+      "type": "string"
+    },
+    "protocol": {
+      "$ref": "#/$defs/DaemonProtocolInfo"
+    },
+    "clientId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "command": {
+      "$ref": "#/$defs/DaemonCommand"
     }
+  },
+  "required": [
+    "type",
+    "id",
+    "protocol",
+    "command"
   ],
   "$defs": {
+    "DaemonCommandFrameType": {
+      "type": "string",
+      "enum": [
+        "command"
+      ]
+    },
+    "DaemonProtocolInfo": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ]
+    },
     "DaemonCommand": {
       "description": "Client commands, tagged by `type`. Every variant carries `id` (bare\ncommands) and a catch-all for unknown fields, so round-trips stay lossless.",
       "oneOf": [
@@ -2148,6 +2190,38 @@
             "type",
             "activeSessionId",
             "server"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "description": "Rename one MCP account's identity label (the inline rename surface).",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "set_mcp_connection_label"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "connectionId": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "connectionId",
+            "label"
           ],
           "additionalProperties": true
         },
@@ -4970,59 +5044,6 @@
       "enum": [
         "before",
         "at"
-      ]
-    },
-    "DaemonCommandEnvelope": {
-      "description": "`type: \"command\"` envelope wrapping a [`DaemonCommand`].",
-      "type": "object",
-      "properties": {
-        "type": {
-          "$ref": "#/$defs/DaemonCommandFrameType"
-        },
-        "id": {
-          "type": "string"
-        },
-        "protocol": {
-          "$ref": "#/$defs/DaemonProtocolInfo"
-        },
-        "clientId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "command": {
-          "$ref": "#/$defs/DaemonCommand"
-        }
-      },
-      "required": [
-        "type",
-        "id",
-        "protocol",
-        "command"
-      ]
-    },
-    "DaemonCommandFrameType": {
-      "type": "string",
-      "enum": [
-        "command"
-      ]
-    },
-    "DaemonProtocolInfo": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string"
-        },
-        "version": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        }
-      },
-      "required": [
-        "name",
-        "version"
       ]
     }
   }

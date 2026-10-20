@@ -59,6 +59,7 @@
 {"schemaRoot":"daemon-command","sample":{"type":"get_mcp_connections","activeSessionId":"wire"}}
 {"schemaRoot":"daemon-command","sample":{"type":"set_mcp_static_token","activeSessionId":"wire","server":"wire","token":"wire"}}
 {"schemaRoot":"daemon-command","sample":{"type":"remove_mcp_connection","activeSessionId":"wire","server":"wire"}}
+{"schemaRoot":"daemon-command","sample":{"type":"set_mcp_connection_label","activeSessionId":"wire","connectionId":"wire","label":"wire"}}
 {"schemaRoot":"daemon-command","sample":{"type":"replace_acp_mcp_servers","activeSessionId":"wire","ownerId":"wire","servers":{}}}
 {"schemaRoot":"daemon-command","sample":{"type":"get_model_catalog","activeSessionId":"wire"}}
 {"schemaRoot":"daemon-command","sample":{"type":"classify_workstream"}}

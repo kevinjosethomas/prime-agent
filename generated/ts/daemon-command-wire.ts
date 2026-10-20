@@ -585,6 +585,14 @@ export type DaemonCommand =
       [k: string]: unknown;
     }
   | {
+      type: "set_mcp_connection_label";
+      id?: string | null;
+      activeSessionId: string;
+      connectionId: string;
+      label: string;
+      [k: string]: unknown;
+    }
+  | {
       type: "replace_acp_mcp_servers";
       id?: string | null;
       activeSessionId: string;
