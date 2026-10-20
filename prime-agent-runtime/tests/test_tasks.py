@@ -163,7 +163,8 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((blocked.status, blocked.summary), ("needs_input", "Which sidebar width?"))
         self.assertNotIn("question", blocked.__dataclass_fields__)
         self.assertEqual(self.state()["reports"][-1]["changes"],
-                         {"status": "needs_input", "summary": "Which sidebar width?"})
+                         {"status": "needs_input", "summary": "Which sidebar width?",
+                          "description": "Options: 240px or 320px"})
         resumed = await blocked.update(status="active")
         self.assertEqual((resumed.status, resumed.summary), ("active", "Which sidebar width?"))
         self.assertEqual(self.state()["reports"][-1]["changes"], {"status": "active"})

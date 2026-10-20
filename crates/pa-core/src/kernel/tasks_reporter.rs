@@ -35,13 +35,21 @@ pub fn store_forwarded(value: &str) {
 
 /// The current reporter configuration: the forwarded value first, else this
 /// process's own env var (a worker the supervisor stamped at spawn).
+///
+/// # Panics
+///
+/// Panics only on mutex poisoning (the holder panicked mid-lock).
 #[must_use]
 pub fn current() -> Option<String> {
     FORWARDED
         .lock()
         .expect("tasks reporter forward lock")
         .clone()
-        .or_else(|| std::env::var(TASKS_REPORTER_ENV).ok().filter(|v| !v.trim().is_empty()))
+        .or_else(|| {
+            std::env::var(TASKS_REPORTER_ENV)
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+        })
 }
 
 #[cfg(test)]

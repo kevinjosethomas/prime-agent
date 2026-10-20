@@ -18,7 +18,11 @@ pub(crate) fn canonicalize(
     env: Option<&std::collections::BTreeMap<String, String>>,
     timeout: Option<f64>,
 ) -> Result<String> {
-    if command.is_empty() || command.iter().any(|arg| arg.is_empty() || arg.contains('\0')) {
+    if command.is_empty()
+        || command
+            .iter()
+            .any(|arg| arg.is_empty() || arg.contains('\0'))
+    {
         bail!("set_task_reporter requires a nonempty argv of nonempty strings");
     }
     if let Some(env) = env {
@@ -71,7 +75,10 @@ mod tests {
     fn rejects_invalid_env_names() {
         let bad = std::collections::BTreeMap::from([("a=b".to_string(), "1".to_string())]);
         assert!(canonicalize(&["a".into()], Some(&bad), None).is_err());
-        let good = std::collections::BTreeMap::from([("ELECTRON_RUN_AS_NODE".to_string(), "1".to_string())]);
+        let good = std::collections::BTreeMap::from([(
+            "ELECTRON_RUN_AS_NODE".to_string(),
+            "1".to_string(),
+        )]);
         assert_eq!(
             canonicalize(&["a".into()], Some(&good), Some(15.0)).unwrap(),
             r#"{"command":["a"],"env":{"ELECTRON_RUN_AS_NODE":"1"},"timeout":15.0}"#

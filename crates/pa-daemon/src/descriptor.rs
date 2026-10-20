@@ -121,7 +121,10 @@ pub fn worker_launch_env(
     // for free. `None` before the desktop's first push (or after a daemon
     // restart, until the desktop reconnects and re-pushes).
     if let Some(reporter) = tasks_reporter {
-        env.insert(crate::worker::TASKS_REPORTER_ENV.to_string(), reporter.to_string());
+        env.insert(
+            crate::worker::TASKS_REPORTER_ENV.to_string(),
+            reporter.to_string(),
+        );
     }
     env
 }
@@ -490,6 +493,9 @@ mod tests {
         let descriptor: WorkerDescriptor = serde_json::from_value(json!({
             "version": 2,
             "workerId": "wenv",
+            "pid": 4242,
+            "createdAt": "t",
+            "updatedAt": "t",
             "socketPath": "/tmp/w.sock",
             "recoveryJournalPath": "/tmp/w.recovery.jsonl",
             "supervisorSocketPath": "/tmp/d.sock",
@@ -501,7 +507,13 @@ mod tests {
             "createCommand": {"cwd": "/w"},
         }))
         .expect("descriptor");
-        let without = worker_launch_env(Path::new("/agent"), "/tmp/d.sock", "inst", &descriptor, None);
+        let without = worker_launch_env(
+            Path::new("/agent"),
+            "/tmp/d.sock",
+            "inst",
+            &descriptor,
+            None,
+        );
         assert!(!without.contains_key(crate::worker::TASKS_REPORTER_ENV));
         let config = r#"{"command":["/primer","--db","state.sqlite"],"env":{},"timeout":15.0}"#;
         let with = worker_launch_env(

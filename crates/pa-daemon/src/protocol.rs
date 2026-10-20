@@ -1150,7 +1150,9 @@ mod tests {
         .unwrap();
         assert_eq!(command_type_name(&parsed.command), "set_task_reporter");
         assert_eq!(command_active_session_id(&parsed.command), None);
-        assert!(!pa_types::daemon::is_session_plane_daemon_command("set_task_reporter"));
+        assert!(!pa_types::daemon::is_session_plane_daemon_command(
+            "set_task_reporter"
+        ));
         assert!(default_server_capabilities().contains(&"task_reporter".to_string()));
         // Shape errors the typed parse owns. Payload semantics (nonempty argv,
         // extra-field rejection) belong to the supervisor handler's canonicalize.
