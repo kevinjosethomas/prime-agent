@@ -13,15 +13,14 @@ def text(value: Any, name: str, max_length: int = 512, *, empty: bool = False) -
     return value
 
 
-# The full record set the host accepts on a create: the public model plus the
-# host-owned internal question mirror kept for lockstep with the current store.
+# The full record set the host accepts on a create.
 WRITABLE_TASK_FIELDS = frozenset(
-    {"id", "title", "status", "summary", "description", "question", "owner", "parentId", "links"}
+    {"id", "title", "status", "summary", "description", "owner", "parentId", "links"}
 )
 
 # The partial change set a patch event may carry.
 PATCH_TASK_FIELDS = frozenset(
-    {"title", "status", "summary", "description", "question", "parentId", "links"}
+    {"title", "status", "summary", "description", "parentId", "links"}
 )
 
 
@@ -53,12 +52,11 @@ def validate_task(value: dict[str, Any]) -> dict[str, Any]:
     if value["status"] not in STATUSES:
         raise ValueError("Invalid task status")
     text(value["summary"], "summary", 2000, empty=True)
-    text(value["question"], "question", 2000, empty=True)
     text(value["owner"], "owner", 160)
     if "description" in value:
         text(value["description"], "description", 6000, empty=True)
-    if value["status"] == "needs_input" and not value["question"].strip():
-        raise ValueError("Needs input requires the question")
+    if value["status"] == "needs_input" and not value["summary"].strip():
+        raise ValueError("Needs input requires the question in summary")
     if "parentId" in value:
         text(value["parentId"], "parent task ID")
         if value["parentId"] == value["id"]:
@@ -82,8 +80,6 @@ def validate_changes(changes: dict[str, Any]) -> dict[str, Any]:
         text(changes["summary"], "summary", 2000, empty=True)
     if "description" in changes:
         text(changes["description"], "description", 6000, empty=True)
-    if "question" in changes:
-        text(changes["question"], "question", 2000, empty=True)
     if "parentId" in changes:
         text(changes["parentId"], "parent task ID")
     if "links" in changes:

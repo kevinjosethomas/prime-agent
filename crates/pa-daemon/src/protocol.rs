@@ -1152,19 +1152,31 @@ mod tests {
         assert_eq!(command_active_session_id(&parsed.command), None);
         assert!(!pa_types::daemon::is_session_plane_daemon_command("set_task_reporter"));
         assert!(default_server_capabilities().contains(&"task_reporter".to_string()));
+        // Shape errors the typed parse owns. Payload semantics (nonempty argv,
+        // extra-field rejection) belong to the supervisor handler's canonicalize.
         for bad in [
             json!({"type": "set_task_reporter"}),
-            json!({"type": "set_task_reporter", "command": []}),
             json!({"type": "set_task_reporter", "command": ["a", 1]}),
             json!({"type": "set_task_reporter", "command": ["a"], "env": {"K": 1}}),
-            json!({"type": "set_task_reporter", "command": ["a"], "activeSessionId": "sess"}),
-            json!({"type": "set_task_reporter", "command": ["a"], "extra": true}),
+            json!({"type": "set_task_reporter", "command": ["a"], "timeout": "x"}),
         ] {
             assert!(
                 parse_daemon_command_line(&bad.to_string()).is_err(),
                 "must reject {bad}"
             );
         }
+        // Unknown fields flatten into the catch-all the handler rejects;
+        // the parse itself stays lossless for round-tripping.
+        let parsed = parse_daemon_command_line(
+            &json!({"type": "set_task_reporter", "command": ["a"], "activeSessionId": "sess"})
+                .to_string(),
+        )
+        .unwrap();
+        let DaemonCommand::SetTaskReporter { command, rest, .. } = &parsed.command else {
+            panic!("expected SetTaskReporter");
+        };
+        assert_eq!(command, &vec!["a".to_string()]);
+        assert_eq!(rest.get("activeSessionId"), Some(&json!("sess")));
     }
 
     #[test]

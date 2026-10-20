@@ -19,11 +19,6 @@ class Client:
                  timeout: float = 15):
         self._reporter = Reporter(command, env, timeout)
 
-    def configuration(self) -> dict[str, Any]:
-        """Return a fresh copy of this trusted local configuration (internal)."""
-        return {"command": list(self._reporter.command), "env": dict(self._reporter.env),
-                "timeout": self._reporter.timeout}
-
     async def _context(self) -> dict[str, Any]:
         """Read current state and recent turn IDs; message bodies are not stored here."""
         value = await self._reporter.call("context")
@@ -68,8 +63,7 @@ class Client:
             raise ValueError(f"Task already exists: {id}")
         value: dict[str, Any] = dict(
             id=id, title=title, status=status, summary=summary,
-            description=description, owner="/root",
-            question=summary if status == "needs_input" else "", links=links)
+            description=description, owner="/root", links=links)
         if parent_id is not None:
             value["parentId"] = parent_id
         await self._deliver(Report.create("create", task=validate_task(value)))
@@ -90,14 +84,10 @@ class Client:
             changes["description"] = text(description, "description", 6000, empty=True)
         if links is not UNSET:
             changes["links"] = links
-        if "status" in changes:
-            if changes["status"] == "needs_input":
-                effective = changes.get("summary", current.summary)
-                if not effective.strip():
-                    raise ValueError("Needs input requires the question in summary")
-                changes["question"] = effective
-            else:
-                changes["question"] = ""
+        if (changes.get("status", current.status)) == "needs_input":
+            effective = changes.get("summary", current.summary)
+            if not effective.strip():
+                raise ValueError("Needs input requires the question in summary")
         if not changes:
             return current
         await self._deliver(Report.create("patch", taskId=id, changes=validate_changes(changes)))

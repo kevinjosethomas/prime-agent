@@ -89,9 +89,9 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_restart_roundtrip_subtasks_links_and_native_link(self):
         product = await self.client.create("cli", "Prime CLI")
-        parser = await product.subtask(
-            "parser", "Structured log parser", status="active",
-            links=[Link("source", "https://example.com/parser", "Parser design")])
+        parser = await product.subtask("parser", "Structured log parser", status="active")
+        parser = await parser.update(links=[
+            Link("source", "https://example.com/parser", "Parser design")])
         await parser.link(rlm.RLMSpawnHandle("child", "parser-owner",
                                             Path(self.directory.name) / "child", "provider/model"))
         restarted = Client(**self.config)
@@ -112,7 +112,7 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((changed.status, changed.summary, changed.description, changed.parent_id),
                          ("active", "A newer update", "", None))
         self.assertEqual(self.state()["reports"][-1]["changes"],
-                         {"status": "active", "summary": "A newer update", "question": ""})
+                         {"status": "active", "summary": "A newer update"})
         final = await changed.update(summary="Layout verified", links=[Link("pr", "https://example.com/pr")])
         self.assertEqual((final.summary, final.links), ("Layout verified", (Link("pr", "https://example.com/pr"),)))
         # No named changes: no event is delivered, and the snapshot stays current.
@@ -127,7 +127,7 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(DeliveryError):
             await self.client._deliver(Report.create("create", task={
                 "id": task.id, "title": "Race loser", "status": "todo", "summary": "",
-                "description": "", "owner": "/root", "question": "", "links": []}))
+                "description": "", "owner": "/root", "links": []}))
         self.assertEqual(len(self.state()["tasks"]), 1)
 
     async def test_uncertain_commit_redelivers_the_exact_event_id(self):
@@ -162,18 +162,19 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
                                     description="Options: 240px or 320px")
         self.assertEqual((blocked.status, blocked.summary), ("needs_input", "Which sidebar width?"))
         self.assertNotIn("question", blocked.__dataclass_fields__)
-        # The host-owned question mirror rides the wire for current-store lockstep.
-        self.assertEqual(self.state()["reports"][-1]["changes"]["question"], "Which sidebar width?")
+        self.assertEqual(self.state()["reports"][-1]["changes"],
+                         {"status": "needs_input", "summary": "Which sidebar width?"})
         resumed = await blocked.update(status="active")
         self.assertEqual((resumed.status, resumed.summary), ("active", "Which sidebar width?"))
-        self.assertEqual(self.state()["reports"][-1]["changes"]["question"], "")
+        self.assertEqual(self.state()["reports"][-1]["changes"], {"status": "active"})
         # Re-entering needs_input reuses the current nonempty summary as the question.
         again = await resumed.update(status="needs_input")
         self.assertEqual(again.summary, "Which sidebar width?")
-        self.assertEqual(self.state()["reports"][-1]["changes"]["question"], "Which sidebar width?")
         cleared = await resumed.update(summary="")
         with self.assertRaises(ValueError):
             await cleared.update(status="needs_input")
+        with self.assertRaises(ValueError):
+            await cleared.update(summary="   ")
         second = await self.client.create("blocked", "Starts blocked", status="needs_input",
                                          summary="Is the fixture green?")
         self.assertEqual(second.status, "needs_input")
@@ -302,11 +303,6 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
         for timeout in (0, -1, float("nan"), float("inf")):
             with self.assertRaises(ValueError):
                 Client(command=[sys.executable], timeout=timeout)
-        expected = {**self.config, "timeout": 15}
-        exported = self.client.configuration()
-        exported["command"].append("mutated")
-        exported["env"]["TASKS_TEST_STORE"] = "mutated"
-        self.assertEqual(self.client.configuration(), expected)
 
 
 if __name__ == "__main__":

@@ -23,6 +23,8 @@ __all__ = ["Link", "Status", "Task", "create", "get", "list"]
 
 #: The trusted env var the daemon stamps on every kernel it provisions.
 _REPORTER_ENV = "PRIME_AGENT_INTERNAL_TASKS_REPORTER"
+#: The builtin list type, captured before the public `list` facade shadows it.
+_LIST_TYPE = type([])
 
 _client: "Client | None" = None
 
@@ -51,21 +53,21 @@ def _from_environment(raw: str) -> "Client":
     try:
         spec = json.loads(raw)
     except ValueError as error:
-        raise RuntimeError(f"Invalid {REPORTER_ENV} in the kernel environment") from error
+        raise RuntimeError(f"Invalid {_REPORTER_ENV} in the kernel environment") from error
     if not isinstance(spec, dict):
-        raise RuntimeError(f"Invalid {REPORTER_ENV} in the kernel environment")
+        raise RuntimeError(f"Invalid {_REPORTER_ENV} in the kernel environment")
     command = spec.get("command")
     env = spec.get("env")
     timeout = spec.get("timeout", 15)
-    if (not isinstance(command, list) or not command
+    if (not isinstance(command, _LIST_TYPE) or not command
             or not all(isinstance(arg, str) and arg for arg in command)
             or (env is not None and not isinstance(env, dict))
             or not isinstance(timeout, (int, float))):
-        raise RuntimeError(f"Invalid {REPORTER_ENV} in the kernel environment")
+        raise RuntimeError(f"Invalid {_REPORTER_ENV} in the kernel environment")
     try:
         return Client(command=command, env=env, timeout=timeout)
     except ValueError as error:
-        raise RuntimeError(f"Invalid {REPORTER_ENV} in the kernel environment") from error
+        raise RuntimeError(f"Invalid {_REPORTER_ENV} in the kernel environment") from error
 
 
 async def list(*, status: Status | None = None, archived: bool | None = False) -> tuple[Task, ...]:
