@@ -280,7 +280,15 @@ impl PrimeDaemonClient {
         }
         tokio::select! {
             frame = receiver.recv() => match frame {
-                Some(frame) => Ok(Some(frame)),
+                Some(frame) => {
+                    // The sticky overflow error precedes ANY buffered frame:
+                    // the consumer never continues on a partial stream.
+                    if self.inner.overflow.load(Ordering::SeqCst) {
+                        Err(overflow())
+                    } else {
+                        Ok(Some(frame))
+                    }
+                }
                 None => {
                     if self.inner.overflow.load(Ordering::SeqCst) {
                         Err(overflow())
@@ -299,6 +307,10 @@ impl PrimeDaemonClient {
         }
     }
 
+    /// Per-consumer status changes: every pending pull observes the next
+    /// change (a genuine watch broadcast), and the initial `open` value is
+    /// delivered exactly once per connection — not per caller. Terminal
+    /// statuses resolve immediately for late callers.
     #[napi]
     pub async fn next_status(&self) -> Result<Value> {
         let mut receiver = self.inner.status_tx.subscribe();
@@ -349,7 +361,12 @@ impl PrimeDaemonClient {
             if let Some(cause) = inner.teardown_cause() {
                 return Err(not_sent_cause(Some(cause)));
             }
+            // Biased with the core future FIRST: when a completed answer
+            // and the teardown wake are both ready, the core's own class
+            // (Success/Rejected/transport) must win — never downgraded to
+            // Uncertain by the race.
             tokio::select! {
+                biased;
                 response = &mut fut => {
                     let response = response.map_err(|error| classify(error, None))?;
                     serde_json::to_value(response).map_err(|error| {
@@ -389,7 +406,9 @@ impl PrimeDaemonClient {
             if let Some(cause) = inner.teardown_cause() {
                 return Err(not_sent_cause(Some(cause)));
             }
+            // Biased with the core future first (see `request`).
             tokio::select! {
+                biased;
                 data = &mut fut => data.map_err(|error| classify(error, None)),
                 _ = &mut notified => {
                     let cause = inner.teardown_cause().unwrap_or("closed");

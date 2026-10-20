@@ -1,17 +1,19 @@
 /**
  * The fixed-artifact addon loader.
  *
- * The addon loads from a fixed platform path (`native/<platform>.node`)
- * verified against `provenance.json` before use. `PRIME_AGENT_CLIENT_ADDON`
- * is an explicit TEST override: it skips the platform path but still
- * requires the provenance manifest to match. Any mismatch refuses the
- * load — no silent fallback.
+ * Production loads `native/<platform>.node` and verifies it against
+ * `provenance.json` (sha256 + schema id + harness commit + target triple)
+ * before use — fail-closed, no silent fallback. There is deliberately NO
+ * ambient environment override: the only escape hatch is the explicit
+ * `testArtifact` option, for the loader's own tests.
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const require = createRequire(import.meta.url);
 
 /** The platform-qualified artifact name this host must load. */
 export function platformArtifact(): string {
@@ -29,7 +31,11 @@ interface ProvenanceManifest {
   artifacts: Record<string, ProvenanceEntry>;
 }
 
-const require = createRequire(import.meta.url);
+export interface LoadAddonOptions {
+  /** Explicit TEST option: load `native/<name>` instead of the platform
+   * artifact. Production callers never pass this. */
+  testArtifact?: string;
+}
 
 function packageRoot(): string {
   return join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -40,12 +46,18 @@ function sha256(path: string): string {
 }
 
 /** Loads the native addon after verifying its provenance. Fail-closed. */
-export function loadAddon(): Record<string, unknown> {
+export function loadAddon(options?: LoadAddonOptions): {
+  clientMetadata: () => {
+    schemaId: string;
+    harnessCommit: string;
+    targetTriple: string;
+  };
+} {
   const root = packageRoot();
-  const manifestPath = join(root, 'provenance.json');
-  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as ProvenanceManifest;
-  const override = process.env.PRIME_AGENT_CLIENT_ADDON;
-  const artifact = override ?? platformArtifact();
+  const manifest = JSON.parse(
+    readFileSync(join(root, 'provenance.json'), 'utf8'),
+  ) as ProvenanceManifest;
+  const artifact = options?.testArtifact ?? platformArtifact();
   const addonPath = join(root, 'native', artifact);
   const digest = sha256(addonPath);
   const entry = manifest.artifacts[artifact];
@@ -55,13 +67,7 @@ export function loadAddon(): Record<string, unknown> {
   if (entry.sha256 !== digest) {
     throw new Error(`addon provenance mismatch for "${artifact}": sha256 ${digest}`);
   }
-  const addon = require(pathToFileURL(addonPath).href) as {
-    clientMetadata: () => {
-      schemaId: string;
-      harnessCommit: string;
-      targetTriple: string;
-    };
-  };
+  const addon = require(addonPath);
   const metadata = addon.clientMetadata();
   if (metadata.schemaId !== entry.schemaId) {
     throw new Error(

@@ -17,7 +17,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "gen:provenance": "node scripts/gen-provenance.mjs",
-    "test": "npm run build && node --test tests/"
+    "test": "npm run build && npm run verify:provenance && node --test tests/",
+    "verify:provenance": "node scripts/verify-provenance.mjs"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

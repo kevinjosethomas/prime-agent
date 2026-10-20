@@ -50,14 +50,26 @@ jobs:
           echo "${NODE_SHA256_ARM64}  /tmp/node.tar.gz" | shasum -a 256 -c -
           sudo tar -xzf /tmp/node.tar.gz -C /usr/local --strip-components=1
           node --version && npm --version
+      - name: Format check (strict)
+        run: cargo fmt --all --check
+        working-directory: crates/pa-client-node
+      - name: Strict clippy (locked, all targets, deny warnings)
+        run: cargo clippy --locked --all-targets -- -D warnings
+        working-directory: crates/pa-client-node
       - name: Build the addon (release, locked)
         run: cargo build --release --locked -p pa-client-node
         working-directory: crates/pa-client-node
+      - name: Build the contract package (client's file: dependency)
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build:validators
+        working-directory: packages/client-contract
       - name: Stage the addon and provenance
         run: |
           cp ../../crates/pa-client-node/target/release/libpa_client_node.dylib native/darwin-arm64.node
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npm run gen:provenance
+          npm run verify:provenance
           cat provenance.json
         working-directory: packages/client
       - name: TypeScript build
