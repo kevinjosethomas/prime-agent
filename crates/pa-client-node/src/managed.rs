@@ -98,14 +98,24 @@ impl From<ManagedReconnectWindow> for ReconnectWindow {
 
 /// The status snapshot crossing the boundary.
 fn status_value(status: &ConnectionStatus) -> Value {
-    json!({
+    // Absent optionals are OMITTED, not JSON null: the JS contract is
+    // `appVersion?/error?/errorCode?: string` (undefined when absent).
+    let mut value = json!({
         "state": state_name(status.state),
         "socketPath": status.socket_path.display().to_string(),
-        "appVersion": status.app_version,
         "capabilities": status.capabilities,
-        "error": status.error,
-        "errorCode": status.error_code,
-    })
+    });
+    let fields = value.as_object_mut().expect("status object");
+    if let Some(app_version) = &status.app_version {
+        fields.insert("appVersion".into(), json!(app_version));
+    }
+    if let Some(error) = &status.error {
+        fields.insert("error".into(), json!(error));
+    }
+    if let Some(error_code) = &status.error_code {
+        fields.insert("errorCode".into(), json!(error_code));
+    }
+    value
 }
 
 /// One core `ConnectionEvent` as the JS event object.

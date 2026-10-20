@@ -46,6 +46,7 @@ test('start connects and streams the status lifecycle', async () => {
   const snapshot = session.status();
   assert.equal(snapshot.state, 'connected');
   assert.equal(snapshot.errorCode, undefined);
+  assert.ok(!('errorCode' in snapshot) && !('error' in snapshot));
   await session.stop();
   await stop();
 });
@@ -194,7 +195,7 @@ test('a connect failure surfaces the structural error code', async () => {
     (event) =>
       event.type === 'status' &&
       event.status.state === 'disconnected' &&
-      event.status.errorCode !== undefined,
+      typeof event.status.errorCode === 'string',
   );
   assert.equal(status.status.errorCode, 'not_found');
   assert.equal(session.status().errorCode, 'not_found');
@@ -212,7 +213,7 @@ test('a dead socket surfaces connection_refused', async () => {
     (event) =>
       event.type === 'status' &&
       event.status.state === 'disconnected' &&
-      event.status.errorCode !== undefined,
+      typeof event.status.errorCode === 'string',
   );
   assert.equal(status.status.errorCode, 'connection_refused');
   await session.stop();
