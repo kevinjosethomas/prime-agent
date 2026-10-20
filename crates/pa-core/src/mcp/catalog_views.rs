@@ -2,7 +2,7 @@
 //! credential resolution, the derived prompt label, login eligibility (endpoint pinning), and the
 //! fresh-login gate.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::catalog_schema::{AuthStrategy, McpSetupField, SetupFieldKind, SetupStatus};
 use super::connection_store::{McpConnectionRecord, McpConnectionStatus as RecordStatus};
@@ -347,6 +347,37 @@ fn config_uses_oauth(config: &McpServerConfig) -> bool {
             ..
         }
     )
+}
+
+/// An alias account's display label: its stored identity when it has one,
+/// else the service label plus its ordinal among the service's accounts. The
+/// internal connection id (`acme-2`) never reaches a human surface.
+pub(crate) fn alias_account_label(
+    records: &HashMap<String, super::connection_store::McpConnectionRecord>,
+    service: &super::service_catalog::McpServiceDescriptor,
+    record: &super::connection_store::McpConnectionRecord,
+) -> String {
+    if let Some(label) = record
+        .account_label
+        .as_deref()
+        .map(str::trim)
+        .filter(|label| !label.is_empty())
+    {
+        return label.to_string();
+    }
+    let mut aliases: Vec<&str> = records
+        .values()
+        .filter(|row| {
+            row.service_id == service.service_id && row.connection_id != service.service_id
+        })
+        .map(|row| row.connection_id.as_str())
+        .collect();
+    aliases.sort_unstable();
+    let ordinal = aliases
+        .iter()
+        .position(|id| *id == record.connection_id)
+        .map_or(2, |position| position + 2);
+    format!("{} account {}", service.label, ordinal)
 }
 
 /// Resolved login eligibility for one connection: ownership, disabled settings, setup gating,

@@ -106,6 +106,7 @@ impl Worker {
             "get_mcp_connections" => self.handle_get_mcp_connections().await,
             "set_mcp_static_token" => self.handle_set_mcp_static_token(payload).await,
             "remove_mcp_connection" => self.handle_remove_mcp_connection(payload).await,
+            "set_mcp_connection_label" => self.handle_set_mcp_connection_label(payload),
             "get_rlm_children" => self.handle_get_rlm_children().await,
             "get_context_tree" => self.handle_get_context_tree().await,
             "get_commands" => self.handle_get_commands().await,

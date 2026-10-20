@@ -174,6 +174,7 @@ pub const KNOWN_COMMAND_TYPES: &[&str] = &[
     "mutate_queued_input",
     "set_prompt_guidelines",
     "heartbeat_update_job",
+    "set_mcp_connection_label",
 ];
 
 /// Parsed client command envelope.
@@ -346,6 +347,7 @@ pub fn default_server_capabilities() -> Vec<DaemonServerCapability> {
                 "subagent_model_defaults",
                 "global_harness_defaults",
                 "prompt_guidelines",
+                "mcp_multi_account",
                 "workstream_classification",
                 "side_question_transcript",
                 "transient_bash",
@@ -740,6 +742,9 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
         | DaemonCommand::RemoveMcpConnection {
             active_session_id, ..
         }
+        | DaemonCommand::SetMcpConnectionLabel {
+            active_session_id, ..
+        }
         | DaemonCommand::ReplaceAcpMcpServers {
             active_session_id, ..
         }
@@ -1027,6 +1032,7 @@ pub fn command_type_name(command: &DaemonCommand) -> &'static str {
         DaemonCommand::GetMcpConnections { .. } => "get_mcp_connections",
         DaemonCommand::SetMcpStaticToken { .. } => "set_mcp_static_token",
         DaemonCommand::RemoveMcpConnection { .. } => "remove_mcp_connection",
+        DaemonCommand::SetMcpConnectionLabel { .. } => "set_mcp_connection_label",
         DaemonCommand::ReplaceAcpMcpServers { .. } => "replace_acp_mcp_servers",
         DaemonCommand::GetModelCatalog { .. } => "get_model_catalog",
         DaemonCommand::GetAvailableModels { .. } => "get_available_models",
