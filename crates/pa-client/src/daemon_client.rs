@@ -68,6 +68,12 @@ pub struct DaemonClientOptions {
     /// send before any bytes are queued (a provable non-delivery).
     /// `None` (the default) keeps the unbounded pending map.
     pub max_pending: Option<usize>,
+    /// The client identity riding every command envelope's `clientId`
+    /// (the daemon's `create_reuse` ownership-conflict and input-pause
+    /// lease logic compare it). `None` (the default) keeps the historical
+    /// `daemon-tui:{pid}` identity; a desktop host passes its own unique
+    /// identity.
+    pub client_id: Option<String>,
 }
 
 pub const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30_000;
@@ -896,7 +902,10 @@ impl DaemonClient {
         Ok((
             DaemonClient {
                 socket_path: socket_path.to_path_buf(),
-                client_id: format!("daemon-tui:{}", std::process::id()),
+                client_id: options
+                    .client_id
+                    .clone()
+                    .unwrap_or_else(|| format!("daemon-tui:{}", std::process::id())),
                 protocol: DaemonProtocolInfo {
                     name: DAEMON_PROTOCOL_NAME.to_string(),
                     version,

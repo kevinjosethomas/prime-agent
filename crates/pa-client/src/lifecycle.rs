@@ -92,6 +92,16 @@ pub struct ConnectionStatus {
     pub app_version: Option<String>,
     pub capabilities: Vec<String>,
     pub error: Option<String>,
+    /// The STRUCTURAL error code of the last connect failure: the first
+    /// `io::Error` in the preserved anyhow chain, as its stable
+    /// snake-cased `io::ErrorKind` label (`not_found` when the socket
+    /// path does not exist, `connection_refused` when nothing listens,
+    /// `permission_denied`, ...). `None` on every other status —
+    /// announced losses, stop, and handshake/timeout failures carry no
+    /// OS code and must never authorize a spawn. Platform-aware through
+    /// `ErrorKind` (windows ERROR_FILE_NOT_FOUND and WSAECONNREFUSED map
+    /// to the same labels); never parsed from the message.
+    pub error_code: Option<String>,
 }
 
 /// Everything the consumer drains from one session.
@@ -211,6 +221,7 @@ impl DaemonClientSession {
             app_version: None,
             capabilities: Vec::new(),
             error: None,
+            error_code: None,
         };
         let state = Arc::new(SessionState {
             status: RwLock::new(status),
@@ -653,6 +664,27 @@ fn validate(config: &LifecycleConfig) -> Result<()> {
     Ok(())
 }
 
+/// The structural error code of a connect failure: the first `io::Error`
+/// in the preserved anyhow chain, as its stable snake-cased `ErrorKind`
+/// label (`not_found`, `connection_refused`, `permission_denied`, ...).
+/// `None` when the chain carries no `io::Error` (handshake or timeout
+/// failures — which must never authorize a spawn). Never parsed from the
+/// message.
+fn os_error_code(error: &anyhow::Error) -> Option<String> {
+    let io = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<std::io::Error>())?;
+    let name = format!("{:?}", io.kind());
+    let mut coded = String::with_capacity(name.len());
+    for character in name.chars() {
+        if character.is_uppercase() {
+            coded.push('_');
+        }
+        coded.push(character.to_ascii_lowercase());
+    }
+    Some(coded.trim_start_matches('_').to_string())
+}
+
 /// One restore attempt's outcome, consumed by the driver loop.
 pub(crate) enum RestoreOutcome {
     Done {
@@ -787,9 +819,11 @@ async fn driver_run(
                 }
                 Err(error) => {
                     client = None;
+                    let error_code = os_error_code(&error);
                     publish(&state, |status| {
                         status.state = ConnectionState::Disconnected;
                         status.error = Some(error.to_string());
+                        status.error_code = error_code;
                     });
                     let window = config.reconnect.window_for(kind);
                     if deadline.is_none() {
@@ -843,6 +877,7 @@ async fn driver_run(
                     .error
                     .get_or_insert_with(|| "the session stopped".to_string());
             }
+            status.error_code = None;
             let _ = state.events.send(ConnectionEvent::Status(status.clone()));
         }
         state.stopped.send_replace(true);
@@ -868,6 +903,7 @@ fn expire(state: &Arc<SessionState>, kind: ReconnectKind) {
             "the {} reconnect window expired",
             window_name(kind)
         ));
+        status.error_code = None;
     });
 }
 
@@ -895,6 +931,8 @@ pub(crate) async fn install_fresh(
     *slot = Some(fresh.clone());
     publish(state, |status| {
         status.state = ConnectionState::Connected;
+        // A live connection invalidates any prior connect-failure code.
+        status.error_code = None;
         status.app_version = hello
             .get("appVersion")
             .and_then(Value::as_str)
@@ -1187,11 +1225,13 @@ mod tests {
     /// (`drop_first`).
     struct Supervisor {
         commands: Arc<Mutex<Vec<(u64, Value)>>>,
+        client_ids: Arc<Mutex<Vec<String>>>,
         connected: Arc<AtomicU64>,
         eof: Arc<AtomicU64>,
     }
 
     impl Supervisor {
+        #[allow(clippy::too_many_arguments)]
         fn spawn(
             dir: &tempfile::TempDir,
             frames: Vec<Value>,
@@ -1205,12 +1245,14 @@ mod tests {
             let socket = dir.path().join("d.sock");
             let listener = UnixListener::bind(&socket).unwrap();
             let commands = Arc::new(Mutex::new(Vec::new()));
+            let client_ids = Arc::new(Mutex::new(Vec::new()));
             let connected = Arc::new(AtomicU64::new(0));
             let eof = Arc::new(AtomicU64::new(0));
             let release = std::sync::Arc::new(tokio::sync::Notify::new());
             tokio::spawn(supervisor_serve(
                 listener,
                 Arc::clone(&commands),
+                Arc::clone(&client_ids),
                 Arc::clone(&connected),
                 Arc::clone(&eof),
                 frames,
@@ -1221,6 +1263,7 @@ mod tests {
             (
                 Supervisor {
                     commands,
+                    client_ids,
                     connected,
                     eof,
                 },
@@ -1234,6 +1277,7 @@ mod tests {
     async fn supervisor_serve(
         listener: UnixListener,
         commands: Arc<Mutex<Vec<(u64, Value)>>>,
+        client_ids: Arc<Mutex<Vec<String>>>,
         connected: Arc<AtomicU64>,
         eof: Arc<AtomicU64>,
         frames: Vec<Value>,
@@ -1248,6 +1292,7 @@ mod tests {
             connected.store(connections, Ordering::SeqCst);
             let connection = connections;
             let commands = Arc::clone(&commands);
+            let client_ids = Arc::clone(&client_ids);
             let eof = Arc::clone(&eof);
             let frames = frames.clone();
             let release = Arc::clone(&release);
@@ -1286,6 +1331,9 @@ mod tests {
                     };
                     let command = envelope["command"].clone();
                     commands.lock().unwrap().push((connection, command.clone()));
+                    if let Some(client_id) = envelope["clientId"].as_str() {
+                        client_ids.lock().unwrap().push(client_id.to_string());
+                    }
                     let is_attach = command["type"] == "attach";
                     if hold_attach && is_attach {
                         // The held restore: everything else flows first.
@@ -2430,5 +2478,171 @@ mod tests {
             "the real task's Drop was observed before the fresh stop returned"
         );
         let _ = supervisor;
+    }
+    #[tokio::test]
+    async fn a_missing_socket_path_surfaces_the_structural_not_found_code() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let missing = dir.path().join("no-such-socket.sock");
+        let (session, mut events) = DaemonClientSession::start(config(&missing))
+            .await
+            .unwrap();
+        // The first connect failure publishes Disconnected WITH the
+        // structural code; the unbounded desktop policy keeps retrying, so
+        // assert on the first Disconnected status event and the sync
+        // snapshot alike.
+        let status = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match next_event(&mut events).await {
+                    ConnectionEvent::Status(status)
+                        if status.state == ConnectionState::Disconnected =>
+                    {
+                        return status;
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("a disconnected status arrives");
+        assert_eq!(status.error_code.as_deref(), Some("not_found"));
+        assert_eq!(session.status().error_code.as_deref(), Some("not_found"));
+        let _ = session.stop().await;
+    }
+
+    #[tokio::test]
+    async fn a_dead_socket_surfaces_the_structural_refused_code() {
+        let dir = tempfile::TempDir::new().unwrap();
+        // A plain FILE at the socket path: the connect reaches the kernel
+        // and is refused — the "socket file exists, nothing listens" shape.
+        let dead = dir.path().join("dead.sock");
+        std::fs::write(&dead, b"").unwrap();
+        let (session, mut events) = DaemonClientSession::start(config(&dead))
+            .await
+            .unwrap();
+        let status = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match next_event(&mut events).await {
+                    ConnectionEvent::Status(status)
+                        if status.state == ConnectionState::Disconnected =>
+                    {
+                        return status;
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("a disconnected status arrives");
+        assert_eq!(status.error_code.as_deref(), Some("connection_refused"));
+        let _ = session.stop().await;
+    }
+
+    #[tokio::test]
+    async fn a_protocol_mismatch_carries_no_error_code() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let socket = dir.path().join("d.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        // A supervisor greeting with an unsupported protocol version: the
+        // connect fails as a handshake refusal — an anyhow failure with NO
+        // io source, so no code may authorize a spawn.
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let mut writer = stream;
+            let hello = json!({
+                "type": "daemon_hello",
+                "protocol": { "name": "prime-agent.daemon", "version": 6 },
+                "clientId": "srv",
+                "serverCapabilities": [],
+            });
+            let mut line = serde_json::to_string(&hello).unwrap();
+            line.push('\n');
+            writer.write_all(line.as_bytes()).await.unwrap();
+            std::future::pending::<()>().await;
+        });
+        let (session, mut events) = DaemonClientSession::start(config(&socket))
+            .await
+            .unwrap();
+        let status = tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                match next_event(&mut events).await {
+                    ConnectionEvent::Status(status)
+                        if status.state == ConnectionState::Disconnected =>
+                    {
+                        return status;
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("a disconnected status arrives");
+        assert_eq!(status.error_code, None);
+        let _ = session.stop().await;
+    }
+
+    #[tokio::test]
+    async fn a_custom_client_id_rides_every_envelope_including_the_restore() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let (supervisor, socket, release) =
+            Supervisor::spawn(&dir, Vec::new(), false, true);
+        let mut lifecycle = config(&socket);
+        lifecycle.transport.client_id = Some("prime-desktop:7:uuid".to_string());
+        let (session, mut events) = DaemonClientSession::start(lifecycle)
+            .await
+            .unwrap();
+        wait_connected(&mut events).await;
+        // Attach through the request path (the envelope adoption), then the
+        // scripted death of the first connection: the driver reconnects and
+        // RESTORES — the restore attach must carry the custom identity too.
+        session.register_attachment("s1", None);
+        session
+            .request_ok(DaemonCommand::Attach {
+                id: None,
+                active_session_id: "s1".to_string(),
+                client_id: None,
+                capabilities: None,
+                resume_cursor: None,
+                telemetry_disabled: None,
+                recovery_config: None,
+                env: None,
+                launch_env: None,
+                rest: Map::new(),
+            })
+            .await
+            .unwrap();
+        release.notify_one();
+        tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                if supervisor.connected.load(Ordering::SeqCst) >= 2 {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the driver reconnects");
+        // The restore's attach envelope on the second connection.
+        tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                let commands = supervisor.commands.lock().unwrap();
+                if commands
+                    .iter()
+                    .any(|(connection, command)| *connection == 2)
+                {
+                    return;
+                }
+                drop(commands);
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the restore attach was sent");
+        let ids = supervisor.client_ids.lock().unwrap().clone();
+        assert!(
+            ids.iter().all(|id| id == "prime-desktop:7:uuid"),
+            "every envelope carries the custom identity: {ids:?}"
+        );
+        assert!(ids.len() >= 2, "at least the fresh attach and the restore");
+        let _ = session.stop().await;
     }
 }
