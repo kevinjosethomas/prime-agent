@@ -1,7 +1,8 @@
 //! The session's live-input reload (`/reload`'s daemon half): re-read the
 //! request auth from the credential store and the MCP manager's settings
 //! and auth state — the pieces another process (a `/login`, a `/mcp` key
-//! flow) can change under a running session.
+//! flow) can change under a running session — plus the skill inventory and
+//! the system prompt the session builds from disk at an explicit reload.
 use super::AgentSessionEngine;
 use pa_core::session_engine::provider_adapter::ProviderTarget;
 
@@ -117,5 +118,29 @@ impl AgentSessionEngine {
             }
         }
         Ok(())
+    }
+
+    /// `/reload`'s skill half: re-run the session's skill loader (the same
+    /// roots and settings the build used) and rebuild the skill inventory
+    /// AND the system prompt from what disk holds now, so `/skill:`
+    /// expansion, the resource snapshot, and `<available_skills>` stop
+    /// listing deleted skills and pick up added ones. The prompt changes
+    /// ONLY here (and at compaction, as before); turns never rebuild it.
+    /// A session not yet built loads fresh skills at its build, so the
+    /// reload is a no-op for it.
+    pub(crate) async fn reload_skill_inventory(&self) -> Result<(), String> {
+        let guard = self.session.lock().await;
+        let Some(engine) = guard.as_deref() else {
+            return Ok(());
+        };
+        // The prompt assembly resolves the live model's selector and
+        // vision capability; a session built without a resolvable model
+        // never got here.
+        let model = self.resolve_model().map_err(|error| format!("{error:#}"))?;
+        engine
+            .session
+            .reload_skills_and_prompt(&model)
+            .await
+            .map_err(|error| format!("{error:#}"))
     }
 }

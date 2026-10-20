@@ -727,3 +727,129 @@ fn reload_keeps_the_target_when_the_credential_leaves_the_store() {
         "a restored credential rebinds the request auth"
     );
 }
+
+/// One markdown skill under the agent dir's user skills root.
+fn write_skill(agent_dir: &std::path::Path, name: &str) {
+    let dir = agent_dir.join("skills").join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("SKILL.md"),
+        format!(
+            "---\nname: {name}\ndescription: The {name} description\n---\nRun the {name} flow."
+        ),
+    )
+    .unwrap();
+}
+
+/// The skill names the resource snapshot reports.
+async fn snapshot_skill_names(engine: &std::sync::Arc<AgentSessionEngine>) -> Vec<String> {
+    use crate::engine::SessionEngine as _;
+    engine
+        .resource_snapshot()
+        .await
+        .get("skills")
+        .and_then(|skills| skills.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|skill| skill.get("name").and_then(Value::as_str).map(String::from))
+        .collect()
+}
+
+/// The live core session's system prompt.
+async fn live_system_prompt(engine: &std::sync::Arc<AgentSessionEngine>) -> String {
+    let guard = engine.session.lock().await;
+    guard
+        .as_deref()
+        .expect("the session is built")
+        .session
+        .agent()
+        .state()
+        .await
+        .system_prompt
+}
+
+/// `/reload`'s skill half: the snapshot hides a deleted skill file before
+/// the reload (the cheap stat), and the explicit reload re-reads disk —
+/// the deleted skill leaves the snapshot and the prompt, an added skill
+/// lands in both. The prompt keeps the deleted skill until the reload.
+#[tokio::test]
+async fn reload_reloads_skills_and_the_snapshot_hides_deleted_files() {
+    let (engine, _dir, agent_dir) = {
+        let _faux = FAUX_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::TempDir::new().unwrap();
+        let agent_dir = dir.path().join("agent");
+        write_skill(&agent_dir, "keep-skill");
+        write_skill(&agent_dir, "drop-skill");
+        let engine = AgentSessionEngine::new(AgentEngineConfig {
+            cwd: dir.path().to_path_buf(),
+            agent_dir: agent_dir.clone(),
+            provider: None,
+            model: None,
+            api_key: None,
+            thinking: None,
+            session_dir: None,
+            session_file: None,
+            faux_script: Some(
+                serde_json::json!({ "engine": "faux", "responses": [{ "text": "ok" }] })
+                    .to_string(),
+            ),
+            supervisor_link: None,
+            telemetry_disabled: None,
+            cron_store: None,
+            queued_steering_probe: None,
+        })
+        .unwrap();
+        let engine = std::sync::Arc::new(engine);
+        engine.register_arc();
+        let model = engine.resolve_model().expect("the faux model resolves");
+        drop(model);
+        (engine, dir, agent_dir)
+    };
+    // Build the core session now (the resource loader snapshot happens here).
+    let model = engine.resolve_model().expect("the faux model resolves");
+    engine
+        .ensure_core_session_async(&model)
+        .await
+        .expect("the session builds");
+    let before = snapshot_skill_names(&engine).await;
+    assert!(before.contains(&"keep-skill".to_string()));
+    assert!(before.contains(&"drop-skill".to_string()));
+
+    // A skill deleted and one added under the running session.
+    std::fs::remove_dir_all(agent_dir.join("skills").join("drop-skill")).unwrap();
+    write_skill(&agent_dir, "added-skill");
+
+    // The snapshot hides the deleted file at its cheap stat; the prompt and
+    // the inventory keep it until the explicit reload.
+    let after_delete = snapshot_skill_names(&engine).await;
+    assert!(after_delete.contains(&"keep-skill".to_string()));
+    assert!(
+        !after_delete.contains(&"drop-skill".to_string()),
+        "the snapshot hides the deleted skill file"
+    );
+    assert!(!after_delete.contains(&"added-skill".to_string()));
+    let stale_prompt = live_system_prompt(&engine).await;
+    assert!(stale_prompt.contains("drop-skill"));
+    assert!(!stale_prompt.contains("added-skill"));
+
+    // The explicit reload re-reads disk: the snapshot and the prompt match.
+    engine
+        .reload_skill_inventory()
+        .await
+        .expect("the reload applies");
+    let after_reload = snapshot_skill_names(&engine).await;
+    assert!(after_reload.contains(&"keep-skill".to_string()));
+    assert!(after_reload.contains(&"added-skill".to_string()));
+    assert!(!after_reload.contains(&"drop-skill".to_string()));
+    let reloaded_prompt = live_system_prompt(&engine).await;
+    assert!(reloaded_prompt.contains("added-skill"));
+    assert!(!reloaded_prompt.contains("drop-skill"));
+
+    // The engine owns a private runtime; dropping it from an async
+    // context panics — the teardown rides a blocking thread.
+    tokio::task::spawn_blocking(move || drop(engine))
+        .await
+        .expect("engine drop join");
+}

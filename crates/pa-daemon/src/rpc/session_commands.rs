@@ -601,7 +601,8 @@ async fn get_commands(state: &Arc<RpcState>) -> Result<ResponseData, String> {
         }
         commands.push(entry);
     }
-    for skill in &engine.skills {
+    let skills = engine.skills();
+    for skill in &skills {
         let mut entry = json!({
             "name": format!("skill:{}", skill.name),
             "source": "skill",

@@ -83,7 +83,7 @@ async fn a_skill_command_prompt_expands_into_the_skill_block() {
     // TS `_expandSkillCommand`: a `/skill:<name> [args]` submission
     // persists as the `<skill>` block plus the argument text; the
     // renderer parses that block back out.
-    let mut session = scripted_session().await;
+    let session = scripted_session().await;
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("SKILL.md");
     std::fs::write(&file_path, "---\nname: web-search\n---\nRun a web search.").unwrap();

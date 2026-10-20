@@ -78,11 +78,13 @@ impl AgentSession {
         options: PromptOptions,
     ) -> anyhow::Result<PromptOutcome> {
         let expand = options.expand_prompt_templates.unwrap_or(true);
+        // The inventory snapshot must outlive the expansion: the returned
+        // `used_skill` borrows it through the `skill_used` check below.
+        let skills = self.skills();
         // TS `_finishSubmissionNormalization` order: skill commands expand first, prompt templates
         // second; both are gated by the same policy flag.
         let (normalized, used_skill) = if expand {
-            let (skill_expanded, used_skill) =
-                crate::skills::expand_skill_command(text, &self.skills);
+            let (skill_expanded, used_skill) = crate::skills::expand_skill_command(text, &skills);
             let normalized =
                 crate::skills::expand_prompt_template(&skill_expanded, &self.prompt_templates);
             (normalized, used_skill)
@@ -103,7 +105,7 @@ impl AgentSession {
         // skill identity.
         let skill_used = used_skill.is_some()
             || pa_types::skill_blocks::parse_skill_block(&normalized)
-                .is_some_and(|block| self.skills.iter().any(|skill| skill.name == block.name));
+                .is_some_and(|block| skills.iter().any(|skill| skill.name == block.name));
         if skill_used {
             if let Some(telemetry) = &self.skill_telemetry {
                 telemetry.note_skill_used();
@@ -152,7 +154,7 @@ impl AgentSession {
             for row in &options.batch {
                 let row_text = if expand {
                     let (skill_expanded, _) =
-                        crate::skills::expand_skill_command(&row.text, &self.skills);
+                        crate::skills::expand_skill_command(&row.text, &skills);
                     crate::skills::expand_prompt_template(&skill_expanded, &self.prompt_templates)
                 } else {
                     row.text.clone()
