@@ -616,9 +616,19 @@ pub fn tagged_object_field_drops(witness: &Value) -> Vec<(String, Value)> {
                 if name == tag_property {
                     continue;
                 }
-                let mut variant = object.clone();
-                variant.remove(name);
-                out.push((format!("nested-drop-{name}"), Value::Object(variant)));
+                let mut dropped = object.clone();
+                dropped.remove(name);
+                out.push((format!("nested-drop-{name}"), Value::Object(dropped)));
+                let mut mistyped = object.clone();
+                let wrong_value = match object.get(name).and_then(Value::as_str) {
+                    Some("") => json!(false),
+                    _ => json!("wrong-type"),
+                };
+                mistyped.insert(name.clone(), wrong_value);
+                out.push((
+                    format!("nested-wrong-type-{name}"),
+                    Value::Object(mistyped),
+                ));
                 if out.len() >= 64 {
                     return out;
                 }

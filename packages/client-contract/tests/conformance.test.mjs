@@ -93,6 +93,23 @@ test("error info: unknown codes accepted, known codes strict", async () => {
   assert.ok(c.validateResponse(response(null)));
 });
 
+test("known-kind nested blocks are strict in the schema too", async () => {
+  const c = await loadContract();
+  const message = (content) => ({
+    role: "user",
+    content,
+    timestamp: 0,
+  });
+  assert.ok(c.validateAgentMessage(message([{ type: "text", text: "wire" }])));
+  assert.ok(
+    c.validateAgentMessage(message([{ type: "image", data: "wire", mimeType: "wire" }])),
+  );
+  assert.ok(!c.validateAgentMessage(message([{ type: "text" }])));
+  assert.ok(!c.validateAgentMessage(message([{ type: "text", text: 7 }])));
+  assert.ok(!c.validateAgentMessage(message([{ type: "image", data: "wire" }])));
+  assert.ok(c.validateAgentMessage(message([{ type: "brand_new_kind", kept: 1 }])));
+});
+
 test("metadata is derived and consistent", async () => {
   const metadata = loadMetadata();
   assert.equal(metadata.protocol.name, "prime-agent.daemon");

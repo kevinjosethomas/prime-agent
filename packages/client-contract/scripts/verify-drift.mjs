@@ -16,8 +16,7 @@ async function files(dir) {
 
 const tsDir = join(root, "generated", "ts");
 const typecheckDir = join(root, "generated", "typecheck");
-const distDir = join(root, "dist");
-const all = async () => [...(await files(tsDir)), ...(await files(typecheckDir)), ...(await files(distDir))];
+const all = async () => [...(await files(tsDir)), ...(await files(typecheckDir))];
 const committed = new Map();
 for (const path of await all()) {
   committed.set(path, await readFile(path, "utf8"));

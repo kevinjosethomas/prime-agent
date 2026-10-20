@@ -58,6 +58,15 @@ const metadata = loadMetadata(); // protocol, commands, kinds, errors, capabilit
 - Rust-side behavior is never changed by this package: it is a generated
   view of the wire, and disagreements are surfaced, not patched over.
 
+## Production consumption
+
+The runtime entry is BUILT JavaScript (`dist/index.js` — Node 18 compatible;
+TypeScript is never imported at runtime). `dist` is a pack-time build
+output, not committed: consumers run `npm run build:validators && npm pack`
+and pin the resulting tarball (`ajv` is the only runtime dependency; the
+pack carries `src`, `generated`, `scripts`, and `dist`). PR4 pins the
+tarball from the harness source; the package stays private (never published).
+
 ## Regeneration
 
 `cargo run -p pa-contract` (Rust side: schemas, corpus, metadata) and
