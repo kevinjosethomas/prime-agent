@@ -44,6 +44,9 @@ class Provider(http.server.ThreadingHTTPServer):
         self.requests = []
         self.parent_requests = []
         self.child_requests = []
+        # Arrival evidence for the child-count assertion: one (timestamp,
+        # classification) row per request, in arrival order.
+        self.request_arrivals = []
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -60,6 +63,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                      for m in body.get('messages', []) if m.get('role') == 'user')
         child = not parent and any('FACTORY_RECOVERY_CHILD' in ''.join(texts(m.get('content')))
                     for m in body.get('messages', []) if m.get('role') == 'user')
+        self.server.request_arrivals.append((time.monotonic(), 'child' if child else 'parent'))
         if child:
             self.server.child_requests.append(body)
             delta = {'content': 'first attempt has no JSON' if len(self.server.child_requests) == 1
@@ -101,6 +105,18 @@ def extract(requests):
 def count(row, snake, camel):
     assert not (snake in row and camel in row), 'ambiguous duplicate wire keys'
     return row[snake] if snake in row else row[camel]
+
+
+def snapshot_live_counts(server, clock=time.monotonic):
+    """Evidence capture beside the child-count assertion: the live counter
+    values and the immutable arrival inventory, taken at one instant."""
+    return {
+        'total_requests': len(server.requests),
+        'parent_requests': len(server.parent_requests),
+        'child_requests': len(server.child_requests),
+        'request_arrivals': list(server.request_arrivals),
+        'snapshot_time': clock(),
+    }
 
 
 def validate(probe):
@@ -173,6 +189,7 @@ def observe(binary, kind, root, observed):
                 action='resume', runId=run_id)
             observed['probe'] = {'paused': paused, 'done': settled()}
             validate(observed['probe'])
+            observed['live_count_evidence'] = snapshot_live_counts(server)
             assert len(server.child_requests) == 3, 'not two producer attempts plus one guarded verifier'
         observed['behavior_verified'] = True
     finally:
