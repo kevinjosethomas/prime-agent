@@ -194,6 +194,47 @@ impl McpManager {
             .to_string();
         Ok(PasteInstallInputs {
             server: server.to_string(),
+            service_id: service.service_id.clone(),
+            endpoint,
+            label: service.label.clone(),
+            auth_storage: self.auth_storage_handle(),
+            store: std::sync::Arc::clone(&self.connection_store),
+            probe: self.probe(),
+        })
+    }
+
+    /// The paste-install inputs for one ADD-account flow of a pasteable
+    /// service: the next free per-account id under the service's endpoint,
+    /// keeping the parent's service id. The connection id is minted here;
+    /// callers never pick it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a human-readable error when the service is not a pasteable
+    /// token service or no free account id exists.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a pasteable service carries no endpoint (unreachable by
+    /// the pasteable filter) or the connection store mutex is poisoned.
+    pub fn add_paste_account_inputs(&self, service_id: &str) -> Result<PasteInstallInputs, String> {
+        let service = self
+            .service_descriptor(service_id)
+            .filter(|service| is_pasteable_token_service(service))
+            .ok_or_else(|| {
+                format!("{service_id} does not collect a single credential; it is not pasteable.")
+            })?;
+        let endpoint = service
+            .transport
+            .endpoint()
+            .expect("pasteable services carry an endpoint")
+            .to_string();
+        let server = self
+            .next_account_connection_id(service_id)
+            .ok_or_else(|| format!("{service_id} has no free account id left."))?;
+        Ok(PasteInstallInputs {
+            server,
+            service_id: service_id.to_string(),
             endpoint,
             label: service.label.clone(),
             auth_storage: self.auth_storage_handle(),
@@ -212,7 +253,7 @@ impl McpManager {
     }
 
     /// The probe seam (injected in tests; the real handshake in product).
-    fn probe(&self) -> McpEndpointProbe {
+    pub(crate) fn probe(&self) -> McpEndpointProbe {
         self.probe_override.clone().unwrap_or_else(|| {
             McpEndpointProbe::new(Arc::new(super::probe::ReqwestMcpProbe::default()))
         })
@@ -342,7 +383,7 @@ impl McpManager {
                 record.connection_id.clone(),
                 ResolvedIntegration {
                     server: record.connection_id.clone(),
-                    label: format!("{} ({})", service.label, record.connection_id),
+                    label: super::catalog_views::alias_account_label(&records, service, record),
                     config: http_config(&config_url, uses_oauth),
                     uses_oauth,
                     user_declared: false,
@@ -487,6 +528,9 @@ pub struct McpConnectionHandles {
 /// The paste-install inputs: service identity plus the async handles.
 pub struct PasteInstallInputs {
     pub server: String,
+    /// The catalog service the account belongs to: the parent's id for an
+    /// alias account, the server's own id otherwise.
+    pub service_id: String,
     pub endpoint: String,
     pub label: String,
     auth_storage: Arc<tokio::sync::Mutex<crate::auth::AuthStorage>>,
@@ -531,7 +575,7 @@ pub async fn install_static_token(
     let outcome = inputs.probe.probe(&inputs.endpoint, token).await;
     let mut record = new_pending_record(
         &inputs.server,
-        &inputs.server,
+        &inputs.service_id,
         &inputs.label,
         &inputs.endpoint,
     );
@@ -589,6 +633,28 @@ pub async fn install_static_token(
             .as_ref()
             .and_then(|record| record.last_error.clone()),
     })
+}
+
+impl McpConnectionHandles {
+    /// Rename one account's stored identity label (the inline rename
+    /// surface): the record's accountLabel, never its connection id.
+    ///
+    /// # Errors
+    ///
+    /// Returns a human-readable error when the account has no record or the
+    /// record cannot be written.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the connection store mutex is poisoned.
+    pub fn renamed(&self, connection_id: &str, label: &str) -> Result<(), String> {
+        let mut store = self.store.lock().unwrap();
+        store
+            .set_account_label(connection_id, label, None)
+            .map_err(|error| format!("connection record write failed: {error}"))?
+            .then_some(())
+            .ok_or_else(|| format!("{connection_id} has no saved account."))
+    }
 }
 
 /// Remove one connection: delete its credential and its connection record (the

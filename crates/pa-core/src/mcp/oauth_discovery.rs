@@ -74,6 +74,9 @@ pub(crate) struct AuthServerMetadata {
     pub token_endpoint: String,
     pub registration_endpoint: Option<String>,
     pub scopes_supported: Option<Vec<String>>,
+    /// The OIDC userinfo endpoint when the metadata advertises one: the
+    /// one-time identity read a fresh connect performs.
+    pub userinfo_endpoint: Option<String>,
 }
 
 /// Validate one metadata document against its issuer.
@@ -131,12 +134,18 @@ fn authorization_server_metadata(
                 .filter_map(|scope| scope.as_str().map(str::to_string))
                 .collect::<Vec<String>>()
         });
+    let userinfo_endpoint = object
+        .get("userinfo_endpoint")
+        .and_then(|value| value.as_str())
+        .filter(|endpoint| validated_https_url(endpoint, "Userinfo endpoint").is_ok())
+        .map(str::to_string);
     Ok(AuthServerMetadata {
         issuer: metadata_issuer.to_string(),
         authorization_endpoint: authorization_endpoint.to_string(),
         token_endpoint: token_endpoint.to_string(),
         registration_endpoint,
         scopes_supported,
+        userinfo_endpoint,
     })
 }
 
@@ -706,6 +715,7 @@ mod tests {
                 token_endpoint: "https://login.example/tenant/token".to_string(),
                 registration_endpoint: Some("https://login.example/tenant/register".to_string()),
                 scopes_supported: Some(vec!["read".to_string(), "write".to_string()]),
+                userinfo_endpoint: None,
             }
         );
     }

@@ -472,6 +472,224 @@ fn catalog_surfaces_and_paste_installs_through_the_daemon() {
     client.shutdown_daemon();
 }
 
+/// The multi-account paste flow through the daemon: the primary account, an
+/// add-account install under the next free id, the rename, and a disconnect
+/// that removes exactly one account.
+#[test]
+fn multi_account_paste_adds_renames_and_disconnects_through_the_daemon() {
+    let Some(kernel_python) = kernel_python() else {
+        return;
+    };
+    let _serial = DAEMON_E2E.lock().unwrap();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let agent_dir = dir.path().join("agent");
+    std::fs::create_dir_all(&agent_dir).expect("agent dir");
+    let sessions_dir = dir.path().join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    std::fs::write(
+        agent_dir.join("mcp-service-catalog.v2.json"),
+        snapshot_envelope(&seeded_catalog_document()),
+    )
+    .expect("write disk cache");
+
+    let socket = dir.path().join("multi.sock");
+    let _daemon = spawn_supervisor(&socket, &agent_dir, &kernel_python);
+    wait_socket_ready(&socket);
+    let (mut client, hello) = Client::connect(&socket);
+    assert_eq!(hello["type"], "daemon_hello");
+
+    client.send_command(
+        "c1",
+        &json!({
+            "type": "create",
+            "config": {
+                "cwd": dir.path().to_string_lossy(),
+                "sessionDir": sessions_dir.to_string_lossy(),
+            },
+        }),
+    );
+    let created = client.read_response("c1");
+    assert_eq!(created["success"], true, "create failed: {created}");
+    let session_id = created["data"]["activeSessionId"]
+        .as_str()
+        .or_else(|| created["data"]["id"].as_str())
+        .expect("active session id")
+        .to_string();
+
+    // The primary account installs first.
+    client.send_command(
+        "p1",
+        &json!({
+            "type": "set_mcp_static_token",
+            "activeSessionId": session_id,
+            "server": "paste-fixture",
+            "token": "primary-token",
+        }),
+    );
+    let installed = client.read_response("p1");
+    assert_eq!(
+        installed["success"], true,
+        "primary install failed: {installed}"
+    );
+    assert_eq!(installed["data"]["connectionId"], "paste-fixture");
+
+    // The add-account install: the next connection id is minted behind the scenes.
+    client.send_command(
+        "p2",
+        &json!({
+            "type": "set_mcp_static_token",
+            "activeSessionId": session_id,
+            "server": "paste-fixture",
+            "token": "second-token",
+            "addAccount": true,
+        }),
+    );
+    let second = client.read_response("p2");
+    assert_eq!(
+        second["success"], true,
+        "add-account install failed: {second}"
+    );
+    assert_eq!(
+        second["data"]["connectionId"], "paste-fixture-2",
+        "the minted id, never the service id twice: {second}"
+    );
+    let auth: Value = serde_json::from_str(
+        &std::fs::read_to_string(agent_dir.join("auth.json")).expect("auth.json"),
+    )
+    .expect("auth json");
+    assert_eq!(auth["mcp:paste-fixture-2"]["type"], "mcp_static_token");
+    assert_eq!(auth["mcp:paste-fixture-2"]["bearer"], "second-token");
+    let records: Value = serde_json::from_str(
+        &std::fs::read_to_string(agent_dir.join("mcp-connections.json"))
+            .expect("mcp-connections.json"),
+    )
+    .expect("records json");
+    let alias = &records["connections"]["paste-fixture-2"];
+    assert_eq!(alias["serviceId"], "paste-fixture", "the parent service id");
+    assert_eq!(alias["endpoint"], "https://paste-fixture.invalid/mcp");
+
+    // The roster groups both accounts under the service, each with its identity slot.
+    client.send_command(
+        "m1",
+        &json!({ "type": "get_mcp_connections", "activeSessionId": session_id }),
+    );
+    let roster = client.read_response("m1");
+    let services = roster["data"]["services"]
+        .as_array()
+        .unwrap_or_else(|| panic!("services array: {roster}"));
+    let paste = services
+        .iter()
+        .find(|service| service["serviceId"] == "paste-fixture")
+        .expect("paste fixture row");
+    assert_eq!(
+        paste["connectionIds"],
+        json!(["paste-fixture", "paste-fixture-2"]),
+        "two accounts: {paste}"
+    );
+    let connections = roster["data"]["connections"]
+        .as_array()
+        .expect("connections");
+    let alias_row = connections
+        .iter()
+        .find(|connection| connection["server"] == "paste-fixture-2")
+        .expect("the alias roster row");
+    assert_eq!(
+        alias_row["serviceId"], "paste-fixture",
+        "the roster groups by parent service: {alias_row}"
+    );
+
+    // The rename writes the account's identity label.
+    client.send_command(
+        "n1",
+        &json!({
+            "type": "set_mcp_connection_label",
+            "activeSessionId": session_id,
+            "connectionId": "paste-fixture-2",
+            "label": "Second workspace",
+        }),
+    );
+    let renamed = client.read_response("n1");
+    assert_eq!(
+        renamed["success"], true,
+        "set_mcp_connection_label failed: {renamed}"
+    );
+    client.send_command(
+        "m2",
+        &json!({ "type": "get_mcp_connections", "activeSessionId": session_id }),
+    );
+    let roster = client.read_response("m2");
+    let connections = roster["data"]["connections"]
+        .as_array()
+        .expect("connections");
+    let alias_row = connections
+        .iter()
+        .find(|connection| connection["server"] == "paste-fixture-2")
+        .expect("the alias roster row after rename");
+    assert_eq!(alias_row["accountLabel"], "Second workspace");
+    assert_eq!(
+        alias_row["label"], "Second workspace",
+        "the roster label is the identity, never the internal id: {alias_row}"
+    );
+
+    // The disconnect removes exactly this account; the first account stays.
+    client.send_command(
+        "r1",
+        &json!({
+            "type": "remove_mcp_connection",
+            "activeSessionId": session_id,
+            "server": "paste-fixture-2",
+        }),
+    );
+    let removed = client.read_response("r1");
+    assert_eq!(
+        removed["success"], true,
+        "remove_mcp_connection failed: {removed}"
+    );
+    let auth: Value = serde_json::from_str(
+        &std::fs::read_to_string(agent_dir.join("auth.json")).expect("auth.json"),
+    )
+    .expect("auth json");
+    assert!(
+        auth.get("mcp:paste-fixture-2").is_none(),
+        "alias credential gone: {auth}"
+    );
+    assert_eq!(
+        auth["mcp:paste-fixture"]["bearer"], "primary-token",
+        "the first account keeps its credential"
+    );
+    let records: Value = serde_json::from_str(
+        &std::fs::read_to_string(agent_dir.join("mcp-connections.json"))
+            .expect("mcp-connections.json"),
+    )
+    .expect("records json");
+    assert!(
+        records["connections"].get("paste-fixture-2").is_none(),
+        "the alias record left: {records}"
+    );
+    assert!(
+        records["connections"].get("paste-fixture").is_some(),
+        "the first account keeps its record: {records}"
+    );
+    client.send_command(
+        "m3",
+        &json!({ "type": "get_mcp_connections", "activeSessionId": session_id }),
+    );
+    let roster = client.read_response("m3");
+    let services = roster["data"]["services"]
+        .as_array()
+        .unwrap_or_else(|| panic!("services array: {roster}"));
+    let paste = services
+        .iter()
+        .find(|service| service["serviceId"] == "paste-fixture")
+        .expect("paste fixture row after disconnect");
+    assert_eq!(
+        paste["connectionIds"],
+        json!(["paste-fixture"]),
+        "the first account remains: {paste}"
+    );
+    client.shutdown_daemon();
+}
+
 /// The pinned-definition hint gating (Kevin's dogfood report, TS parity): a record whose
 /// service left the catalog shows the hint ONLY when a validated snapshot proves it.
 #[test]

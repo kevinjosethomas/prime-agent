@@ -30,7 +30,10 @@ pub use manager_catalog::{
     install_static_token, remove_mcp_connection, McpConnectionHandles, PasteInstallInputs,
     StaticTokenInstall,
 };
-pub use oauth::{mcp_login, mcp_refresh_token, McpLoginUi, McpOAuthConfig};
+pub use oauth::{
+    mcp_login, mcp_login_with_identity, mcp_refresh_token, McpLoginIdentity, McpLoginUi,
+    McpOAuthConfig,
+};
 pub use oauth_http::{OAuthHttp, OAuthHttpRequest, OAuthHttpResponse, ReqwestOAuthHttp};
 
 use std::collections::HashMap;
@@ -393,6 +396,13 @@ impl McpManager {
     /// The shared auth store the login flow persists into.
     pub(crate) fn auth_storage_handle(&self) -> Arc<tokio::sync::Mutex<AuthStorage>> {
         Arc::clone(&self.auth_storage)
+    }
+
+    /// The shared connection-record store the account flows write through.
+    pub(crate) fn connection_store_handle(
+        &self,
+    ) -> Arc<std::sync::Mutex<connection_store::McpConnectionStore>> {
+        std::sync::Arc::clone(&self.connection_store)
     }
 
     /// Wire (or clear) the interactive login behind the `mcp.begin_login`
@@ -908,6 +918,7 @@ impl McpManager {
 
     /// The connections roster for the `/mcp` connections view. Sorted by label.
     pub fn connection_roster(&self) -> Vec<McpConnectionEntry> {
+        let records = self.records_by_id();
         let generic: std::collections::HashSet<String> = self
             .get_enabled_persistent_generic_servers()
             .into_iter()
@@ -930,9 +941,13 @@ impl McpManager {
                 } else {
                     transport.as_str()
                 };
+                let record = records.get(&integration.server);
                 McpConnectionEntry {
                     server: integration.server.clone(),
                     label: integration.label.clone(),
+                    service_id: integration.catalog_service_id.clone(),
+                    account_label: record.and_then(|record| record.account_label.clone()),
+                    account_email: record.and_then(|record| record.account_email.clone()),
                     connected: self.is_authed(integration),
                     uses_oauth: integration.uses_oauth,
                     auth_kind: auth_kind.to_string(),
@@ -979,6 +994,16 @@ pub struct McpServerStatus {
 pub struct McpConnectionEntry {
     pub server: String,
     pub label: String,
+    /// The catalog service this account belongs to; `None` for user-declared
+    /// and session-scoped servers. Accounts of one service share it.
+    pub service_id: Option<String>,
+    /// The account's stored identity label (workspace/org name or the user's
+    /// own rename); `None` when the service itself is the label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_label: Option<String>,
+    /// The account's stored identity email when the connect could read one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_email: Option<String>,
     /// Connected: credentials present and the server enabled.
     pub connected: bool,
     pub uses_oauth: bool,

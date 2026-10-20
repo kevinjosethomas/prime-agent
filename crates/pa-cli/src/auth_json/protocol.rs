@@ -21,6 +21,10 @@ pub(super) enum Request {
         target: Target,
         key: String,
         action: Action,
+        /// `mcp` + `login`: connect one more account of the key's service
+        /// under the next free per-account id.
+        #[serde(default)]
+        add_account: Option<bool>,
     },
     Reply {
         id: String,
@@ -67,14 +71,19 @@ impl Request {
             && match self {
                 Self::List { .. } | Self::Cancel { .. } => true,
                 Self::Begin {
+                    id: _,
                     target,
                     key,
                     action,
-                    ..
+                    add_account,
                 } => {
                     valid_id(key)
                         && (*target == Target::Mcp
                             || matches!(action, Action::Login | Action::Logout))
+                        && (add_account.is_none()
+                            || (*add_account == Some(true)
+                                && *target == Target::Mcp
+                                && *action == Action::Login))
                 }
                 Self::Reply {
                     request_id, value, ..

@@ -49,9 +49,9 @@ where
             let mut value=native::options(cwd,agent_dir).await;
             value["type"]=json!("options");value["id"]=json!(id);emit(&mut writer,value).await
         }
-        Ok(Some(Input::Request(Request::Begin {id,target,key,action})))=>{
+        Ok(Some(Input::Request(Request::Begin {id,target,key,action,add_account})))=>{
             let (tx,events)=mpsc::unbounded_channel();let panel=AuthPanelHandle::new(tx);
-            let flow=native::flow(cwd,agent_dir,target,action,key,panel.clone());
+            let flow=native::flow(cwd,agent_dir,target,action,key,add_account.unwrap_or(false),panel.clone());
             driver::drive(&mut input,&mut writer,&id,panel,events,flow).await
         }
         Ok(Some(Input::End)|None)=>Ok(()),
