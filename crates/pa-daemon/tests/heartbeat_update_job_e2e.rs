@@ -188,7 +188,10 @@ fn heartbeat_update_job_edits_the_live_heartbeat_over_the_socket() {
             "prompt": "liveness ping",
         }),
     );
-    assert_eq!(heartbeat["success"], true, "heartbeat_set failed: {heartbeat}");
+    assert_eq!(
+        heartbeat["success"], true,
+        "heartbeat_set failed: {heartbeat}"
+    );
     let job_id = heartbeat["data"]["heartbeat"]["id"]
         .as_str()
         .expect("job id")
@@ -218,7 +221,10 @@ fn heartbeat_update_job_edits_the_live_heartbeat_over_the_socket() {
     assert_eq!(edited_job["schedule"]["expression"], "every 2m");
     assert_eq!(edited_job["deliveryMode"], "follow_up");
     assert_eq!(edited_job["label"], "ops");
-    assert!(edited_job["nextRunAt"].is_string(), "an active job keeps a next run");
+    assert!(
+        edited_job["nextRunAt"].is_string(),
+        "an active job keeps a next run"
+    );
 
     // The store answers the edit: a fresh read serves the edited row.
     let reread = client.request(
@@ -227,7 +233,10 @@ fn heartbeat_update_job_edits_the_live_heartbeat_over_the_socket() {
     );
     assert_eq!(reread["success"], true, "heartbeat_get failed: {reread}");
     assert_eq!(reread["data"]["heartbeat"]["id"], job_id.as_str());
-    assert_eq!(reread["data"]["heartbeat"]["prompt"], "revised liveness ping");
+    assert_eq!(
+        reread["data"]["heartbeat"]["prompt"],
+        "revised liveness ping"
+    );
 
     // A label-only edit keeps a paused job paused with a null next run.
     let paused = client.request(
@@ -267,8 +276,7 @@ fn heartbeat_update_job_edits_the_live_heartbeat_over_the_socket() {
     );
     assert_eq!(missing["success"], false);
     assert_eq!(
-        missing["error"],
-        "No active heartbeat found: no-such-job",
+        missing["error"], "No active heartbeat found: no-such-job",
         "the missing-job error: {missing}"
     );
     let empty = client.request(
@@ -281,8 +289,7 @@ fn heartbeat_update_job_edits_the_live_heartbeat_over_the_socket() {
     );
     assert_eq!(empty["success"], false);
     assert_eq!(
-        empty["error"],
-        "heartbeat_update_job requires at least one field to update",
+        empty["error"], "heartbeat_update_job requires at least one field to update",
         "the empty-payload error: {empty}"
     );
 

@@ -417,7 +417,11 @@ mod tests {
             .is_err());
     }
 
-    fn rlm_input(prompt: &str, schedule_text: &str, now: u64) -> crate::cron::store::CreateAgentCronJobInput {
+    fn rlm_input(
+        prompt: &str,
+        schedule_text: &str,
+        now: u64,
+    ) -> crate::cron::store::CreateAgentCronJobInput {
         let mut rlm_input = input(prompt, schedule_text, now);
         rlm_input.source = Some("rlm_heartbeat".to_string());
         rlm_input
@@ -431,7 +435,9 @@ mod tests {
         let heartbeat = store
             .create_heartbeat(&input("continue the mission", "every 5m", now))
             .unwrap();
-        let rlm = store.create_rlm_heartbeat(&rlm_input("watch pods", "every 10m", now)).unwrap();
+        let rlm = store
+            .create_rlm_heartbeat(&rlm_input("watch pods", "every 10m", now))
+            .unwrap();
 
         // The full edit set on the user heartbeat, addressed by job id.
         let edited = store
@@ -528,7 +534,10 @@ mod tests {
                 now + 1,
             )
             .unwrap();
-        assert!(missing.is_none(), "the other session's job is not addressable");
+        assert!(
+            missing.is_none(),
+            "the other session's job is not addressable"
+        );
         let cross_session = store
             .update_heartbeat_job(
                 "live-2",
@@ -540,7 +549,10 @@ mod tests {
                 now + 1,
             )
             .unwrap();
-        assert!(cross_session.is_none(), "the job is not addressable from live-2");
+        assert!(
+            cross_session.is_none(),
+            "the job is not addressable from live-2"
+        );
         let untouched = store.get_heartbeat("live-1").unwrap();
         assert_eq!(untouched.label, None);
 

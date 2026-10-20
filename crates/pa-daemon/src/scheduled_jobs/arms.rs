@@ -417,12 +417,7 @@ impl Worker {
         ) {
             Ok(update) => update,
             Err(error) => {
-                return response_failure(
-                    None,
-                    "heartbeat_update_job",
-                    &error.to_string(),
-                    None,
-                )
+                return response_failure(None, "heartbeat_update_job", &error.to_string(), None)
             }
         };
         let active_session_id = payload
@@ -442,10 +437,12 @@ impl Worker {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             self.bind_store_artifact(&core);
         }
-        let edited = self
-            .scheduled
-            .store()
-            .update_heartbeat_job(&active_session_id, &job_id, &update, crate::util::now_ms());
+        let edited = self.scheduled.store().update_heartbeat_job(
+            &active_session_id,
+            &job_id,
+            &update,
+            crate::util::now_ms(),
+        );
         let Ok(Some(job)) = edited else {
             let error = match edited {
                 Err(error) => error.to_string(),
