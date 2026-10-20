@@ -26,7 +26,7 @@ CELL = '''import json
 fixture_results = []
 for label in ('positive', 'zero', 'malformed'):
     try:
-        await rlm.factory.graph('fixture-' + label)
+        await factory.graph('fixture-' + label)
         fixture_results.append({'case': label, 'resolved': True})
     except ValueError as error:
         fixture_results.append({'case': label, 'error': str(error), 'resolved': False})

@@ -25,9 +25,10 @@ gate-failure texts, shell quality gates with retry windows and git
 worktree snapshotting, and the `AutonomousDriver` policy trait a turn
 loop consults after every settled turn (the engine holds no autonomous
 logic of its own). The RLM recursion host seam
-(`session_engine::rlm_host`): the trait the kernel's `rlm.spawn`/
+(`session_engine::rlm_host`): the trait the kernel's `rlm.run`/
 `rlm.create_session`/`rlm.list_subagents`/`rlm.collect`/
-`rlm.delete_subagent` host requests call into, with the roster/collect/
+`rlm.delete_subagent` host requests (the `agents`/`Agent` Python surface) call
+into, with the roster/collect/
 selector-error vocabulary the daemon implements over the supervisor link.
 Platform wall (`platform`): process control (signals/process groups, kernel exit waits), file locking, file permissions, and shell selection - every OS-specific behavior in the engine lives there behind cfg-gated implementations (the durable-write rename primitive is pa-telemetry's `rename_onto`, re-exported as `platform::rename_onto`). Scheduled jobs (`cron`, the `AgentCronJobStore` port of `core/cron-jobs.ts`): file-backed job state under session artifacts (`scheduled-jobs.json` partitions) with cross-process locking, plus the public read-only scan (`cron::store::read_scheduled_jobs_artifact`) the update flow's roster projection and boot re-arm read. Tools (bash, edit, python_repl + internal rename/stdout), file mutation queue, truncation and rendering rules, RLM kernel lifecycle (IPython spawn/execute/revive), skills loading, system prompt assembly, compaction, settings/config, package manager (npm/git/local source install/remove/list/update against settings, plus `resolve()`: precedence-ranked session resource resolution over configured packages, settings arrays, auto-discovery, and bundled skills), session manager (persist/resume). origin/main
 

@@ -52,7 +52,7 @@ continuations inside the one agent run; the budget-limit steer and the
 threshold-held continuation drain as this invocation's follow-up runs
 with the TS session-action phase frames.
 Inline subagents (print_rlm.rs): the daemonless print session hosts
-`rlm.spawn` children in-process over a tree of session nodes — the
+`agents.spawn` children in-process over a tree of session nodes — the
 `RlmSubagentHost` impl (depth gate, name uniqueness, model resolution,
 the child session/engine build, the kickoff row), the
 `AgentMessageController` (family roster, one steer-lane delivery path),
