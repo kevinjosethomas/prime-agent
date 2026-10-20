@@ -1553,9 +1553,13 @@ async fn shutdown_fails_pending_now_without_daemon_eof() {
     let dir = tempfile::TempDir::new().unwrap();
     let socket = dir.path().join("d.sock");
     let listener = UnixListener::bind(&socket).unwrap();
+    let received = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = std::sync::Arc::clone(&received);
     tokio::spawn(async move {
         let (stream, _) = listener.accept().await.expect("accept");
-        let mut writer = stream;
+        let (reader, writer) = stream.into_split();
+        let mut writer = writer;
+        let mut reader = BufReader::new(reader);
         let hello = json!({
             "type": "daemon_hello",
             "protocol": { "name": "prime-agent.daemon", "version": 7 },
@@ -1567,25 +1571,46 @@ async fn shutdown_fails_pending_now_without_daemon_eof() {
             .write_all(format!("{hello}\n").as_bytes())
             .await
             .unwrap();
-        std::future::pending::<()>().await;
+        let mut seen = String::new();
+        loop {
+            seen.clear();
+            match reader.read_line(&mut seen).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
     });
 
     let (client, _events) = DaemonClient::connect(&socket).await.unwrap();
+    // The request is in flight (the daemon received its line) BEFORE the
+    // shutdown runs, so the sweep — not the entry refusal — resolves it.
+    let in_flight = client.clone();
+    let request = tokio::spawn(async move {
+        in_flight
+            .request_with_timeout(
+                DaemonCommand::List {
+                    id: None,
+                    all: None,
+                    cwd: None,
+                    session_dir: None,
+                    include_client_owned: None,
+                    rest: Map::default(),
+                },
+                30_000,
+            )
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while received.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the request reaches the daemon");
     let started = std::time::Instant::now();
-    let error = client
-        .request_with_timeout(
-            DaemonCommand::List {
-                id: None,
-                all: None,
-                cwd: None,
-                session_dir: None,
-                include_client_owned: None,
-                rest: Map::default(),
-            },
-            30_000,
-        )
-        .await
-        .unwrap_err();
+    client.shutdown();
+    let error = request.await.unwrap().unwrap_err();
     // Immediate uncertain failure — no 30s budget ride, no daemon EOF.
     assert!(started.elapsed() < Duration::from_secs(1));
     assert!(
@@ -1755,12 +1780,12 @@ async fn task_set_registration_after_death_aborts_new_tasks() {
     let (reader_tx, reader_rx) = oneshot::channel::<()>();
     let reader = tokio::spawn(async move {
         let _held = reader_tx;
-        std::future::pending::<()>().await
+        std::future::pending::<()>().await;
     });
     let (writer_tx, writer_rx) = oneshot::channel::<()>();
     let writer = tokio::spawn(async move {
         let _held = writer_tx;
-        std::future::pending::<()>().await
+        std::future::pending::<()>().await;
     });
     assert!(!tasks.register_connection(reader, writer));
     for receiver in [reader_rx, writer_rx] {
@@ -1777,7 +1802,7 @@ async fn task_set_registration_after_death_aborts_new_tasks() {
     let (direct_tx, direct_rx) = oneshot::channel::<()>();
     let direct = tokio::spawn(async move {
         let _held = direct_tx;
-        std::future::pending::<()>().await
+        std::future::pending::<()>().await;
     });
     assert!(!tasks.register_direct(vec![direct]));
     tokio::time::timeout(Duration::from_secs(5), async move {
