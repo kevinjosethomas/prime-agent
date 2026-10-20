@@ -346,7 +346,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[tokio::test]
     async fn review_and_plan_carry_their_own_system_prompts() {
         let model = test_model();
         // The plan seam records its system prompt in a shared cell.
@@ -360,13 +359,7 @@ mod tests {
             Box::pin(async move { Ok(text_message(&reply)) })
         });
         let state = super::super::empty_harness_state();
-        plan_refinement(
-            &[],
-            &state,
-            &[],
-            &model,
-            plan_call,
-        )
+        plan_refinement(&[], &state, &[], &model, &RefineOptions::default(), plan_call)
         .await
         .unwrap();
         assert_eq!(
