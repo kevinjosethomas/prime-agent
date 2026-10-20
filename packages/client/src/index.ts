@@ -1,13 +1,15 @@
 /**
  * The Prime Agent daemon client for Node 22 / Electron 44 main processes.
  *
- * The TypeScript surface is a thin wrapper over the native addon: commands
- * and responses are typed `unknown` until the generated client contract
- * package lands (PR3a) — this wrapper deliberately keeps NO hand-written
- * wire mirror.
+ * The TypeScript surface is a thin wrapper over the native addon; command
+ * and response types come ONLY from the generated client contract
+ * package (`file:../client-contract`) — no hand-written wire mirror.
  */
 import { decodeError, NotSentError, OverflowError, RejectedError, TransportError, UncertainError } from './errors.js';
 import { loadAddon } from './loader.js';
+// Generated wire types ONLY (the client contract package, PR3a): no
+// hand-maintained TS wire mirror lives in this wrapper.
+import type { DaemonCommand, DaemonResponse } from 'prime-agent-client-contract';
 
 interface ConnectOptions {
   /** Bounded frame-queue capacity in frames (default 1024). */
@@ -33,8 +35,8 @@ interface NativeClient {
   nextFrame(): Promise<unknown>;
   nextStatus(): Promise<StatusValue>;
   currentStatus(): StatusValue;
-  request(command: unknown, timeoutMs?: number): Promise<unknown>;
-  requestOk(command: unknown): Promise<unknown>;
+  request(command: DaemonCommand, timeoutMs?: number): Promise<DaemonResponse>;
+  requestOk(command: DaemonCommand): Promise<unknown>;
   upgradeDirect(activeSessionId: string): Promise<boolean>;
   dropDirect(): void;
   directSessionId(): string | null;
@@ -92,11 +94,11 @@ export class DaemonConnection {
     return this.native.currentStatus();
   }
 
-  request(command: unknown, timeoutMs?: number): Promise<unknown> {
+  request(command: DaemonCommand, timeoutMs?: number): Promise<DaemonResponse> {
     return decode(this.native.request(command, timeoutMs));
   }
 
-  requestOk(command: unknown): Promise<unknown> {
+  requestOk(command: DaemonCommand): Promise<unknown> {
     return decode(this.native.requestOk(command));
   }
 
