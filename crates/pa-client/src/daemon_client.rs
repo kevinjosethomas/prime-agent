@@ -371,30 +371,35 @@ impl Shared {
 pub(crate) struct TaskSet {
     /// One lock guards the death mark AND every handle: registration and
     /// teardown observe the same state, so a task registered concurrently
-    /// with a shutdown can never escape it (it is aborted at registration).
+    /// with a shutdown can never escape it (it is aborted at registration
+    /// and RETAINED — the join still owns it).
     state: Mutex<TaskState>,
-    /// Serializes the join phase: a concurrent second `join_tasks` waits
-    /// for the first drain to finish instead of returning early.
+    /// Serializes the join phase: concurrent join callers wait behind the
+    /// in-flight drain instead of racing it.
     join_lock: tokio::sync::Mutex<()>,
 }
 
 #[derive(Default)]
 struct TaskState {
-    /// Set under `state`'s lock before the handles are collected: the
-    /// atomic death mark comes first, the sweep second.
+    /// Set under `state`'s lock before the aborts run: the atomic death
+    /// mark comes first, the sweep second.
     done: bool,
-    reader: Option<tokio::task::JoinHandle<()>>,
-    writer: Option<tokio::task::JoinHandle<()>>,
-    /// Direct-link pumps: finished handles are reaped at each registration
-    /// (a completed task never accumulates); an unfinished abandoned
-    /// link's reader lingers exactly as it does today until shutdown
-    /// aborts it.
-    direct: Vec<tokio::task::JoinHandle<()>>,
+    /// Every owned task in insertion order (supervisor reader and writer
+    /// first, direct pumps after). Aborted handles STAY here until a join
+    /// drains them — dropping one detaches its task.
+    handles: Vec<tokio::task::JoinHandle<()>>,
 }
 
 impl TaskSet {
+    /// Whether shutdown already marked the set dead.
+    fn is_dead(&self) -> bool {
+        self.state.lock().unwrap().done
+    }
+
     /// Register the supervisor reader/writer handles once. `false` when the
-    /// connection is already dead: the tasks are aborted here, never stored.
+    /// connection is already dead: the tasks are aborted AND retained, so
+    /// the join owner still drains them — nothing registered is ever
+    /// dropped un-joined.
     pub(crate) fn register_connection(
         &self,
         reader: tokio::task::JoinHandle<()>,
@@ -402,77 +407,128 @@ impl TaskSet {
     ) -> bool {
         let mut state = self.state.lock().unwrap();
         if state.done {
-            drop(state);
             reader.abort();
             writer.abort();
+            state.handles.push(reader);
+            state.handles.push(writer);
             return false;
         }
-        state.reader = Some(reader);
-        state.writer = Some(writer);
+        state.handles.push(reader);
+        state.handles.push(writer);
         true
     }
 
     /// Register one direct link's pumps, reaping finished handles first.
     /// `false` when the connection is already dead: the tasks are aborted
-    /// here, never stored.
+    /// AND retained, so the join owner still drains them.
     pub(crate) fn register_direct(&self, handles: Vec<tokio::task::JoinHandle<()>>) -> bool {
+        let mut handles = handles;
         let mut state = self.state.lock().unwrap();
         if state.done {
-            drop(state);
-            for handle in handles {
+            for handle in &handles {
                 handle.abort();
             }
+            state.handles.append(&mut handles);
             return false;
         }
-        state.direct.retain(|handle| !handle.is_finished());
-        state.direct.extend(handles);
+        state.handles.retain(|handle| !handle.is_finished());
+        state.handles.append(&mut handles);
         true
     }
 
-    /// Mark dead and abort every owned task. `true` when this call won the
-    /// one-shot race (an already-shutdown connection returns `false` and
-    /// aborts nothing). The mark is taken and the handles collected under
-    /// the same lock; the aborts run after it drops.
+    /// Mark dead and abort every owned task IN PLACE. `true` when this call
+    /// won the one-shot race. The aborted handles STAY in the set — the
+    /// join drains them; dropping them here would detach the tasks and
+    /// leave join_tasks with nothing to await.
     pub(crate) fn abort_all(&self) -> bool {
-        let handles = {
-            let mut state = self.state.lock().unwrap();
-            if state.done {
-                return false;
-            }
-            state.done = true;
-            let mut handles = Vec::new();
-            handles.extend(state.reader.take());
-            handles.extend(state.writer.take());
-            handles.extend(std::mem::take(&mut state.direct));
-            handles
-        };
-        for handle in handles {
+        let mut state = self.state.lock().unwrap();
+        if state.done {
+            return false;
+        }
+        state.done = true;
+        for handle in &state.handles {
             handle.abort();
         }
         true
     }
 
-    /// Await the drained tasks' ends. `false` before shutdown (nothing is
-    /// drainable yet). Handles are taken under the lock; the awaits run
-    /// outside it. A second call finds the set already drained — the
-    /// `join_lock` in [`TaskSet`] is what makes the second caller WAIT.
-    pub(crate) async fn join_drained(&self) -> bool {
-        let handles = {
-            let mut state = self.state.lock().unwrap();
-            if !state.done {
-                return false;
-            }
-            let mut handles = Vec::new();
-            handles.extend(state.reader.take());
-            handles.extend(state.writer.take());
-            handles.extend(std::mem::take(&mut state.direct));
-            handles
-        };
-        for handle in handles {
-            // An aborted task ends with a cancelled join error: ended is ended.
-            let _ = handle.await;
+    /// Take one drainable handle out under the lock (nothing before
+    /// shutdown — the tasks are live).
+    fn take_one(&self) -> Option<tokio::task::JoinHandle<()>> {
+        let mut state = self.state.lock().unwrap();
+        if !state.done {
+            return None;
         }
-        true
+        state.handles.pop()
+    }
+
+    /// Push an unfinished handle back — a cancelled join's guard re-inserts
+    /// its in-flight handle so a later join still owns it.
+    fn push_back(&self, handle: tokio::task::JoinHandle<()>) {
+        self.state.lock().unwrap().handles.push(handle);
+    }
+
+    /// The join phase, cancellation-safe: every handle is awaited through a
+    /// [`JoinGuard`] that re-inserts it if this future is cancelled
+    /// mid-await — ownership never leaves the set. Returns how many tasks
+    /// this drain awaited to completion. `0` before shutdown; a repeat
+    /// call after a complete drain also returns `0` (it waited behind the
+    /// `join_lock` and found the set empty).
+    pub(crate) async fn join_drain(self: &Arc<Self>) -> usize {
+        if !self.is_dead() {
+            return 0;
+        }
+        let _serial = self.join_lock.lock().await;
+        let mut drained = 0;
+        while let Some(handle) = self.take_one() {
+            let mut guard = JoinGuard {
+                set: self,
+                handle: Some(handle),
+            };
+            // Awaits the task's actual completion; a cancellation of this
+            // future re-inserts the unfinished handle via the guard's Drop.
+            (&mut guard).await;
+            drained += 1;
+        }
+        drained
+    }
+}
+
+/// One join in flight: the awaited handle stays SET-OWNED — if the join
+/// future is cancelled mid-await, `Drop` pushes the unfinished handle back
+/// into the set; only a completed await (the `Ready` arm consumed the
+/// handle) removes it.
+struct JoinGuard<'a> {
+    set: &'a Arc<TaskSet>,
+    handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl std::future::Future for JoinGuard<'_> {
+    type Output = ();
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let Some(handle) = self.handle.as_mut() else {
+            return std::task::Poll::Ready(());
+        };
+        match std::pin::Pin::new(handle).poll(cx) {
+            // Completed: the handle is consumed here — Drop will not re-insert.
+            std::task::Poll::Ready(_) => {
+                self.handle = None;
+                std::task::Poll::Ready(())
+            }
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    }
+}
+
+impl Drop for JoinGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            self.set.push_back(handle);
+        }
     }
 }
 
@@ -1064,6 +1120,15 @@ impl DaemonClient {
         {
             return Err(DirectRequestError::Capped);
         }
+        // Post-insert death re-check (the supervisor leg's guard): a
+        // shutdown that flipped the watch after this registration refuses
+        // here before the queueing — the pending slot is freed, the
+        // supervisor fallback refuses in turn, and no line is ever queued
+        // to a dying pump.
+        if *self.reader_dead_rx.borrow() {
+            self.shared.pending.lock().unwrap().remove(id);
+            return Err(DirectRequestError::NotSent);
+        }
         if !link.send(frame) {
             self.shared.pending.lock().unwrap().remove(id);
             return Err(DirectRequestError::NotSent);
@@ -1171,9 +1236,16 @@ impl DaemonClient {
         .await
         {
             Ok((link, tasks)) => {
-                self.tasks.register_direct(tasks);
-                self.direct.set_link(link);
-                Ok(true)
+                if self.tasks.register_direct(tasks) {
+                    self.direct.set_link(link);
+                    Ok(true)
+                } else {
+                    // The connection died while the handshake ran: the pumps
+                    // were aborted and retained at registration — the dead
+                    // link is never installed and no upgrade is claimed.
+                    link.close();
+                    Ok(false)
+                }
             }
             Err(_) => Ok(false),
         }
@@ -1207,6 +1279,13 @@ impl DaemonClient {
     /// closing the socket: the tasks are aborted where they stand. Nothing
     /// runs on `Drop` — the caller owns the teardown explicitly.
     pub fn shutdown(&self) {
+        // The death mark FIRST (the one shared truth — the reader-dead
+        // watch): a request registering after this point fails its
+        // post-insert re-check and never queues (a provable non-delivery),
+        // while every request already registered precedes the sweeps below
+        // and resolves as an uncertain delivery. No pending request can
+        // slip between the mark and the sweep.
+        let _ = self.reader_dead_tx.send(true);
         if !self.tasks.abort_all() {
             return;
         }
@@ -1218,20 +1297,23 @@ impl DaemonClient {
             .fail_pending("daemon_", "the daemon connection closed");
         self.shared
             .fail_pending("direct_", "the session connection closed");
-        let _ = self.reader_dead_tx.send(true);
     }
 
-    /// Await the aborted tasks' ends after [`Self::shutdown`]; a second call
-    /// no-ops. When it returns, the connection owns zero live tasks, timers,
-    /// or sockets.
-    ///
-    /// # Errors
-    ///
-    /// Never returns `Err`: a cancelled task's join error is the expected end.
-    pub async fn join_tasks(&self) {
-        // Serialized: a concurrent second caller waits for the first drain
-        // to finish (and then drains nothing — the set is already empty).
-        let _serial = self.tasks.join_lock.lock().await;
-        self.tasks.join_drained().await;
+    /// Await the REGISTERED tasks' ends after [`Self::shutdown`] — the
+    /// supervisor reader and writer pumps and every direct-link pump that
+    /// was registered (including any that lost a race with shutdown and
+    /// were aborted at registration). Returns how many this drain awaited
+    /// to completion. Cancellation-safe: a join future dropped mid-drain
+    /// re-inserts its in-flight handle, so a repeated call resumes and
+    /// still owns every task; concurrent callers wait behind the in-flight
+    /// drain. When a drain returns, the connection owns zero REGISTERED
+    /// tasks, timers, or sockets — caller-owned futures (an in-flight
+    /// upgrade handshake, an outstanding request) settle or drop
+    /// separately on their own; a handle registered after a drain (a
+    /// handshake that completed late) is aborted at registration and is
+    /// joined by the NEXT call, so a caller wanting one-shot exactness
+    /// settles its own operations before the final join.
+    pub async fn join_tasks(&self) -> usize {
+        self.tasks.join_drain().await
     }
 }

@@ -1546,20 +1546,19 @@ async fn frame_cap_binds_split_lines_spilling_over_the_cap() {
 }
 
 #[tokio::test]
-async fn shutdown_fails_pending_now_without_daemon_eof() {
-    // The daemon stays alive and never answers: `shutdown` must still fail
-    // the in-flight request immediately (the sweep is ours, not the
-    // daemon's EOF), flip the death watch, and join every task.
+async fn shutdown_resolves_pending_promptly_in_any_race_position() {
+    // The B3 production-ordering property: a request racing shutdown never
+    // rides its budget out. Pre-flip registrations are swept as uncertain
+    // deliveries; post-flip registrations are refused at their post-insert
+    // re-check as provable non-deliveries. Either class lands immediately —
+    // and the test takes no receipt barrier: both interleavings are
+    // acceptable, a 30s ride is not.
     let dir = tempfile::TempDir::new().unwrap();
     let socket = dir.path().join("d.sock");
     let listener = UnixListener::bind(&socket).unwrap();
-    let received = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let counter = std::sync::Arc::clone(&received);
     tokio::spawn(async move {
         let (stream, _) = listener.accept().await.expect("accept");
-        let (reader, writer) = stream.into_split();
-        let mut writer = writer;
-        let mut reader = BufReader::new(reader);
+        let mut writer = stream;
         let hello = json!({
             "type": "daemon_hello",
             "protocol": { "name": "prime-agent.daemon", "version": 7 },
@@ -1571,20 +1570,10 @@ async fn shutdown_fails_pending_now_without_daemon_eof() {
             .write_all(format!("{hello}\n").as_bytes())
             .await
             .unwrap();
-        let mut seen = String::new();
-        loop {
-            seen.clear();
-            match reader.read_line(&mut seen).await {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {}
-            }
-            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        }
+        std::future::pending::<()>().await;
     });
 
     let (client, _events) = DaemonClient::connect(&socket).await.unwrap();
-    // The request is in flight (the daemon received its line) BEFORE the
-    // shutdown runs, so the sweep — not the entry refusal — resolves it.
     let in_flight = client.clone();
     let request = tokio::spawn(async move {
         in_flight
@@ -1601,30 +1590,19 @@ async fn shutdown_fails_pending_now_without_daemon_eof() {
             )
             .await
     });
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while received.load(std::sync::atomic::Ordering::SeqCst) == 0 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("the request reaches the daemon");
-    let started = std::time::Instant::now();
+    // No receipt barrier: wherever the registration lands against the
+    // shutdown, the resolution must be prompt and truthful.
+    tokio::time::sleep(Duration::from_millis(50)).await;
     client.shutdown();
+    let started = std::time::Instant::now();
     let error = request.await.unwrap().unwrap_err();
-    // Immediate uncertain failure — no 30s budget ride, no daemon EOF.
     assert!(started.elapsed() < Duration::from_secs(1));
     assert!(
-        is_command_result_uncertain(&error),
+        is_command_result_uncertain(&error) || is_command_not_sent(&error),
         "unexpected error: {error}"
     );
-    assert!(!is_command_not_sent(&error));
-    assert!(
-        error.to_string().contains("the daemon connection closed"),
-        "unexpected error: {error}"
-    );
-    // The death watch fired without the reader's own exit.
+    assert!(!is_daemon_rejection(&error));
     assert!(*client.reader_dead().borrow());
-    // Every clone's follow-up request is a provable non-delivery.
     let clone = client.clone();
     let error = clone
         .request_with_timeout(
@@ -1641,14 +1619,17 @@ async fn shutdown_fails_pending_now_without_daemon_eof() {
         .await
         .unwrap_err();
     assert!(is_command_not_sent(&error));
-    // Tasks join quickly, and repeated calls no-op.
-    tokio::time::timeout(Duration::from_secs(5), client.join_tasks())
+    let drained = tokio::time::timeout(Duration::from_secs(5), client.join_tasks())
         .await
         .expect("tasks join after shutdown");
-    tokio::time::timeout(Duration::from_secs(1), client.join_tasks())
-        .await
-        .expect("second join no-ops");
-    client.shutdown();
+    assert_eq!(drained, 2, "the reader and writer pumps");
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), client.join_tasks())
+            .await
+            .unwrap(),
+        0,
+        "a repeat join waits behind the lock and drains nothing"
+    );
 }
 
 #[tokio::test]
@@ -1677,9 +1658,7 @@ async fn shutdown_marks_every_clone_dead() {
         .unwrap_err();
     assert!(is_command_not_sent(&error), "unexpected error: {error}");
     assert!(
-        error
-            .to_string()
-            .contains("the daemon connection is closed"),
+        error.to_string().contains("the daemon connection is closed"),
         "unexpected error: {error}"
     );
 }
@@ -1755,20 +1734,20 @@ async fn shutdown_aborts_direct_link_pumps() {
     // The worker stays alive: its reader pump only ends by abort.
     client.shutdown();
     assert_eq!(client.direct_session_id(), None);
-    tokio::time::timeout(Duration::from_secs(5), client.join_tasks())
+    let drained = tokio::time::timeout(Duration::from_secs(5), client.join_tasks())
         .await
         .expect("direct pumps join after shutdown");
+    assert_eq!(drained, 4, "reader + writer + the direct pump pair");
     let _ = supervisor.await;
 }
 
 #[tokio::test]
-async fn task_set_registration_after_death_aborts_new_tasks() {
+async fn task_set_registration_after_death_aborts_and_retains_new_tasks() {
     // The shutdown-vs-registration race, deterministically: the death mark
     // is taken under the same lock the registrations check, so a task that
-    // registers after the sweep can never escape it — it is aborted at
-    // registration, and the aborted end is observable through its held
-    // sender dropping.
-    let tasks = TaskSet::default();
+    // registers after the sweep can never escape it — it is aborted AT
+    // registration and RETAINED, and the join still drains it.
+    let tasks = std::sync::Arc::new(TaskSet::default());
     assert!(tasks.register_connection(
         tokio::spawn(std::future::pending::<()>()),
         tokio::spawn(std::future::pending::<()>())
@@ -1813,31 +1792,157 @@ async fn task_set_registration_after_death_aborts_new_tasks() {
     })
     .await
     .expect("the escaped direct pump ends at registration");
+
+    // Everything registered — including the escaped, aborted-at-registration
+    // tasks — is retained and joined exactly once.
+    let drained = tokio::time::timeout(Duration::from_secs(5), tasks.join_drain())
+        .await
+        .expect("the join drains every retained handle");
+    assert_eq!(drained, 5, "initial pair + escaped pair + escaped direct");
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), tasks.join_drain())
+            .await
+            .unwrap(),
+        0,
+        "a repeat join drains nothing"
+    );
+}
+
+/// A guard whose Drop flips a flag when its owning task's future is truly
+/// gone — the actual-completion barrier the join proofs assert against.
+struct CompletionFlag(std::sync::Arc<std::sync::atomic::AtomicBool>);
+impl Drop for CompletionFlag {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 #[tokio::test]
-async fn concurrent_join_tasks_wait_for_each_other() {
-    // Before shutdown, join_tasks is a documented no-op; after shutdown,
-    // two concurrent join_tasks both complete — the second WAITS behind the
-    // first drain instead of racing it.
-    let dir = tempfile::TempDir::new().unwrap();
-    let socket = dir.path().join("d.sock");
-    let listener = UnixListener::bind(&socket).unwrap();
-    tokio::spawn(async move { spawn_mock_daemon(listener).await });
-
-    let (client, _events) = DaemonClient::connect(&socket).await.unwrap();
-    tokio::time::timeout(Duration::from_millis(200), client.join_tasks())
+async fn join_awaits_actual_completion_before_returning() {
+    // B1's proof: the join is only done when the tasks' futures actually
+    // unwound — a Drop guard inside the task flips the flag, and the flag
+    // must be up before join_drain returns.
+    let tasks = std::sync::Arc::new(TaskSet::default());
+    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let first = {
+        let flag = std::sync::Arc::clone(&flag);
+        tokio::spawn(async move {
+            let _completed = CompletionFlag(flag);
+            std::future::pending::<()>().await;
+        })
+    };
+    let second = {
+        let flag = std::sync::Arc::clone(&flag);
+        tokio::spawn(async move {
+            let _completed = CompletionFlag(flag);
+            std::future::pending::<()>().await;
+        })
+    };
+    assert!(tasks.register_connection(first, second));
+    assert!(tasks.abort_all());
+    let drained = tokio::time::timeout(Duration::from_secs(5), tasks.join_drain())
         .await
-        .expect("pre-shutdown join is a no-op");
-    client.shutdown();
-    let one = client.clone();
-    let two = client.clone();
-    let (joined_one, joined_two) = tokio::join!(
-        tokio::time::timeout(Duration::from_secs(5), one.join_tasks()),
-        tokio::time::timeout(Duration::from_secs(5), two.join_tasks())
+        .expect("the join drains the aborted pair");
+    assert_eq!(drained, 2);
+    assert!(
+        flag.load(std::sync::atomic::Ordering::SeqCst),
+        "task completion observed before the join returned"
     );
-    joined_one.expect("the first join drains");
-    joined_two.expect("the second join waits then completes");
+}
+
+#[tokio::test]
+async fn cancelled_join_retains_ownership_and_the_next_join_waits() {
+    // B4's proof: a join future cancelled mid-drain loses NOTHING — the
+    // in-flight handle is re-inserted by the guard's Drop, and the next
+    // join still awaits the blocker's real completion.
+    let tasks = std::sync::Arc::new(TaskSet::default());
+    let (held_tx, held_rx) = oneshot::channel::<()>();
+    // A hot loop between awaits resists abort until it finishes: the drain
+    // genuinely blocks on it.
+    let blocker = tokio::spawn(async move {
+        let _held = held_tx;
+        let mut acc = 0u64;
+        for i in 0..200_000_000u64 {
+            acc = acc.wrapping_add(i);
+        }
+        std::hint::black_box(acc);
+        std::future::pending::<()>().await;
+    });
+    assert!(tasks.register_connection(
+        blocker,
+        tokio::spawn(std::future::pending::<()>())
+    ));
+    assert!(tasks.abort_all());
+
+    // Cancel the first join mid-drain (the blocker is still looping).
+    let first = {
+        let tasks = std::sync::Arc::clone(&tasks);
+        tokio::spawn(async move { tasks.join_drain().await })
+    };
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    first.abort();
+    let _ = first.await;
+
+    // The second join still OWNS everything: it waits out the blocker and
+    // returns only after real completion.
+    let drained = tokio::time::timeout(Duration::from_secs(30), tasks.join_drain())
+        .await
+        .expect("the next join still awaits the retained tasks");
+    assert_eq!(drained, 2, "the blocker and its peer, exactly once");
+    // Real completion observed: the blocker's held sender dropped only when
+    // its future unwound.
+    tokio::time::timeout(Duration::from_secs(5), async move {
+        assert!(held_rx.await.is_err(), "the blocker truly ended");
+    })
+    .await
+    .expect("the blocker's unwind is observed");
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), tasks.join_drain())
+            .await
+            .unwrap(),
+        0,
+        "nothing is left owned"
+    );
+}
+
+#[tokio::test]
+async fn concurrent_joins_wait_for_each_other_behind_the_barrier() {
+    // The concurrent-join proof against the completion barrier: both joins
+    // return strictly after the tasks' real completion, and each retained
+    // handle is drained exactly once across them.
+    let tasks = std::sync::Arc::new(TaskSet::default());
+    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let blocker = {
+        let flag = std::sync::Arc::clone(&flag);
+        tokio::spawn(async move {
+            let _completed = CompletionFlag(flag);
+            let mut acc = 0u64;
+            for i in 0..100_000_000u64 {
+                acc = acc.wrapping_add(i);
+            }
+            std::hint::black_box(acc);
+            std::future::pending::<()>().await;
+        })
+    };
+    assert!(tasks.register_connection(blocker, tokio::spawn(std::future::pending::<()>())));
+    assert!(tasks.abort_all());
+    let one = {
+        let tasks = std::sync::Arc::clone(&tasks);
+        tokio::spawn(async move { tasks.join_drain().await })
+    };
+    let two = {
+        let tasks = std::sync::Arc::clone(&tasks);
+        tokio::spawn(async move { tasks.join_drain().await })
+    };
+    let (drained_one, drained_two) =
+        tokio::time::timeout(Duration::from_secs(30), async { tokio::join!(one, two) })
+            .await
+            .expect("both joins complete");
+    assert_eq!(drained_one + drained_two, 2, "each handle joined once");
+    assert!(
+        flag.load(std::sync::atomic::Ordering::SeqCst),
+        "completion observed before the joins returned"
+    );
 }
 
 #[tokio::test]
@@ -1869,7 +1974,271 @@ async fn upgrade_after_shutdown_refuses() {
     client.shutdown();
     assert!(!client.upgrade_direct("s1").await.unwrap());
     assert_eq!(client.direct_session_id(), None);
-    tokio::time::timeout(Duration::from_secs(5), client.join_tasks())
+    let drained = tokio::time::timeout(Duration::from_secs(5), client.join_tasks())
         .await
         .expect("nothing was left to join");
+    assert_eq!(drained, 2, "only the supervisor pair ever registered");
+}
+
+#[tokio::test]
+async fn shutdown_during_in_flight_upgrade_loses_the_registration_race() {
+    // B2's proof: shutdown on another thread while the upgrade's worker
+    // handshake is pending. The worker gates its hello on a release signal:
+    // shutdown lands mid-handshake, the hello is then released, the
+    // handshake completes on the live socket, the pumps spawn — and the
+    // done-guard aborts them at registration. The upgrade settles
+    // Ok(false), no link is installed, and the join drains the aborted
+    // pumps to real completion.
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let worker_socket = dir.path().join("w.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let worker_listener = UnixListener::bind(&worker_socket).unwrap();
+    let release = std::sync::Arc::new(tokio::sync::Notify::new());
+    let worker_release = std::sync::Arc::clone(&release);
+    tokio::spawn(async move {
+        let (stream, _) = worker_listener.accept().await.expect("worker accept");
+        let (mut reader, mut writer) = stream.into_split();
+        worker_release.notified().await;
+        let hello = pa_types::daemon::framing::encode_private_frame(
+            &serde_json::json!({ "kind": "outbound", "outboundType": "daemon_hello" }),
+            br#"{"type":"daemon_hello","protocol":{"name":"prime-agent.daemon","version":7}}"#,
+            pa_types::daemon::framing::DEFAULT_PRIVATE_FRAME_LIMITS,
+        )
+        .unwrap();
+        writer.write_all(&hello).await.unwrap();
+        let mut pending = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let read = reader.read(&mut chunk).await.expect("worker read");
+            if read == 0 {
+                break;
+            }
+            pending.extend_from_slice(&chunk[..read]);
+            let mut decoder = pa_types::daemon::framing::PrivateFrameDecoder::new(
+                pa_types::daemon::framing::DEFAULT_PRIVATE_FRAME_LIMITS,
+            );
+            let frames = decoder.push(&pending).expect("decode frames");
+            pending.clear();
+            for frame in frames {
+                let command_type = frame.header["commandType"].as_str().unwrap_or_default();
+                let request_id = frame.header["requestId"].as_str().unwrap_or_default();
+                let (success, data) = if command_type == "peer_auth" {
+                    (
+                        true,
+                        Some(serde_json::json!({
+                            "workerInstanceId": "inst-1",
+                            "activeSessionId": "s1",
+                            "purpose": "session_client",
+                        })),
+                    )
+                } else {
+                    (false, None)
+                };
+                let response = serde_json::json!({
+                    "id": request_id,
+                    "type": "response",
+                    "command": command_type,
+                    "success": success,
+                    "data": data,
+                });
+                let frame = pa_types::daemon::framing::encode_private_frame(
+                    &serde_json::json!({
+                        "kind": "outbound",
+                        "requestId": request_id,
+                        "outboundType": "response",
+                    }),
+                    &serde_json::to_vec(&response).unwrap(),
+                    pa_types::daemon::framing::DEFAULT_PRIVATE_FRAME_LIMITS,
+                )
+                .unwrap();
+                writer.write_all(&frame).await.unwrap();
+            }
+        }
+    });
+
+    let ticket_socket = worker_socket.clone();
+    let supervisor = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("supervisor accept");
+        let (reader, mut writer) = stream.into_split();
+        let mut reader = BufReader::new(reader);
+        let mut line = String::new();
+        let hello = serde_json::json!({
+            "type": "daemon_hello",
+            "protocol": { "name": "prime-agent.daemon", "version": 7 },
+            "serverCapabilities": ["direct_peer_transport"],
+        });
+        writer
+            .write_all(format!("{hello}\n").as_bytes())
+            .await
+            .unwrap();
+        loop {
+            line.clear();
+            if reader.read_line(&mut line).await.unwrap() == 0 {
+                break;
+            }
+            let envelope: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+            let id = envelope["id"].as_str().unwrap().to_string();
+            let command_type = envelope["command"]["type"].as_str().unwrap();
+            let response = if command_type == "get_direct_worker_transport" {
+                let identity = pa_types::platform::socket_identity(&ticket_socket).unwrap();
+                serde_json::json!({
+                    "type": "response",
+                    "id": id,
+                    "command": command_type,
+                    "success": true,
+                    "data": {
+                        "purpose": "session_client",
+                        "socketPath": ticket_socket.to_string_lossy(),
+                        "socketIdentity": { "dev": identity.dev, "ino": identity.ino },
+                        "workerInstanceId": "inst-1",
+                        "activeSessionId": "s1",
+                        "grantId": "g1",
+                        "token": "t",
+                        "expiresAt": "2999-01-01T00:00:00.000Z",
+                    },
+                })
+            } else {
+                serde_json::json!({
+                    "type": "response",
+                    "id": id,
+                    "command": command_type,
+                    "success": true,
+                    "data": { "ok": true },
+                })
+            };
+            writer
+                .write_all(format!("{response}\n").as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+
+    let (client, _events) = DaemonClient::connect(&socket).await.unwrap();
+    let upgrade = {
+        let client = client.clone();
+        tokio::spawn(async move { client.upgrade_direct("s1").await })
+    };
+    // The upgrade holds inside connect_direct's worker-hello wait while the
+    // shutdown lands on the other side of the thread boundary.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    client.shutdown();
+    release.notify_waiters();
+    let upgraded = tokio::time::timeout(Duration::from_secs(5), upgrade)
+        .await
+        .expect("the upgrade settles")
+        .unwrap();
+    assert!(!upgraded, "the lost registration race reports no upgrade");
+    assert_eq!(client.direct_session_id(), None, "no link installed");
+    // The supervisor pair plus the racing upgrade's aborted pumps join to
+    // real completion (the same or the next call — a handshake completing
+    // after a drain registers late by contract).
+    let mut joined = 0;
+    for _ in 0..2 {
+        joined += tokio::time::timeout(Duration::from_secs(5), client.join_tasks())
+            .await
+            .expect("tasks join after shutdown");
+    }
+    assert!(
+        joined >= 4,
+        "supervisor pair + the aborted pump pair (joined: {joined})"
+    );
+    let _ = supervisor.await;
+}
+
+#[tokio::test]
+async fn dropped_mid_flight_upgrade_leaves_no_residual_tasks() {
+    // §5's caller-owned proof: a dropped upgrade future closes the worker
+    // socket it was carrying (no machinery — the socket lives in the
+    // future), so shutdown+join drains exactly the supervisor pair and
+    // nothing residual.
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let worker_socket = dir.path().join("w.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let worker_listener = UnixListener::bind(&worker_socket).unwrap();
+    // A worker that accepts and never greets: the upgrade future holds
+    // inside connect_direct's hello wait.
+    tokio::spawn(async move {
+        let (stream, _) = worker_listener.accept().await.expect("worker accept");
+        drop(stream);
+        std::future::pending::<()>().await;
+    });
+    let ticket_socket = worker_socket.clone();
+    let supervisor = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("supervisor accept");
+        let (reader, mut writer) = stream.into_split();
+        let mut reader = BufReader::new(reader);
+        let mut line = String::new();
+        let hello = serde_json::json!({
+            "type": "daemon_hello",
+            "protocol": { "name": "prime-agent.daemon", "version": 7 },
+            "serverCapabilities": ["direct_peer_transport"],
+        });
+        writer
+            .write_all(format!("{hello}\n").as_bytes())
+            .await
+            .unwrap();
+        loop {
+            line.clear();
+            if reader.read_line(&mut line).await.unwrap() == 0 {
+                break;
+            }
+            let envelope: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+            let id = envelope["id"].as_str().unwrap().to_string();
+            let command_type = envelope["command"]["type"].as_str().unwrap();
+            let response = if command_type == "get_direct_worker_transport" {
+                let identity = pa_types::platform::socket_identity(&ticket_socket).unwrap();
+                serde_json::json!({
+                    "type": "response",
+                    "id": id,
+                    "command": command_type,
+                    "success": true,
+                    "data": {
+                        "purpose": "session_client",
+                        "socketPath": ticket_socket.to_string_lossy(),
+                        "socketIdentity": { "dev": identity.dev, "ino": identity.ino },
+                        "workerInstanceId": "inst-1",
+                        "activeSessionId": "s1",
+                        "grantId": "g1",
+                        "token": "t",
+                        "expiresAt": "2999-01-01T00:00:00.000Z",
+                    },
+                })
+            } else {
+                serde_json::json!({
+                    "type": "response",
+                    "id": id,
+                    "command": command_type,
+                    "success": true,
+                    "data": { "ok": true },
+                })
+            };
+            writer
+                .write_all(format!("{response}\n").as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+
+    let (client, _events) = DaemonClient::connect(&socket).await.unwrap();
+    let upgrade = {
+        let client = client.clone();
+        tokio::spawn(async move { client.upgrade_direct("s1").await })
+    };
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Drop the in-flight upgrade: no pumps were spawned (the handshake never
+    // completed), and the worker socket dies with the future.
+    upgrade.abort();
+    let _ = upgrade.await;
+    client.shutdown();
+    assert_eq!(client.direct_session_id(), None);
+    let drained = tokio::time::timeout(Duration::from_secs(5), client.join_tasks())
+        .await
+        .expect("tasks join after shutdown");
+    assert_eq!(drained, 2, "exactly the supervisor pair — zero residual");
+    let _ = supervisor.await;
 }
