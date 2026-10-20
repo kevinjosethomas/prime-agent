@@ -368,7 +368,7 @@ impl Worker {
     /// worker performs carries it in its env — an existing worker picks the
     /// configuration up without a worker restart; already-running kernels
     /// only see it after their own restart.
-    pub(crate) fn handle_set_task_reporter(&self, payload: &Value) -> DaemonResponse {
+    pub(crate) fn handle_set_task_reporter(payload: &Value) -> DaemonResponse {
         let Some(config) = payload.get("config").and_then(Value::as_str) else {
             return response_failure(
                 None,
@@ -379,16 +379,12 @@ impl Worker {
         };
         // Shape check only (the supervisor canonicalized the payload): a
         // malformed forward is refused loudly instead of poisoning kernels.
-        let shape_ok = serde_json::from_str::<Value>(config)
-            .ok()
-            .is_some_and(|value| {
-                value
-                    .get("command")
-                    .and_then(Value::as_array)
-                    .is_some_and(|command| {
-                        !command.is_empty() && command.iter().all(Value::is_string)
-                    })
-            });
+        let shape_ok = serde_json::from_str::<Value>(config).is_ok_and(|value| {
+            value
+                .get("command")
+                .and_then(Value::as_array)
+                .is_some_and(|command| !command.is_empty() && command.iter().all(Value::is_string))
+        });
         if !shape_ok {
             return response_failure(
                 None,

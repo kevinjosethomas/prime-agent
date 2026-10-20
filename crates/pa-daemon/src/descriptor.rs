@@ -496,6 +496,7 @@ mod tests {
             "pid": 4242,
             "createdAt": "t",
             "updatedAt": "t",
+            "consecutiveFailures": 0,
             "socketPath": "/tmp/w.sock",
             "recoveryJournalPath": "/tmp/w.recovery.jsonl",
             "supervisorSocketPath": "/tmp/d.sock",

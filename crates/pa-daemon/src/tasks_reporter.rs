@@ -63,7 +63,7 @@ mod tests {
     #[test]
     fn rejects_empty_argv_and_bad_timeouts() {
         assert!(canonicalize(&[], None, None).is_err());
-        assert!(canonicalize(&["".into()], None, None).is_err());
+        assert!(canonicalize(&[String::new()], None, None).is_err());
         assert!(canonicalize(&["a\0".into()], None, None).is_err());
         for timeout in [0.0, -1.0, f64::NAN, f64::INFINITY, 61.0] {
             assert!(canonicalize(&["a".into()], None, Some(timeout)).is_err());

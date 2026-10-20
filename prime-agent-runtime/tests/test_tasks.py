@@ -171,11 +171,15 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
         # Re-entering needs_input reuses the current nonempty summary as the question.
         again = await resumed.update(status="needs_input")
         self.assertEqual(again.summary, "Which sidebar width?")
-        cleared = await resumed.update(summary="")
+        # The effective status decides: a needs_input summary cannot be blanked,
+        # an active one can (the patch above would otherwise fail the summary rule).
+        with self.assertRaises(ValueError):
+            await again.update(summary="")
+        active = await again.update(status="active")
+        cleared = await active.update(summary="   ")
+        self.assertEqual(cleared.summary, "   ")
         with self.assertRaises(ValueError):
             await cleared.update(status="needs_input")
-        with self.assertRaises(ValueError):
-            await cleared.update(summary="   ")
         second = await self.client.create("blocked", "Starts blocked", status="needs_input",
                                          summary="Is the fixture green?")
         self.assertEqual(second.status, "needs_input")
