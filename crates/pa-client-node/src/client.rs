@@ -338,7 +338,7 @@ impl PrimeDaemonClient {
     pub async fn upgrade_direct(&self, active_session_id: String) -> Result<bool> {
         let client = self.inner.client_arc()?;
         let (result_tx, result_rx) =
-            tokio::sync::oneshot::channel::<Result<bool, ErrorPayload>>();
+            tokio::sync::oneshot::channel::<std::result::Result<bool, ErrorPayload>>();
         let handle = bridge(async move {
             let outcome = client
                 .upgrade_direct(&active_session_id)
@@ -445,7 +445,7 @@ impl PrimeDaemonClient {
                 "the default request timeout fits a u32",
             )),
         );
-        let (result_tx, result_rx) = tokio::sync::oneshot::channel::<Result<Value, ErrorPayload>>();
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel::<std::result::Result<Value, ErrorPayload>>();
         let inner = Arc::clone(&self.inner);
         // ONE tracked task carries the operation; the napi promise rides a
         // oneshot so a cancelled JS promise never detaches the work — close
@@ -501,7 +501,7 @@ impl PrimeDaemonClient {
             .map_err(|error| {
                 napi_error(not_sent(format!("command deserialize failed: {error}")))
             })?;
-        let (result_tx, result_rx) = tokio::sync::oneshot::channel::<Result<Value, ErrorPayload>>();
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel::<std::result::Result<Value, ErrorPayload>>();
         let inner = Arc::clone(&self.inner);
         let handle = bridge(async move {
             let notified = inner.teardown.notified();
