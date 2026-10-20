@@ -1658,7 +1658,9 @@ async fn shutdown_marks_every_clone_dead() {
         .unwrap_err();
     assert!(is_command_not_sent(&error), "unexpected error: {error}");
     assert!(
-        error.to_string().contains("the daemon connection is closed"),
+        error
+            .to_string()
+            .contains("the daemon connection is closed"),
         "unexpected error: {error}"
     );
 }
@@ -1891,11 +1893,13 @@ async fn cancelled_join_retains_ownership_and_the_next_join_waits() {
     let _ = first.await;
 
     // The second join still OWNS everything: it waits out the blocker and
-    // returns only after real completion.
+    // returns only after real completion. The cancelled first drain had
+    // already consumed the instantly-ending peer; the re-inserted blocker
+    // is the one handle left, drained exactly once here.
     let drained = tokio::time::timeout(Duration::from_secs(60), tasks.join_drain())
         .await
         .expect("the next join still awaits the retained tasks");
-    assert_eq!(drained, 2, "the blocker and its peer, exactly once");
+    assert_eq!(drained, 1, "the re-inserted blocker, exactly once");
     // Real completion observed: the blocker's held sender dropped only when
     // its future unwound.
     tokio::time::timeout(Duration::from_secs(5), async move {
@@ -1997,6 +2001,7 @@ async fn upgrade_after_shutdown_refuses() {
     assert_eq!(drained, 2, "only the supervisor pair ever registered");
 }
 
+#[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn shutdown_during_in_flight_upgrade_loses_the_registration_race() {
     // B2's proof: shutdown on another thread while the upgrade's worker
