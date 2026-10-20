@@ -151,7 +151,6 @@ async fn an_unknown_skill_command_passes_through() {
     assert_eq!(user_text, "/skill:missing do a thing");
 }
 
-
 fn user_text(message: &pa_agent::types::Message) -> String {
     let pa_agent::types::Message::User(user) = message else {
         panic!("expected user message");
@@ -168,7 +167,6 @@ fn user_text(message: &pa_agent::types::Message) -> String {
             .join(" "),
     }
 }
-
 
 /// The transcript and the loop context hold ONE representation of the
 /// turn (the custom row, appended once), never a duplicate user
