@@ -17,6 +17,6 @@ async function main() {
   ticker.stop();
   if (ticks < 5) throw new Error('TSFN never delivered: ' + ticks);
   console.log('ELECTRON_SPIKE_OK', process.versions.electron, 'node', process.versions.node);
-  app.exit(0);
+  app.quit();
 }
-app.whenReady().then(main).catch((error) => { console.error(error); app.exit(1); });
+app.whenReady().then(main).catch((error) => { console.error(error); process.exitCode = 1; app.quit(); });
