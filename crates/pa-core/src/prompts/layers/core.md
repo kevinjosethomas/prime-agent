@@ -82,11 +82,12 @@ Memories are created by refinement:
     - The suggested edits are applied to the harness state
     - The main agent is notified by a structured harness message and the applied edits are saved
   - Triggered by:
-    - Calling the programmatic tool `refine.run(instructions: str | None = None, global_: bool = False) -> dict`: agent-triggered refinement; returns immediately and runs when the current turn ends
+    - Calling the programmatic tool `refine.run()`
     - By the user command `/refine`
   - Effect:
     - The refinement event is always saved in the harness state's refinement history
     - A harness message is sent to the agent with the refinement result
+- `refine.run(instructions: str | None = None, global_: bool = False) -> dict`: agent-triggered refinement; returns immediately and runs when the current turn ends
 - `refine.status() -> dict`: status inspection only — whether a refinement is already pending for this turn or currently in flight
 
 ## Compaction
