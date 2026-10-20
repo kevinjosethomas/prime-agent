@@ -48,7 +48,14 @@ test('a PARKED nextFrame pull observes the sticky overflow branch', async () => 
   }).catch((error) => error);
   let witnessed = 0;
   for (let attempt = 0; attempt < 512 && witnessed === 0; attempt += 1) {
-    const pull = connection.nextFrame();
+    // Both handlers attach at creation: the parked pull's settlement
+    // never passes through an unhandled window.
+    const pull = connection
+      .nextFrame()
+      .then(
+        (frame) => ({ frame }),
+        (error) => ({ error }),
+      );
     // The single-consumer probe proves the pull holds the pending poll:
     // a concurrent pull MUST reject while the first is parked.
     const probe = connection
@@ -61,10 +68,7 @@ test('a PARKED nextFrame pull observes the sticky overflow branch', async () => 
       );
     const probeError = await probe;
     assert.ok(/single-consumer/.test(probeError.message));
-    const outcome = await pull.then(
-      (frame) => ({ frame }),
-      (error) => ({ error }),
-    );
+    const outcome = await pull;
     if (outcome.error !== undefined) {
       assert.ok(outcome.error instanceof OverflowError);
       witnessed += 1;
