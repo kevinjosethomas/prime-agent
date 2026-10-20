@@ -29,8 +29,8 @@ mod tests;
 
 use errors::{command_type_debug, response_data_or_error, DirectRequestError};
 pub use errors::{
-    is_daemon_rejection, is_daemon_timeout, is_daemon_unreachable, is_kernel_not_running,
-    is_update_restarting_rejection, is_command_not_sent, is_command_result_uncertain,
+    is_command_not_sent, is_command_result_uncertain, is_daemon_rejection, is_daemon_timeout,
+    is_daemon_unreachable, is_kernel_not_running, is_update_restarting_rejection,
     rejected_provider_unauthenticated, CommandNotSent, CommandResultUncertain, RequestRejected,
 };
 
@@ -329,11 +329,11 @@ impl Shared {
             .collect();
         for id in dead {
             if let Some(request) = pending.remove(&id) {
-                let _ = request.reply.send(Err(anyhow::Error::new(
-                    CommandResultUncertain {
+                let _ = request
+                    .reply
+                    .send(Err(anyhow::Error::new(CommandResultUncertain {
                         message: error.to_string(),
-                    },
-                )));
+                    })));
             }
         }
     }
@@ -353,11 +353,11 @@ impl Shared {
             .collect();
         for id in dead {
             if let Some(request) = pending.remove(&id) {
-                let _ = request.reply.send(Err(anyhow::Error::new(
-                    CommandResultUncertain {
+                let _ = request
+                    .reply
+                    .send(Err(anyhow::Error::new(CommandResultUncertain {
                         message: error.to_string(),
-                    },
-                )));
+                    })));
             }
         }
     }
@@ -556,8 +556,7 @@ impl DaemonClient {
                         // No newline in the buffered bytes: the cap also
                         // bounds the partial frame accumulating across
                         // fills.
-                        if max_frame_bytes.is_some_and(|cap| partial.len() + buffer.len() > cap)
-                        {
+                        if max_frame_bytes.is_some_and(|cap| partial.len() + buffer.len() > cap) {
                             break;
                         }
                         partial.extend_from_slice(buffer);
@@ -931,11 +930,10 @@ impl DaemonClient {
         // The opt-in pending cap refuses before the frame is queued: a
         // provable non-delivery, safe for the supervisor fallback — the live
         // link itself stays untouched.
-        if !self.shared.register_pending(
-            id.to_string(),
-            reply_tx,
-            Some(Arc::clone(&link.owner)),
-        ) {
+        if !self
+            .shared
+            .register_pending(id.to_string(), reply_tx, Some(Arc::clone(&link.owner)))
+        {
             return Err(DirectRequestError::Capped);
         }
         if !link.send(frame) {

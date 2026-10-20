@@ -1095,14 +1095,19 @@ async fn pending_cap_refuses_the_send_before_queuing() {
     assert!(is_command_not_sent(&error));
     assert!(!is_command_result_uncertain(&error));
     assert!(
-        error.to_string().contains("too many pending daemon requests"),
+        error
+            .to_string()
+            .contains("too many pending daemon requests"),
         "unexpected error: {error}"
     );
     // The queued pair times out as an uncertain delivery each.
     for result in [first.await.unwrap(), second.await.unwrap()] {
         let error = result.unwrap_err();
         assert!(is_command_result_uncertain(&error));
-        assert!(error.to_string().contains("Timed out after"), "unexpected: {error}");
+        assert!(
+            error.to_string().contains("Timed out after"),
+            "unexpected: {error}"
+        );
     }
     client.close();
 }
@@ -1263,7 +1268,9 @@ async fn writer_send_failure_cleans_its_pending_slot() {
         // The writer refusal, never the pending-cap refusal a leaked slot
         // would produce.
         assert!(
-            error.to_string().contains("the daemon connection is closed"),
+            error
+                .to_string()
+                .contains("the daemon connection is closed"),
             "unexpected error: {error}"
         );
     }
@@ -1380,9 +1387,7 @@ async fn pre_handshake_frames_stay_off_the_tap() {
     let kinds: Vec<&str> = early_and_late
         .iter()
         .filter_map(|event| match event {
-            DaemonClientEvent::SessionEvent { event, .. } => {
-                event["type"].as_str()
-            }
+            DaemonClientEvent::SessionEvent { event, .. } => event["type"].as_str(),
             _ => None,
         })
         .collect();
@@ -1449,7 +1454,10 @@ async fn frame_cap_binds_partial_lines_across_fills() {
         .unwrap_err();
     // The teardown's sweep resolves the in-flight request as uncertain.
     assert!(started.elapsed() < Duration::from_secs(2));
-    assert!(is_command_result_uncertain(&error), "unexpected error: {error}");
+    assert!(
+        is_command_result_uncertain(&error),
+        "unexpected error: {error}"
+    );
     assert!(
         error.to_string().contains("the daemon connection closed"),
         "unexpected error: {error}"
