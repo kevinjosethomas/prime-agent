@@ -435,7 +435,9 @@ impl PrimeDaemonClient {
                 // in-flight handshake future.
                 let outcome = tokio::select! {
                     biased;
-                    core = &mut fut => core.map_err(|error| Box::new(classify(error, None))),
+                    core = &mut fut => {
+                        core.map_err(|error| Box::new(classify(error, inner.teardown_cause())))
+                    },
                     _ = &mut notified => Ok(false),
                 };
                 let _ = result_tx.send(outcome);
@@ -569,7 +571,9 @@ impl PrimeDaemonClient {
                 let outcome = tokio::select! {
                     biased;
                     response = &mut fut => {
-                        let response = response.map_err(|error| Box::new(classify(error, None)));
+                        let response = response.map_err(|error| {
+                        Box::new(classify(error, inner.teardown_cause()))
+                    });
                         response.and_then(|response| {
                             serde_json::to_value(response).map_err(|error| {
                                 Box::new(transport(format!("serialize response: {error}")))
@@ -621,7 +625,9 @@ impl PrimeDaemonClient {
                 // Biased with the core future first (see `request`).
                 let outcome = tokio::select! {
                     biased;
-                    data = &mut fut => data.map_err(|error| Box::new(classify(error, None))),
+                    data = &mut fut => {
+                        data.map_err(|error| Box::new(classify(error, inner.teardown_cause())))
+                    },
                     _ = &mut notified => {
                         let cause = inner.teardown_cause().unwrap_or("closed");
                         Err(Box::new(uncertain(

@@ -94,9 +94,9 @@ const server = net.createServer((socket) => {
             command: frame.command.type,
             success: false,
             error: 'the daemon refuses this command',
-            error_info: {
+            errorInfo: {
               code: 'session_already_active',
-              session_path: '/tmp/refused-session.jsonl',
+              sessionPath: '/tmp/refused-session.jsonl',
             },
           }) + '\n',
         );

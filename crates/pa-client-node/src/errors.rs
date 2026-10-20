@@ -124,7 +124,9 @@ impl From<ErrorPayload> for napi::Error {
 /// Classify one `anyhow` chain from a core request per the transport rules.
 pub(crate) fn classify(error: anyhow::Error, cause: Option<&'static str>) -> ErrorPayload {
     if is_command_not_sent(&error) {
-        not_sent(error.to_string())
+        let mut payload = not_sent(error.to_string());
+        payload.cause = cause;
+        payload
     } else if is_command_result_uncertain(&error) {
         uncertain(error.to_string(), cause)
     } else if is_daemon_rejection(&error) {
