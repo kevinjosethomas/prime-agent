@@ -14,7 +14,7 @@ const { pathToFileURL } = require('node:url');
 async function main() {
   const dist = pathToFileURL(join(__dirname, '..', 'dist', 'index.js')).href;
   const helpers = pathToFileURL(join(__dirname, '..', 'tests', 'helpers.mjs')).href;
-  const { DaemonConnection, OverflowError, UncertainError } = await import(dist);
+  const { DaemonConnection, NotSentError, OverflowError, UncertainError } = await import(dist);
   const { startMock, tmpSocket } = await import(helpers);
 
   // 1. Connect + request round-trip against the echo mock.
@@ -25,14 +25,24 @@ async function main() {
   if (response.success !== true) throw new Error('request failed in Electron main');
   connection.close();
 
-  // 2. The overflow fail-closed scenario in the flood mock.
+  // 2. The overflow fail-closed scenario in the flood mock. The in-flight
+  // request is issued BEFORE the terminal mark (it must settle Uncertain
+  // with cause overflow); a request AFTER the mark is the provable
+  // NotSent with the overflow cause.
   const floodPath = tmpSocket('electron-overflow');
   const stopFlood = await startMock(floodPath, 'flood');
   const flooded = await DaemonConnection.connect(floodPath, { frameBuffer: 2 });
+  const preMarkRequest = flooded
+    .request({ type: 'get_connection_state', activeSessionId: 'wire' }, 60_000)
+    .then(
+      () => {
+        throw new Error('the pre-mark request should have torn down');
+      },
+      (error) => error,
+    );
   let overflowed = false;
   try {
     while (true) {
-      // Drain frames until the terminal overflow error surfaces.
       await flooded.nextFrame();
     }
   } catch (error) {
@@ -40,10 +50,21 @@ async function main() {
     overflowed = true;
   }
   if (!overflowed) throw new Error('overflow never surfaced in Electron main');
-  const inflight = flooded.request({ type: 'get_connection_state' }, 60_000);
-  await inflight.catch((error) => {
-    if (!(error instanceof UncertainError) || error.cause !== 'overflow') throw error;
-  });
+  const tornDown = await preMarkRequest;
+  if (!(tornDown instanceof UncertainError) || tornDown.cause !== 'overflow') {
+    throw new Error(`pre-mark request class: ${tornDown?.kind}:${tornDown?.cause}`);
+  }
+  const postMark = await flooded
+    .request({ type: 'get_connection_state', activeSessionId: 'wire' }, 60_000)
+    .then(
+      () => {
+        throw new Error('the post-mark request should have refused');
+      },
+      (error) => error,
+    );
+  if (!(postMark instanceof NotSentError) || postMark.cause !== 'overflow') {
+    throw new Error(`post-mark request class: ${postMark?.kind}:${postMark?.cause}`);
+  }
   flooded.close();
   await stopFlood();
   await stopEcho();

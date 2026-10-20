@@ -23,8 +23,8 @@ const schemaId = schemaLine?.match(/"([^"]+)"/)?.[1];
 if (!schemaId) throw new Error('DAEMON_SCHEMA_ID not found in pa-types');
 
 const expectedTriples = {
-  'linux-x64': 'x86_64-unknown-linux-gnu',
-  'darwin-arm64': 'aarch64-apple-darwin',
+  'linux-x64.node': 'x86_64-unknown-linux-gnu',
+  'darwin-arm64.node': 'aarch64-apple-darwin',
 };
 
 const failures = [];
