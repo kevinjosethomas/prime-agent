@@ -15,7 +15,7 @@ use super::{
 /// keeps running after its owner's last connection closes.
 const OWNED_WORKER_DISCONNECT_GRACE: Duration = Duration::from_secs(30);
 
-/// Per-worker budget for the set_task_reporter fan-out (misses ride the respawn stamp).
+/// Per-worker budget for the `set_task_reporter` fan-out (misses ride the respawn stamp).
 const TASKS_REPORTER_FORWARD_BUDGET_MS: u64 = 2_000;
 
 async fn write_line<W: AsyncWriteExt + Unpin>(writer: &mut W, value: &Value) -> Result<usize> {
