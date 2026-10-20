@@ -779,7 +779,7 @@ impl Supervisor {
                 &edges,
                 Path::new(child),
                 Some(&child_id),
-                depth,
+                Some(depth),
             )?;
             if crate::lease::canonical_session_path(Path::new(parent))
                 != crate::lease::canonical_session_path(Path::new(&edge.parent))

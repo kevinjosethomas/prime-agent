@@ -290,3 +290,15 @@ async fn restore_child_passive_rows_never_create_workers_or_duplicate_continuati
         assert_eq!(std::fs::read(&display).unwrap(), before);
     }
 }
+
+#[test]
+fn restore_child_legacy_missing_depth_comes_only_from_the_verified_edge() {
+    let (_dir, mut roster, edge) = fixture();
+    let row = &mut roster.sessions[0];
+    row.rlm_depth = 0;
+    let saved = row.clone();
+    let mut payload = row.runtime_config["create"].clone();
+    hydrate_create(&mut payload, row, std::slice::from_ref(&edge)).unwrap();
+    assert_eq!(payload["runtimeMetadata"]["rlmDepth"], json!(edge.depth));
+    assert_eq!(*row, saved);
+}

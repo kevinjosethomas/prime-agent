@@ -89,7 +89,7 @@ pub(crate) fn verified_edge<'a>(
     edges: &'a [RlmLedgerEdge],
     child: &Path,
     child_id: Option<&str>,
-    depth: u32,
+    depth: Option<u32>,
 ) -> Result<&'a RlmLedgerEdge> {
     let path = canonical_session_path(child);
     let mut matching = edges.iter().filter(|edge| {
@@ -101,7 +101,9 @@ pub(crate) fn verified_edge<'a>(
     if matching.next().is_some() {
         bail!("saved child has ambiguous ledger parents");
     }
-    if child_id.is_some_and(|id| id != edge.child_id) || depth != edge.depth {
+    if child_id.is_some_and(|id| id != edge.child_id)
+        || depth.is_some_and(|depth| depth != edge.depth)
+    {
         bail!("saved child identity or depth differs from its ledger edge");
     }
     if !path.is_file() || !Path::new(&edge.parent).is_file() {
@@ -125,7 +127,10 @@ pub(super) fn hydrate_create(
         .and_then(|value| value.get("rlmChildId"))
         .and_then(Value::as_str)
         .or_else(|| payload.get("rlmChildId").and_then(Value::as_str));
-    let edge = verified_edge(edges, Path::new(&row.session_file), child_id, row.rlm_depth)?;
+    // Legacy snapshots used zero when runtime metadata carried no depth.
+    // Only the unique durable ledger edge may supply that missing value.
+    let depth = (row.rlm_depth > 0).then_some(row.rlm_depth);
+    let edge = verified_edge(edges, Path::new(&row.session_file), child_id, depth)?;
     if payload
         .get("rlmChildId")
         .and_then(Value::as_str)
