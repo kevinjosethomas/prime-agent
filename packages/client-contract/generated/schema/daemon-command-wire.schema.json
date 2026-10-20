@@ -3890,6 +3890,52 @@
           "additionalProperties": true
         },
         {
+          "description": "Desktop -> supervisor (capability `task_reporter`): set the trusted local\ntasks-reporter configuration. The supervisor stores it, stamps it on\nevery worker it spawns, and forwards it to live workers; the\nconfiguration never rides a prompt.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "set_task_reporter"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "command": {
+              "description": "Nonempty argv for the reporter process; never a shell string.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "env": {
+              "description": "Optional extra reporter env; string values only.",
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "timeout": {
+              "description": "Optional reporter timeout in seconds (default 15, capped by the supervisor).",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          "required": [
+            "type",
+            "command"
+          ],
+          "additionalProperties": true
+        },
+        {
           "type": "object",
           "properties": {
             "type": {
