@@ -1681,13 +1681,14 @@ mod tests {
         session.register_attachment("s1", None);
         // A held restore blocks the driver's settle: the stop's completion
         // genuinely waits on the driver.
+        // The restore is HELD: the settle provably cannot complete before
+        // the release, so a bounded timeout proves the stop future was
+        // still pending when it is dropped mid-flight.
         let mut stop = Box::pin(session.stop());
-        // Prove the stop future is still Pending (the settle is blocked on
-        // the held restore), then drop it mid-flight.
-        let waker = futures_noop_waker();
-        let mut context = std::task::Context::from_waker(&waker);
         assert!(
-            std::future::Future::poll(stop.as_mut(), &mut context).is_pending(),
+            tokio::time::timeout(Duration::from_millis(200), &mut stop)
+                .await
+                .is_err(),
             "the stop is genuinely pending on the blocked settle"
         );
         drop(stop);
@@ -1710,17 +1711,6 @@ mod tests {
             .await
             .unwrap_err();
         assert!(crate::daemon_client::is_command_not_sent(&error));
-    }
-
-    /// A no-op waker for the pending poll proof.
-    fn futures_noop_waker() -> std::task::Waker {
-        use std::sync::Arc;
-        use std::task::{Wake, Waker};
-        struct NoopWake;
-        impl Wake for NoopWake {
-            fn wake(self: Arc<Self>) {}
-        }
-        Waker::from(Arc::new(NoopWake))
     }
 
     #[tokio::test]
@@ -1778,7 +1768,9 @@ mod tests {
         })
         .await
         .expect("the hung connection's BOTH halves ended when the consumer dropped");
-        let _ = session.stop().await.expect("the settle completed honestly");
+        session.stop()
+            .await
+            .expect("the settle completed honestly");
     }
 
     #[tokio::test]
@@ -1906,7 +1898,9 @@ mod tests {
         })
         .await;
         assert!(took.is_ok(), "the pre-entry loss was taken at entry");
-        let _ = session.stop().await.expect("the settle completed honestly");
+        session.stop()
+            .await
+            .expect("the settle completed honestly");
     }
 
     #[tokio::test]
@@ -1955,18 +1949,17 @@ mod tests {
         let mut saw_reattached = false;
         let _ = tokio::time::timeout(Duration::from_secs(15), async {
             loop {
-                match next_event(&mut events).await {
-                    ConnectionEvent::Reattached { data, .. } => {
-                        assert_eq!(data["lastEventCursor"]["sequence"], 4);
-                        saw_reattached = true;
-                        return;
-                    }
-                    _ => {}
+                if let ConnectionEvent::Reattached { data, .. } = next_event(&mut events).await {
+                    assert_eq!(data["lastEventCursor"]["sequence"], 4);
+                    saw_reattached = true;
+                    return;
                 }
             }
         })
         .await;
         assert!(saw_reattached, "only the new-epoch restore reattached");
-        let _ = session.stop().await.expect("the settle completed honestly");
+        session.stop()
+            .await
+            .expect("the settle completed honestly");
     }
 }
