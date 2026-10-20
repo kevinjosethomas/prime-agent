@@ -1588,7 +1588,10 @@ async fn shutdown_fails_pending_now_without_daemon_eof() {
         .unwrap_err();
     // Immediate uncertain failure — no 30s budget ride, no daemon EOF.
     assert!(started.elapsed() < Duration::from_secs(1));
-    assert!(is_command_result_uncertain(&error), "unexpected error: {error}");
+    assert!(
+        is_command_result_uncertain(&error),
+        "unexpected error: {error}"
+    );
     assert!(!is_command_not_sent(&error));
     assert!(
         error.to_string().contains("the daemon connection closed"),
@@ -1649,7 +1652,9 @@ async fn shutdown_marks_every_clone_dead() {
         .unwrap_err();
     assert!(is_command_not_sent(&error), "unexpected error: {error}");
     assert!(
-        error.to_string().contains("the daemon connection is closed"),
+        error
+            .to_string()
+            .contains("the daemon connection is closed"),
         "unexpected error: {error}"
     );
 }

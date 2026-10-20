@@ -309,7 +309,7 @@ pub(crate) async fn connect_direct(
                     active_session_id: active_session_id.clone(),
                 });
             }
-        });
+        })
     };
     Ok((
         DirectLink {
