@@ -26,13 +26,13 @@ pub(crate) fn without_refinements(messages: Vec<AgentMessage>) -> Vec<AgentMessa
             {
                 None
             }
-            message @ AgentMessage::CompactionSummary(_) => Some(message),
             message @ (AgentMessage::User(_)
             | AgentMessage::Assistant(_)
             | AgentMessage::ToolResult(_)
             | AgentMessage::BashExecution(_)
             | AgentMessage::Custom(_)
-            | AgentMessage::BranchSummary(_)) => Some(message),
+            | AgentMessage::BranchSummary(_)
+            | AgentMessage::CompactionSummary(_)) => Some(message),
         })
         .collect()
 }
@@ -89,15 +89,16 @@ mod tests {
         })
     }
 
-    fn saved_notice_row() -> AgentMessage {
-        AgentMessage::Custom(pa_types::session::CustomMessage {
-            custom_type: "refinement_notice".to_string(),
-            content: UserContent::Text("saved memory".to_string()),
-            display: false,
-            details: None,
-            timestamp: 0,
-            rest: serde_json::Map::default(),
-        })
+    fn saved_notice_row() -> pa_agent::types::AgentMessage {
+        serde_json::from_value(serde_json::json!({
+            "role": "custom",
+            "customType": "refinement_notice",
+            "content": "saved memory",
+            "display": false,
+            "details": { "summary": "saved memory" },
+            "timestamp": 0
+        }))
+        .unwrap()
     }
 
     #[tokio::test]

@@ -575,9 +575,6 @@ pub mod executor;
 pub mod planner;
 pub mod ranking;
 
-// Export the compact-text helper for the digest formatter.
-pub(crate) use compact_text as compact_harness_text;
-
 #[cfg(test)]
 mod tests {
     use super::*;
