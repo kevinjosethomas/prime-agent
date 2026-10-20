@@ -991,6 +991,7 @@ async fn frame_cap_tears_down_the_transport_and_fails_pending_as_uncertain() {
     client.close();
 }
 
+#[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn pending_cap_refuses_the_send_before_queuing() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -1112,6 +1113,7 @@ async fn pending_cap_refuses_the_send_before_queuing() {
     client.close();
 }
 
+#[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn direct_reader_streams_application_frames_to_the_tap() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -1276,6 +1278,7 @@ async fn writer_send_failure_cleans_its_pending_slot() {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn pre_handshake_frames_stay_off_the_tap() {
     // A daemon that misbehaves by streaming an application frame before its
@@ -1422,7 +1425,7 @@ async fn frame_cap_binds_partial_lines_across_fills() {
             Ok(_) => {}
         }
         for _ in 0..3 {
-            writer.write_all("x".repeat(50).as_bytes()).await.unwrap();
+            writer.write_all("x".repeat(200).as_bytes()).await.unwrap();
             tokio::time::sleep(Duration::from_millis(30)).await;
         }
         std::future::pending::<()>().await;
@@ -1431,7 +1434,7 @@ async fn frame_cap_binds_partial_lines_across_fills() {
     let (client, _events) = DaemonClient::connect_with_options(
         &socket,
         DaemonClientOptions {
-            max_frame_bytes: Some(100),
+            max_frame_bytes: Some(300),
             ..DaemonClientOptions::default()
         },
     )

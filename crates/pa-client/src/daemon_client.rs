@@ -524,7 +524,7 @@ impl DaemonClient {
                     // The socket closed: a trailing unterminated line still
                     // dispatches once, like `read_line`'s last line at EOF,
                     // before the teardown.
-                    Ok(buffer) if buffer.is_empty() => {
+                    Ok([]) => {
                         if !partial.is_empty() {
                             let line = std::mem::take(&mut partial);
                             dispatch(&line);
@@ -534,35 +534,32 @@ impl DaemonClient {
                     Ok(buffer) => buffer,
                     Err(_) => break,
                 };
-                match buffer.iter().position(|byte| *byte == b'\n') {
-                    Some(newline) => {
-                        // The cap covers the line without its newline, like
-                        // the bounded readers' byte accounting.
-                        if max_frame_bytes.is_some_and(|cap| newline > cap) {
-                            break;
-                        }
-                        let line: Vec<u8> = if partial.is_empty() {
-                            buffer[..newline].to_vec()
-                        } else {
-                            partial.extend_from_slice(&buffer[..newline]);
-                            std::mem::take(&mut partial)
-                        };
-                        reader.consume(newline + 1);
-                        if !dispatch(&line) {
-                            break;
-                        }
+                if let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
+                    // The cap covers the line without its newline, like
+                    // the bounded readers' byte accounting.
+                    if max_frame_bytes.is_some_and(|cap| newline > cap) {
+                        break;
                     }
-                    None => {
-                        // No newline in the buffered bytes: the cap also
-                        // bounds the partial frame accumulating across
-                        // fills.
-                        if max_frame_bytes.is_some_and(|cap| partial.len() + buffer.len() > cap) {
-                            break;
-                        }
-                        partial.extend_from_slice(buffer);
-                        let read = buffer.len();
-                        reader.consume(read);
+                    let line: Vec<u8> = if partial.is_empty() {
+                        buffer[..newline].to_vec()
+                    } else {
+                        partial.extend_from_slice(&buffer[..newline]);
+                        std::mem::take(&mut partial)
+                    };
+                    reader.consume(newline + 1);
+                    if !dispatch(&line) {
+                        break;
                     }
+                } else {
+                    // No newline in the buffered bytes: the cap also
+                    // bounds the partial frame accumulating across
+                    // fills.
+                    if max_frame_bytes.is_some_and(|cap| partial.len() + buffer.len() > cap) {
+                        break;
+                    }
+                    partial.extend_from_slice(buffer);
+                    let read = buffer.len();
+                    reader.consume(read);
                 }
             }
             // The supervisor socket closed: pending requests fail now and the death watch wakes the
