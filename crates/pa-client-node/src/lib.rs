@@ -58,6 +58,7 @@ impl SpikeTicker {
     pub fn new(callback: Function) -> Result<Self> {
         let tsfn: ThreadsafeFunction<u32> = callback
             .build_threadsafe_function::<u32>()
+            .callee_handled::<true>()
             .build_callback(|ctx| Ok(ctx.value))?;
         let stop = Arc::new(AtomicBool::new(false));
         let task_stop = Arc::clone(&stop);
