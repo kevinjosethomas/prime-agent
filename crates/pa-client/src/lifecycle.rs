@@ -755,6 +755,7 @@ async fn driver_run(
                     // registry; stop's marks run under the same registry
                     // gate, so neither can pass the other mid-section).
                     let install = install_fresh(&state, &fresh, &cancel).await;
+                    eprintln!("DBG driver: install resolved = {}", install.is_some());
                     let Some(epoch) = install else {
                         // A stop landed: the fresh connection never
                         // installs; its settle runs outside the guards.
@@ -764,6 +765,7 @@ async fn driver_run(
                     };
                     let dead = fresh.reader_dead();
                     client = Some(fresh);
+                    eprintln!("DBG driver: client assigned, entering service");
                     spawn_restores(&state, &config, epoch, &restore_tx, &mut restore_handles);
                     match service(
                         &state,
@@ -777,9 +779,7 @@ async fn driver_run(
                     .await
                     {
                         ServiceEnd::Loss(armed) => {
-                            // The prior connection is dead and its tasks
-                            // joined in the service loop: clear the driver's
-                            // clone so the loop reconnects.
+                            eprintln!("DBG driver: service Loss");
                             client = None;
                             kind = armed;
                             let window = config.reconnect.window_for(kind);
@@ -788,7 +788,10 @@ async fn driver_run(
                                 .map(|window| tokio::time::Instant::now() + window);
                             delay = window.initial_delay;
                         }
-                        ServiceEnd::Stop => break,
+                        ServiceEnd::Stop => {
+                            eprintln!("DBG driver: service Stop");
+                            break;
+                        }
                     }
                 }
                 Err(error) => {
