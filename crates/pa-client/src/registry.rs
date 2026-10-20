@@ -46,8 +46,10 @@ pub(crate) struct AttachmentRegistry {
     /// Insertion order (restore visits entries in it).
     order: Vec<String>,
     attachments: HashMap<String, Attachment>,
-    /// `(active_session_id, generation)` -> the last delivered sequence.
-    seen: HashMap<(String, String), u64>,
+    /// id -> (generation, the last delivered sequence). ONE marker per
+    /// attachment: a new generation replaces the prior marker's slot, so
+    /// the map is bounded by the attachment set, never by generation churn.
+    seen: HashMap<String, (String, u64)>,
 }
 
 impl AttachmentRegistry {
@@ -112,9 +114,9 @@ impl AttachmentRegistry {
         let entry = match (revision, self.attachments.get_mut(id)) {
             // The attempt's own revision: adopt into the live entry.
             (Some(expected), Some(entry)) if entry.revision == expected => entry,
-            // An unguarded attach (no revision tracked): adopt, creating the
-            // entry when the id was never registered.
-            (None, Some(entry)) => entry,
+            // A fresh id's first attach (unregistered at send, still
+            // absent): create. A successful attach with a MISSING cursor is
+            // as restored as one with a cursor.
             (None, None) => self
                 .attachments
                 .entry(id.to_string())
@@ -123,15 +125,26 @@ impl AttachmentRegistry {
                     capabilities: capabilities.to_vec(),
                     revision: 0,
                 }),
-            // Superseded by a later attempt, or detached: never adopt.
+            // (None, Some): an unguarded attempt arriving at an entry that
+            // appeared meanwhile (a register, a detach+register cycle, a
+            // concurrent attach) — NEVER adopt; the fresh response cannot
+            // know the entry's current attempt. (Some, None): the entry was
+            // detached mid-flight — never resurrect. (Some, mismatch): a
+            // later attempt superseded this one — never roll back.
             _ => return false,
         };
+        // A successful adoption restores the attachment regardless of
+        // whether a cursor exists.
+        if self.order.iter().all(|registered| registered != id) {
+            self.order.push(id.to_string());
+        }
         if !capabilities.is_empty() {
             entry.capabilities = capabilities.to_vec();
         }
         let snapshot = data.get("snapshot").unwrap_or(data);
         let current = entry.cursor.clone();
-        if let Some(cursor) = snapshot.get("lastEventCursor").and_then(parse_cursor) {
+        if let Some(mut cursor) = snapshot.get("lastEventCursor").and_then(parse_cursor) {
+            cursor.active_session_id = Some(id.to_string());
             if current
                 .as_ref()
                 .is_none_or(|c| c.generation != cursor.generation)
@@ -150,9 +163,7 @@ impl AttachmentRegistry {
                 });
             }
         }
-        if entry.cursor.is_some() && self.order.iter().all(|registered| registered != id) {
-            self.order.push(id.to_string());
-        }
+
         let (sequence, generation) = match entry.cursor.as_ref() {
             Some(cursor) if cursor.sequence.is_some() => {
                 (cursor.sequence, cursor.generation.clone())
@@ -453,5 +464,51 @@ mod tests {
         assert_eq!(registry.observe_frame(&closed), FrameAction::Deliver);
         assert!(registry.restore_entries().is_empty());
         assert_eq!(registry.observe_frame(&replay), FrameAction::Deliver);
+    }
+
+    #[test]
+    fn generation_churn_keeps_one_marker_per_attachment() {
+        // Every generation change replaces the marker slot: the seen map is
+        // bounded by the attachment set, never by generation churn.
+        let mut registry = AttachmentRegistry::default();
+        registry.register("s1", vec![]);
+        for generation in 0..50 {
+            let generation = format!("g{generation}");
+            registry.observe_frame(&event(&generation, 1));
+        }
+        assert_eq!(registry.seen.len(), 1, "one marker per attachment");
+        // The current generation's replay dedupes.
+        let last = format!("g49");
+        assert_eq!(registry.observe_frame(&event(&last, 1)), FrameAction::Dedupe);
+    }
+
+    #[test]
+    fn a_fresh_attach_with_no_cursor_is_still_restored() {
+        // A successful attach whose snapshot carries neither cursor shape
+        // still creates a restorable attachment (missing cursor, not missing
+        // attachment).
+        let mut registry = AttachmentRegistry::default();
+        assert!(registry.record_attach("s3", &[], &json!({}), None));
+        let entries = registry.restore_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "s3");
+        assert!(entries[0].1.cursor.is_none());
+    }
+
+    #[test]
+    fn a_fresh_response_never_adopts_into_an_entry_that_appeared() {
+        // The ABA guard: an unguarded (no-revision) attempt arriving at an
+        // entry that appeared meanwhile — a register, a detach+register
+        // cycle, a concurrent attach — can never adopt.
+        let mut registry = AttachmentRegistry::default();
+        registry.register("s1", vec![]);
+        assert!(!registry.record_attach(
+            "s1",
+            &[],
+            &json!({ "lastEventCursor": { "generation": "g", "sequence": 9 } }),
+            None
+        ));
+        let entry = registry.restore_entries()[0].1.clone();
+        assert!(entry.cursor.is_none(), "the unguarded response never adopts");
     }
 }
