@@ -303,7 +303,7 @@ async fn collect_during_kickoff_admission_keeps_the_child_running() {
         .expect("collect while kickoff admission is pending");
     assert_eq!(before.len(), 1);
     assert_eq!(
-        (before[0].status.as_str(), before[0].settled),
+        (before[0].status, before[0].settled),
         ("running", false),
         "a pre-admission idle worker has not completed its child task"
     );
@@ -319,7 +319,7 @@ async fn collect_during_kickoff_admission_keeps_the_child_running() {
         .collect(vec![handle.rlm_child_id], 0)
         .await
         .expect("collect the completed admitted task");
-    assert_eq!((after[0].status.as_str(), after[0].settled), ("done", true));
+    assert_eq!((after[0].status, after[0].settled), ("done", true));
 }
 
 #[tokio::test]
