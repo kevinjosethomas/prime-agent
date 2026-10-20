@@ -1827,10 +1827,11 @@ mod tests {
                 handle.abort();
             }
         }
-        let first = tokio::time::timeout(Duration::from_secs(5), session.stop())
+        let first_result = tokio::time::timeout(Duration::from_secs(5), session.stop())
             .await
-            .expect("the first stop settles")
-            .unwrap_err();
+            .expect("the first stop settles");
+        eprintln!("DBG first stop result: {first_result:?}");
+        let first = first_result.unwrap_err();
         let message = first.to_string();
         let second = tokio::time::timeout(Duration::from_secs(5), session.stop())
             .await
