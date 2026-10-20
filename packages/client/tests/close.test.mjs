@@ -18,7 +18,10 @@ test('close resolves after pending request, upgrade, and pull are all torn down'
       },
       (error) => error,
     );
-  const pendingUpgrade = connection.upgradeDirect('active-1');
+  const pendingUpgrade = connection.upgradeDirect('active-1').then(
+    (upgraded) => upgraded,
+    (error) => error,
+  );
   const pendingFrame = connection.nextFrame();
   const pendingStatus = connection.nextStatus();
   await connection.close();

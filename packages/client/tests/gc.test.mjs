@@ -13,9 +13,10 @@ const childScript = `
   const socketPath = tmpSocket('gc-child');
   const stop = await startMock(socketPath, 'echo');
   {
+    // The scoped block lets the handle die on scope exit; the explicit GC
+    // pass then drives the napi finalizer's scheduled cleanup.
     const connection = await DaemonConnection.connect(socketPath);
-    await connection.request({ type: 'get_connection_state', activeSessionId: 'active-1' });
-    connection = null; // eslint-disable-line no-native-reassign
+    await connection.request({ type: 'get_connection_state', activeSessionId: 'wire' });
   }
   globalThis.gc();
   await stop();

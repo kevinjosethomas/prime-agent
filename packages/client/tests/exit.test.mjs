@@ -14,7 +14,7 @@ const childScript = `
   const socketPath = tmpSocket('exit-child');
   const stop = await startMock(socketPath, 'events');
   const connection = await DaemonConnection.connect(socketPath);
-  await connection.request({ type: 'get_connection_state' });
+  await connection.request({ type: 'get_connection_state', activeSessionId: 'wire' });
   await connection.nextFrame();
   connection.close();
   await stop();

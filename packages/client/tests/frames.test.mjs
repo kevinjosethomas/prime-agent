@@ -42,8 +42,9 @@ test('nextFrame is single-consumer: a concurrent pull rejects', async () => {
   const connection = await DaemonConnection.connect(socketPath);
   const pending = connection.nextFrame();
   await assert.rejects(connection.nextFrame(), (error) => /single-consumer/.test(error.message));
-  await pending;
+  // The echo mock never sends a frame: close is what ends the pending pull.
   connection.close();
+  assert.equal(await pending, null);
   await stop();
 });
 
