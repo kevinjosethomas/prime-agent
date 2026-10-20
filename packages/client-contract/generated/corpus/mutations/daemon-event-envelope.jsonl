@@ -22,6 +22,10 @@
 {"schemaRoot":"daemon-event-envelope","case":"drop-event","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire"},"rustAccepts":false}
 {"schemaRoot":"daemon-event-envelope","case":"wrong-type-event","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":"wrong-type"},"rustAccepts":false}
 {"schemaRoot":"daemon-event-envelope","case":"null-event","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":null},"rustAccepts":false}
+{"schemaRoot":"daemon-event-envelope","case":"nested-nested-drop-command","sample":{"type":"response","success":false},"rustAccepts":false}
+{"schemaRoot":"daemon-event-envelope","case":"nested-nested-wrong-type-command","sample":{"type":"response","command":"wrong-type","success":false},"rustAccepts":false}
+{"schemaRoot":"daemon-event-envelope","case":"nested-nested-drop-success","sample":{"type":"response","command":"wire"},"rustAccepts":false}
+{"schemaRoot":"daemon-event-envelope","case":"nested-nested-wrong-type-success","sample":{"type":"response","command":"wire","success":"wrong-type"},"rustAccepts":false}
 {"schemaRoot":"daemon-event-envelope","case":"drop-id","sample":{"activeSessionId":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false}},"rustAccepts":false}
 {"schemaRoot":"daemon-event-envelope","case":"wrong-type-id","sample":{"id":"wrong-type","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false},"activeSessionId":"wire"},"rustAccepts":true}
 {"schemaRoot":"daemon-event-envelope","case":"null-id","sample":{"id":null,"protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false},"activeSessionId":"wire"},"rustAccepts":false}
@@ -49,6 +53,10 @@
 {"schemaRoot":"daemon-event-envelope","case":"drop-activeSessionId","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false}},"rustAccepts":true}
 {"schemaRoot":"daemon-event-envelope","case":"wrong-type-activeSessionId","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false},"activeSessionId":"wrong-type"},"rustAccepts":true}
 {"schemaRoot":"daemon-event-envelope","case":"null-activeSessionId","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false},"activeSessionId":null},"rustAccepts":true}
+{"schemaRoot":"daemon-event-envelope","case":"nested-nested-drop-command","sample":{"type":"response","success":false},"rustAccepts":false}
+{"schemaRoot":"daemon-event-envelope","case":"nested-nested-wrong-type-command","sample":{"type":"response","command":"wrong-type","success":false},"rustAccepts":false}
+{"schemaRoot":"daemon-event-envelope","case":"nested-nested-drop-success","sample":{"type":"response","command":"wire"},"rustAccepts":false}
+{"schemaRoot":"daemon-event-envelope","case":"nested-nested-wrong-type-success","sample":{"type":"response","command":"wire","success":"wrong-type"},"rustAccepts":false}
 {"schemaRoot":"daemon-event-envelope","case":"drop-id","sample":{"sequence":0,"protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false}},"rustAccepts":false}
 {"schemaRoot":"daemon-event-envelope","case":"wrong-type-id","sample":{"id":"wrong-type","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false},"sequence":0},"rustAccepts":true}
 {"schemaRoot":"daemon-event-envelope","case":"null-id","sample":{"id":null,"protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false},"sequence":0},"rustAccepts":false}
@@ -76,6 +84,10 @@
 {"schemaRoot":"daemon-event-envelope","case":"drop-sequence","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false}},"rustAccepts":true}
 {"schemaRoot":"daemon-event-envelope","case":"wrong-type-sequence","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false},"sequence":"wrong-type"},"rustAccepts":false}
 {"schemaRoot":"daemon-event-envelope","case":"null-sequence","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false},"sequence":null},"rustAccepts":true}
+{"schemaRoot":"daemon-event-envelope","case":"nested-nested-drop-command","sample":{"type":"response","success":false},"rustAccepts":false}
+{"schemaRoot":"daemon-event-envelope","case":"nested-nested-wrong-type-command","sample":{"type":"response","command":"wrong-type","success":false},"rustAccepts":false}
+{"schemaRoot":"daemon-event-envelope","case":"nested-nested-drop-success","sample":{"type":"response","command":"wire"},"rustAccepts":false}
+{"schemaRoot":"daemon-event-envelope","case":"nested-nested-wrong-type-success","sample":{"type":"response","command":"wire","success":"wrong-type"},"rustAccepts":false}
 {"schemaRoot":"daemon-event-envelope","case":"drop-id","sample":{"cursor":{"generation":"wire","sequence":0},"protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false}},"rustAccepts":false}
 {"schemaRoot":"daemon-event-envelope","case":"wrong-type-id","sample":{"id":"wrong-type","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false},"cursor":{"generation":"wire","sequence":0}},"rustAccepts":true}
 {"schemaRoot":"daemon-event-envelope","case":"null-id","sample":{"id":null,"protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false},"cursor":{"generation":"wire","sequence":0}},"rustAccepts":false}
@@ -103,6 +115,10 @@
 {"schemaRoot":"daemon-event-envelope","case":"drop-cursor","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false}},"rustAccepts":true}
 {"schemaRoot":"daemon-event-envelope","case":"wrong-type-cursor","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false},"cursor":"wrong-type"},"rustAccepts":false}
 {"schemaRoot":"daemon-event-envelope","case":"null-cursor","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false},"cursor":null},"rustAccepts":true}
+{"schemaRoot":"daemon-event-envelope","case":"nested-nested-drop-command","sample":{"type":"response","success":false},"rustAccepts":false}
+{"schemaRoot":"daemon-event-envelope","case":"nested-nested-wrong-type-command","sample":{"type":"response","command":"wrong-type","success":false},"rustAccepts":false}
+{"schemaRoot":"daemon-event-envelope","case":"nested-nested-drop-success","sample":{"type":"response","command":"wire"},"rustAccepts":false}
+{"schemaRoot":"daemon-event-envelope","case":"nested-nested-wrong-type-success","sample":{"type":"response","command":"wire","success":"wrong-type"},"rustAccepts":false}
 {"schemaRoot":"daemon-event-envelope","case":"drop-id","sample":{"__contractUnknownExtra":{"kept":true},"protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false}},"rustAccepts":false}
 {"schemaRoot":"daemon-event-envelope","case":"wrong-type-id","sample":{"id":"wrong-type","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false},"__contractUnknownExtra":{"kept":true}},"rustAccepts":true}
 {"schemaRoot":"daemon-event-envelope","case":"null-id","sample":{"id":null,"protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false},"__contractUnknownExtra":{"kept":true}},"rustAccepts":false}
@@ -130,3 +146,7 @@
 {"schemaRoot":"daemon-event-envelope","case":"drop-__contractUnknownExtra","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false}},"rustAccepts":true}
 {"schemaRoot":"daemon-event-envelope","case":"wrong-type-__contractUnknownExtra","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false},"__contractUnknownExtra":"wrong-type"},"rustAccepts":true}
 {"schemaRoot":"daemon-event-envelope","case":"null-__contractUnknownExtra","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false},"__contractUnknownExtra":null},"rustAccepts":true}
+{"schemaRoot":"daemon-event-envelope","case":"nested-nested-drop-command","sample":{"type":"response","success":false},"rustAccepts":false}
+{"schemaRoot":"daemon-event-envelope","case":"nested-nested-wrong-type-command","sample":{"type":"response","command":"wrong-type","success":false},"rustAccepts":false}
+{"schemaRoot":"daemon-event-envelope","case":"nested-nested-drop-success","sample":{"type":"response","command":"wire"},"rustAccepts":false}
+{"schemaRoot":"daemon-event-envelope","case":"nested-nested-wrong-type-success","sample":{"type":"response","command":"wire","success":"wrong-type"},"rustAccepts":false}

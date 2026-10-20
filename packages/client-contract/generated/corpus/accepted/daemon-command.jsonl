@@ -24,7 +24,7 @@
 {"schemaRoot":"daemon-command","sample":{"type":"prompt_and_wait","activeSessionId":"wire","message":"wire"}}
 {"schemaRoot":"daemon-command","sample":{"type":"steer","activeSessionId":"wire","message":"wire"}}
 {"schemaRoot":"daemon-command","sample":{"type":"follow_up","activeSessionId":"wire","message":"wire"}}
-{"schemaRoot":"daemon-command","sample":{"type":"restore_next_turn","activeSessionId":"wire","messages":[]}}
+{"schemaRoot":"daemon-command","sample":{"type":"restore_next_turn","activeSessionId":"wire","messages":[{"content":"wire","timestamp":0,"role":"user"}]}}
 {"schemaRoot":"daemon-command","sample":{"type":"restore_actions","activeSessionId":"wire","snapshot":{}}}
 {"schemaRoot":"daemon-command","sample":{"type":"append_custom_message","activeSessionId":"wire","message":{}}}
 {"schemaRoot":"daemon-command","sample":{"type":"resume_queue","activeSessionId":"wire"}}
@@ -118,7 +118,7 @@
 {"schemaRoot":"daemon-command","sample":{"type":"get_tool_definition","activeSessionId":"wire","name":"wire"}}
 {"schemaRoot":"daemon-command","sample":{"type":"set_session_entry_label","activeSessionId":"wire","entryId":"wire"}}
 {"schemaRoot":"daemon-command","sample":{"type":"mark_anthropic_warning_shown","activeSessionId":"wire"}}
-{"schemaRoot":"daemon-command","sample":{"type":"set_prompt_guidelines","activeSessionId":"wire","appendSystemPrompt":[]}}
+{"schemaRoot":"daemon-command","sample":{"type":"set_prompt_guidelines","activeSessionId":"wire","appendSystemPrompt":["wire"]}}
 {"schemaRoot":"daemon-command","sample":{"type":"ack_result","commandId":"wire"}}
 {"schemaRoot":"daemon-command","sample":{"type":"prepare_update_restart"}}
 {"schemaRoot":"daemon-command","sample":{"type":"commit_update_restart"}}
@@ -127,3 +127,5 @@
 {"schemaRoot":"daemon-command","sample":{"type":"restart"}}
 {"schemaRoot":"daemon-command","sample":{"type":"shutdown"}}
 {"schemaRoot":"daemon-command","sample":{"type":"worker_register","activeSessionId":"wire","socketPath":"wire","workerInstanceId":"wire","token":"wire","pid":0}}
+{"schemaRoot":"daemon-command","sample":{"type":"restore_next_turn","activeSessionId":"wire","messages":[{"content":"wire","timestamp":0,"role":"user"}]}}
+{"schemaRoot":"daemon-command","sample":{"type":"restore_next_turn","activeSessionId":"wire","messages":[{"content":[{"text":"wire","type":"text"}],"timestamp":0,"role":"user"}]}}

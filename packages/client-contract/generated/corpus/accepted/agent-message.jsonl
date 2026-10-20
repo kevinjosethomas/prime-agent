@@ -1,7 +1,13 @@
 {"schemaRoot":"agent-message","sample":{"content":"wire","timestamp":0,"role":"user"}}
-{"schemaRoot":"agent-message","sample":{"content":[],"api":"wire","provider":"wire","model":"wire","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"stop","timestamp":0,"role":"assistant"}}
-{"schemaRoot":"agent-message","sample":{"toolCallId":"wire","content":[],"isError":false,"timestamp":0,"role":"toolResult"}}
+{"schemaRoot":"agent-message","sample":{"content":[{"text":"wire","type":"text"}],"api":"wire","provider":"wire","model":"wire","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"stop","timestamp":0,"role":"assistant"}}
+{"schemaRoot":"agent-message","sample":{"toolCallId":"wire","content":[{"text":"wire","type":"text"}],"isError":false,"timestamp":0,"role":"toolResult"}}
 {"schemaRoot":"agent-message","sample":{"command":"wire","output":"wire","cancelled":false,"truncated":false,"timestamp":0,"role":"bashExecution"}}
 {"schemaRoot":"agent-message","sample":{"customType":"wire","content":"wire","display":false,"timestamp":0,"role":"custom"}}
 {"schemaRoot":"agent-message","sample":{"summary":"wire","fromId":"wire","timestamp":0,"role":"branchSummary"}}
 {"schemaRoot":"agent-message","sample":{"summary":"wire","tokensBefore":0,"timestamp":0,"role":"compactionSummary"}}
+{"schemaRoot":"agent-message","sample":{"content":"wire","timestamp":0,"role":"user"}}
+{"schemaRoot":"agent-message","sample":{"content":[{"text":"wire","type":"text"}],"timestamp":0,"role":"user"}}
+{"schemaRoot":"agent-message","sample":{"content":[{"text":"wire","type":"text"}],"api":"wire","provider":"wire","model":"wire","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"stop","timestamp":0,"role":"assistant"}}
+{"schemaRoot":"agent-message","sample":{"content":[{"text":"wire","type":"text"}],"api":"wire","provider":"wire","model":"wire","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"toolUse","timestamp":0,"role":"assistant"}}
+{"schemaRoot":"agent-message","sample":{"customType":"wire","content":"wire","display":false,"timestamp":0,"role":"custom"}}
+{"schemaRoot":"agent-message","sample":{"customType":"wire","content":[{"text":"wire","type":"text"}],"display":false,"timestamp":0,"role":"custom"}}

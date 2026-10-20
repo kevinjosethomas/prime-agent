@@ -1267,46 +1267,93 @@
       "description": "Content blocks in user/tool-result messages: a `text` block, an `image` block, or any other JSON shape (unknown kinds preserved verbatim).",
       "anyOf": [
         {
-          "type": "object",
           "properties": {
             "type": {
               "const": "text"
-            },
-            "text": {
-              "type": "string"
-            },
-            "textSignature": {
-              "type": "string"
             }
           },
           "required": [
-            "type",
-            "text"
+            "type"
           ],
-          "additionalProperties": true
+          "$ref": "#/$defs/TextContent"
         },
         {
-          "type": "object",
           "properties": {
             "type": {
               "const": "image"
-            },
-            "data": {
-              "type": "string"
-            },
-            "mimeType": {
-              "type": "string"
             }
           },
           "required": [
-            "type",
-            "data",
-            "mimeType"
+            "type"
           ],
-          "additionalProperties": true
+          "$ref": "#/$defs/ImageContent"
         },
-        {}
+        {
+          "not": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "const": "text"
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "const": "image"
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              }
+            ]
+          }
+        }
       ]
+    },
+    "TextContent": {
+      "description": "Text content block (`type: \"text\"`).",
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "textSignature": {
+          "description": "`OpenAI` Responses metadata: a legacy id string or a [`TextSignatureV1`] JSON payload (TS\nwire key `textSignature`; the camelCase rename keeps it attached across the pa-ai <->\npa-agent round trips, which have no catch-all).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "additionalProperties": true
+    },
+    "ImageContent": {
+      "description": "Image content block (`type: \"image\"`); data is base64.",
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "string"
+        },
+        "mimeType": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "mimeType"
+      ],
+      "additionalProperties": true
     },
     "UserMessage": {
       "type": "object",
@@ -1370,26 +1417,6 @@
           ]
         }
       ]
-    },
-    "TextContent": {
-      "description": "Text content block (`type: \"text\"`).",
-      "type": "object",
-      "properties": {
-        "text": {
-          "type": "string"
-        },
-        "textSignature": {
-          "description": "`OpenAI` Responses metadata: a legacy id string or a [`TextSignatureV1`] JSON payload (TS\nwire key `textSignature`; the camelCase rename keeps it attached across the pa-ai <->\npa-agent round trips, which have no catch-all).",
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "text"
-      ],
-      "additionalProperties": true
     },
     "ThinkingContent": {
       "description": "Thinking content block (`type: \"thinking\"`).",
