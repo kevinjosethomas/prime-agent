@@ -67,7 +67,9 @@ impl SpikeTicker {
         // Runs on the napi-rs tokio_rt runtime; the loop exits on the stop
         // flag and drops its TSFN clone, so a stopped ticker leaves nothing
         // holding the Node event loop.
-        tokio::spawn(async move {
+        // The shared napi-rs tokio runtime (not a bare tokio::spawn, which
+        // has no ambient reactor on this thread).
+        napi::tokio_runtime::spawn(async move {
             let mut tick = 0_u32;
             while !task_stop.load(Ordering::SeqCst) {
                 task_tsfn.call(Ok(tick), ThreadsafeFunctionCallMode::NonBlocking);
