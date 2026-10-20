@@ -1,7 +1,8 @@
 //! Supervisor arms for the scheduling catalog: `cron_list`, `heartbeats_list`,
-//! `heartbeat_manage`, `cron_add`, `cron_cancel`, `heartbeat_set` — the live workers' catalogs
-//! merged with the passive jobs in the session-artifacts tree; passive jobs mutate their
-//! durable store, a selector-less cancel searches for the owning worker.
+//! `heartbeat_manage`, `heartbeat_update_job`, `cron_add`, `cron_cancel`, `heartbeat_set` —
+//! the live workers' catalogs merged with the passive jobs in the session-artifacts tree;
+//! passive jobs mutate their durable store, a selector-less cancel searches for the owning
+//! worker.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -11,7 +12,7 @@ use std::sync::Arc;
 use serde_json::{json, Map, Value};
 
 use pa_core::cron::store::{AgentCronJobStore, HeartbeatManagementAction};
-use pa_core::cron::{is_heartbeat_cron_job, AgentCronJob, JobStatus};
+use pa_core::cron::{is_heartbeat_cron_job, AgentCronJob, HeartbeatJobUpdate, JobStatus};
 use pa_types::daemon::DaemonCommand;
 
 use crate::backpressure::RouteAdmission;
@@ -643,6 +644,103 @@ impl Supervisor {
         .await
     }
 
+    /// `heartbeat_update_job`: a passive job is edited against its durable store — no
+    /// worker wake just to edit fields; anything else forwards to the live worker.
+    pub(crate) async fn handle_heartbeat_update_job_catalog(
+        self: &Arc<Self>,
+        command: &DaemonCommand,
+        client_id: &str,
+        attached: &Arc<crate::supervisor::subscribers::ClientSubscriptions>,
+        command_id: &str,
+        type_name: &str,
+    ) -> (Vec<Value>, bool) {
+        let DaemonCommand::HeartbeatUpdateJob {
+            active_session_id,
+            job_id,
+            instruction,
+            interval,
+            delivery_mode,
+            label,
+            ..
+        } = command
+        else {
+            return (
+                vec![response_line(&response_failure(
+                    Some(command_id),
+                    type_name,
+                    "invalid command",
+                    None,
+                ))],
+                false,
+            );
+        };
+        let update = match HeartbeatJobUpdate::from_wire(
+            instruction.as_deref(),
+            interval.as_deref(),
+            delivery_mode.as_deref(),
+            label.as_deref(),
+        ) {
+            Ok(update) => update,
+            Err(error) => {
+                return (
+                    vec![response_line(&response_failure(
+                        Some(command_id),
+                        type_name,
+                        &error.to_string(),
+                        None,
+                    ))],
+                    false,
+                )
+            }
+        };
+        let passive = self
+            .collect_passive_scheduled_jobs(false)
+            .await
+            .into_iter()
+            .find(|passive| {
+                passive.job.id == *job_id && passive.job.active_session_id == *active_session_id
+            });
+        if let Some(passive) = passive {
+            let owned_elsewhere = self
+                .registry
+                .owns_session_file_path(&passive.job.session_file, &passive.canonical_session_file)
+                .await;
+            if !owned_elsewhere {
+                let store = Self::passive_job_store(&passive.info);
+                // A passive row that cannot be edited falls through to the live-worker route.
+                if let Ok(Some(heartbeat)) = store.update_heartbeat_job(
+                    active_session_id,
+                    job_id,
+                    &update,
+                    crate::util::now_ms(),
+                ) {
+                    self.broadcast_heartbeats_changed();
+                    return (
+                        vec![response_line(&response_success(
+                            Some(command_id),
+                            type_name,
+                            Some(json!({
+                                "heartbeat": serde_json::to_value(&heartbeat)
+                                    .unwrap_or(Value::Null),
+                            })),
+                        ))],
+                        false,
+                    );
+                }
+            }
+        }
+        // No passive job edited: the live worker owns the heartbeat.
+        self.route_client_command(
+            command,
+            client_id,
+            attached,
+            command_id.to_string(),
+            type_name.to_string(),
+            None,
+        )
+        .await
+    }
+
     /// `cron_add`: forward to the resolved worker and promote the owned session
     /// when the command asks for it.
     pub(crate) async fn handle_cron_add_catalog(
@@ -1019,6 +1117,232 @@ mod tests {
                 .expect("worker did not receive the forward")
                 .expect("worker saw forward"),
             "heartbeat_manage"
+        );
+        assert_eq!(response[0]["success"], true);
+        assert_eq!(
+            std::fs::read_to_string(job_file).expect("read artifact"),
+            artifact
+        );
+    }
+
+    /// The passive `heartbeat_update_job` path: with no live worker, the durable
+    /// store is edited directly — no worker wake — and the artifact carries the edit.
+    #[tokio::test]
+    async fn a_passive_heartbeat_update_job_edits_the_durable_store() {
+        use crate::supervisor::subscribers::ClientSubscriptions;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let agent_dir = dir.path().join("agent");
+        let sessions_dir = agent_dir.join("sessions");
+        std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+        let session_file = sessions_dir.join("passive-edit.jsonl");
+        std::fs::write(
+            &session_file,
+            [
+                json!({
+                    "type": "session", "version": 3, "id": "passive-edit",
+                    "timestamp": "2026-10-04T00:00:00.000Z", "cwd": "/c",
+                }),
+                json!({
+                    "type": "session_state", "id": "passive-edit",
+                    "timestamp": "2026-10-04T00:00:01.000Z",
+                    "state": { "status": "active" },
+                }),
+            ]
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
+                + "\n",
+        )
+        .expect("session file");
+        let artifacts = agent_dir.join("session-artifacts").join("passive-edit");
+        std::fs::create_dir_all(&artifacts).expect("artifacts partition");
+        let job_file = artifacts.join("scheduled-jobs.json");
+        std::fs::write(
+            &job_file,
+            json!({
+                "jobs": [{
+                    "id": "hb-edit", "status": "active", "source": "heartbeat",
+                    "activeSessionId": "passive-edit", "sessionId": "passive-edit",
+                    "sessionFile": session_file.display().to_string(),
+                    "cwd": dir.path().display().to_string(),
+                    "prompt": "heartbeat", "deliveryMode": "steer",
+                    "schedule": { "kind": "interval", "expression": "every 1m", "intervalMs": 60000 },
+                    "createdAt": "2026-10-04T00:00:02.000Z",
+                    "updatedAt": "2026-10-04T00:00:02.000Z",
+                    "nextRunAt": "2026-10-04T00:01:02.000Z",
+                }],
+            })
+            .to_string(),
+        )
+        .expect("scheduled jobs");
+        let supervisor = Arc::new(
+            Supervisor::new(crate::supervisor::SupervisorOptions {
+                socket_path: dir.path().join("daemon.sock"),
+                agent_dir: agent_dir.clone(),
+            })
+            .expect("supervisor"),
+        );
+
+        let command: DaemonCommand = serde_json::from_value(json!({
+            "type": "heartbeat_update_job", "activeSessionId": "passive-edit",
+            "jobId": "hb-edit", "instruction": "edited instruction",
+            "interval": "every 5m", "deliveryMode": "follow_up", "label": "ops",
+        }))
+        .expect("heartbeat_update_job command");
+        let (queue, _receiver) = tokio::sync::mpsc::channel(1);
+        let attached = ClientSubscriptions::new("client".to_string(), queue);
+        let (response, _) = supervisor
+            .handle_heartbeat_update_job_catalog(
+                &command,
+                "client",
+                &attached,
+                "edit-1",
+                "heartbeat_update_job",
+            )
+            .await;
+        assert_eq!(response[0]["success"], true, "{}", response[0]);
+        assert_eq!(response[0]["command"], "heartbeat_update_job");
+        let heartbeat = &response[0]["data"]["heartbeat"];
+        assert_eq!(heartbeat["id"], "hb-edit", "the job id is preserved");
+        assert_eq!(heartbeat["status"], "active", "the status is preserved");
+        assert_eq!(heartbeat["prompt"], "edited instruction");
+        assert_eq!(heartbeat["schedule"]["expression"], "every 5m");
+        assert_eq!(heartbeat["deliveryMode"], "follow_up");
+        assert_eq!(heartbeat["label"], "ops");
+        let stored: Value =
+            serde_json::from_str(&std::fs::read_to_string(job_file).expect("read artifact"))
+                .expect("artifact json");
+        assert_eq!(stored["jobs"][0]["prompt"], "edited instruction");
+        assert_eq!(stored["jobs"][0]["schedule"]["intervalMs"], 300_000);
+        assert_eq!(stored["jobs"][0]["deliveryMode"], "follow_up");
+    }
+
+    /// The live `heartbeat_update_job` path: a session owned by a registered
+    /// worker forwards the command; the supervisor never touches the artifact.
+    #[tokio::test]
+    async fn heartbeat_update_job_forwards_to_the_live_owner() {
+        use crate::registry::{ResidentWorker, WorkerReply};
+        use crate::supervisor::subscribers::ClientSubscriptions;
+        use pa_types::daemon::DaemonWorkerDescriptor;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let agent_dir = dir.path().join("agent");
+        let sessions_dir = agent_dir.join("sessions");
+        std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+        let session_file = sessions_dir.join("live-edit.jsonl");
+        std::fs::write(
+            &session_file,
+            [
+                json!({
+                    "type": "session", "version": 3, "id": "live-edit",
+                    "timestamp": "2026-10-04T00:00:00.000Z", "cwd": "/c",
+                }),
+                json!({
+                    "type": "session_state", "id": "live-edit",
+                    "timestamp": "2026-10-04T00:00:01.000Z",
+                    "state": { "status": "active" },
+                }),
+            ]
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
+                + "\n",
+        )
+        .expect("session file");
+        let artifacts = agent_dir.join("session-artifacts").join("live-edit");
+        std::fs::create_dir_all(&artifacts).expect("artifacts partition");
+        let job_file = artifacts.join("scheduled-jobs.json");
+        let artifact = json!({
+            "jobs": [{
+                "id": "hb-live", "status": "active", "source": "heartbeat",
+                "activeSessionId": "live-edit", "sessionId": "live-edit",
+                "sessionFile": session_file.display().to_string(),
+                "cwd": dir.path().display().to_string(), "prompt": "heartbeat",
+                "schedule": { "kind": "interval", "expression": "", "intervalMs": 60000 },
+                "createdAt": "2026-10-04T00:00:02.000Z",
+                "updatedAt": "2026-10-04T00:00:02.000Z",
+                "nextRunAt": "2026-10-04T00:01:02.000Z",
+            }],
+        })
+        .to_string();
+        std::fs::write(&job_file, &artifact).expect("scheduled jobs");
+        let supervisor = Arc::new(
+            Supervisor::new(crate::supervisor::SupervisorOptions {
+                socket_path: dir.path().join("daemon.sock"),
+                agent_dir: agent_dir.clone(),
+            })
+            .expect("supervisor"),
+        );
+
+        let mut descriptor = json!({
+            "version": 2, "workerId": "live-edit", "pid": 0,
+            "socketPath": "/tmp/none.sock",
+            "recoveryJournalPath": "/tmp/none.jsonl",
+            "supervisorSocketPath": "/tmp/none.sock",
+            "authenticationToken": "test", "rootActiveSessionId": "live-edit",
+            "createdAt": "2026-10-04T00:00:00Z",
+            "updatedAt": "2026-10-04T00:00:00Z",
+            "lifecycle": "ready", "createCommand": {}, "consecutiveFailures": 0,
+        });
+        descriptor["sessionFile"] = json!(session_file.to_string_lossy());
+        let descriptor: DaemonWorkerDescriptor =
+            serde_json::from_value(descriptor).expect("descriptor");
+        let worker = ResidentWorker::new(
+            "live-edit".to_string(),
+            descriptor,
+            dir.path().join("worker.json"),
+        );
+        let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel(1);
+        *worker.cmd_tx.lock().await = Some(cmd_tx);
+        worker.note_connection_live();
+        worker.note_session_ready();
+        supervisor.registry.insert(Arc::clone(&worker)).await;
+
+        let (seen_tx, seen_rx) = tokio::sync::oneshot::channel();
+        let responder = Arc::clone(&worker);
+        tokio::spawn(async move {
+            let request = cmd_rx.recv().await.expect("forwarded heartbeat_update_job");
+            seen_tx
+                .send(request.command_type.clone())
+                .expect("forward observed");
+            let reply = responder.pending.lock().await.remove(&request.request_id);
+            assert!(
+                reply
+                    .expect("pending forward")
+                    .send(WorkerReply::Typed(response_success(
+                        Some(&request.request_id),
+                        &request.command_type,
+                        None,
+                    )))
+                    .is_ok(),
+                "send worker reply"
+            );
+        });
+        let command: DaemonCommand = serde_json::from_value(json!({
+            "type": "heartbeat_update_job", "activeSessionId": "live-edit",
+            "jobId": "hb-live", "instruction": "live edit",
+        }))
+        .expect("heartbeat_update_job command");
+        let (queue, _receiver) = tokio::sync::mpsc::channel(1);
+        let attached = ClientSubscriptions::new("client".to_string(), queue);
+        let (response, _) = supervisor
+            .handle_heartbeat_update_job_catalog(
+                &command,
+                "client",
+                &attached,
+                "edit-1",
+                "heartbeat_update_job",
+            )
+            .await;
+        assert_eq!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), seen_rx)
+                .await
+                .expect("worker did not receive the forward")
+                .expect("worker saw forward"),
+            "heartbeat_update_job"
         );
         assert_eq!(response[0]["success"], true);
         assert_eq!(

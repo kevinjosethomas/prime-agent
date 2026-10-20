@@ -260,6 +260,54 @@ pub fn normalize_heartbeat_schedule(input: Option<&str>) -> String {
     text.to_string()
 }
 
+/// The `heartbeat_update_job` edit set: instruction (prompt), interval (schedule
+/// text), delivery mode, and label. The job id and status are preserved.
+#[derive(Debug, Clone, Default)]
+pub struct HeartbeatJobUpdate {
+    pub instruction: Option<String>,
+    pub interval: Option<String>,
+    pub delivery_mode: Option<DeliveryMode>,
+    pub label: Option<String>,
+}
+
+impl HeartbeatJobUpdate {
+    /// Parse the wire fields: at least one edit, and the TS delivery-mode spelling.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when every field is missing or the delivery mode is
+    /// neither `"steer"` nor `"follow_up"`.
+    pub fn from_wire(
+        instruction: Option<&str>,
+        interval: Option<&str>,
+        delivery_mode: Option<&str>,
+        label: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        let delivery_mode = normalize_heartbeat_delivery_mode(delivery_mode)?;
+        let update = Self {
+            instruction: instruction.map(str::to_string),
+            interval: interval.map(str::to_string),
+            delivery_mode,
+            label: label.map(str::to_string),
+        };
+        anyhow::ensure!(
+            update.instruction.is_some()
+                || update.interval.is_some()
+                || update.delivery_mode.is_some()
+                || update.label.is_some(),
+            "heartbeat_update_job requires at least one field to update"
+        );
+        Ok(update)
+    }
+
+    /// Instruction, interval, and delivery-mode edits withdraw the queued fire
+    /// (the `rlm_heartbeat.update` parity); a label-only edit does not.
+    #[must_use]
+    pub fn drops_queued_fire(&self) -> bool {
+        self.instruction.is_some() || self.interval.is_some() || self.delivery_mode.is_some()
+    }
+}
+
 /// Normalize an optional heartbeat delivery mode string.
 ///
 /// # Errors

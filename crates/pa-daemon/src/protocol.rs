@@ -173,6 +173,7 @@ pub const KNOWN_COMMAND_TYPES: &[&str] = &[
     "list_queued_inputs",
     "mutate_queued_input",
     "set_prompt_guidelines",
+    "heartbeat_update_job",
 ];
 
 /// Parsed client command envelope.
@@ -340,6 +341,7 @@ pub fn default_server_capabilities() -> Vec<DaemonServerCapability> {
                 "delete_rlm_subagent",
                 "heartbeat_catalog",
                 "heartbeat_management",
+                "heartbeat_job_edit",
                 "model_catalog",
                 "subagent_model_defaults",
                 "global_harness_defaults",
@@ -785,6 +787,9 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
         | DaemonCommand::HeartbeatUpdate {
             active_session_id, ..
         }
+        | DaemonCommand::HeartbeatUpdateJob {
+            active_session_id, ..
+        }
         | DaemonCommand::SetModel {
             active_session_id, ..
         }
@@ -1040,6 +1045,7 @@ pub fn command_type_name(command: &DaemonCommand) -> &'static str {
         DaemonCommand::HeartbeatGet { .. } => "heartbeat_get",
         DaemonCommand::HeartbeatSet { .. } => "heartbeat_set",
         DaemonCommand::HeartbeatUpdate { .. } => "heartbeat_update",
+        DaemonCommand::HeartbeatUpdateJob { .. } => "heartbeat_update_job",
         DaemonCommand::SetModel { .. } => "set_model",
         DaemonCommand::CycleModel { .. } => "cycle_model",
         DaemonCommand::SetScopedModels { .. } => "set_scoped_models",

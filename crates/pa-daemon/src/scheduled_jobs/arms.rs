@@ -1,11 +1,11 @@
 //! The scheduling protocol arms on the worker (`cron_list`, `heartbeats_list`,
 //! `heartbeat_manage`, `cron_add`, `cron_cancel`, `heartbeat_get`,
-//! `heartbeat_set`, `heartbeat_update`): payload validation and the store
-//! calls behind each `scheduled`-surface command.
+//! `heartbeat_set`, `heartbeat_update`, `heartbeat_update_job`): payload
+//! validation and the store calls behind each `scheduled`-surface command.
 use super::{
     is_heartbeat_cron_job, json, normalize_heartbeat_delivery_mode, normalize_heartbeat_schedule,
     response_failure, response_success, CreateAgentCronJobInput, DaemonResponse,
-    HeartbeatManagementAction, JobStatus, Value, Worker,
+    HeartbeatJobUpdate, HeartbeatManagementAction, JobStatus, Value, Worker,
 };
 
 impl Worker {
@@ -399,6 +399,70 @@ impl Worker {
             None,
             "heartbeat_update",
             Some(json!({ "heartbeat": heartbeat })),
+        )
+    }
+
+    /// `heartbeat_update_job`: edit one heartbeat job (user or RLM) by job id —
+    /// instruction, interval, delivery mode, and label — with the job id and
+    /// status preserved (the native desktop edit action).
+    pub(crate) async fn handle_heartbeat_update_job(&self, payload: &Value) -> DaemonResponse {
+        if let Err(response) = self.require_created("heartbeat_update_job") {
+            return response;
+        }
+        let update = match HeartbeatJobUpdate::from_wire(
+            payload.get("instruction").and_then(Value::as_str),
+            payload.get("interval").and_then(Value::as_str),
+            payload.get("deliveryMode").and_then(Value::as_str),
+            payload.get("label").and_then(Value::as_str),
+        ) {
+            Ok(update) => update,
+            Err(error) => {
+                return response_failure(
+                    None,
+                    "heartbeat_update_job",
+                    &error.to_string(),
+                    None,
+                )
+            }
+        };
+        let active_session_id = payload
+            .get("activeSessionId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let job_id = payload
+            .get("jobId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        {
+            let core = self
+                .core
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            self.bind_store_artifact(&core);
+        }
+        let edited = self
+            .scheduled
+            .store()
+            .update_heartbeat_job(&active_session_id, &job_id, &update, crate::util::now_ms());
+        let Ok(Some(job)) = edited else {
+            let error = match edited {
+                Err(error) => error.to_string(),
+                Ok(_) => format!("No active heartbeat found: {job_id}"),
+            };
+            return response_failure(None, "heartbeat_update_job", &error, None);
+        };
+        // Instruction/interval/delivery-mode edits withdraw the queued fire; a
+        // label-only edit does not (the `rlm_heartbeat.update` parity).
+        if update.drops_queued_fire() {
+            self.scheduled.remove_queued_heartbeat_follow_up(&job);
+        }
+        self.scheduled.wake().await;
+        response_success(
+            None,
+            "heartbeat_update_job",
+            Some(json!({ "heartbeat": serde_json::to_value(&job).unwrap_or(Value::Null) })),
         )
     }
 }
