@@ -423,7 +423,6 @@ FIXTURE_TRANSPORT_TUPLES = [
     ("huggingface", "openai-completions", "https://router.huggingface.co/v1"),
     ("kimi-coding", "anthropic-messages", "https://api.kimi.com/coding"),
     ("minimax", "anthropic-messages", "https://api.minimax.io/anthropic"),
-    ("minimax-cn", "anthropic-messages", "https://api.minimaxi.com/anthropic"),
     ("mistral", "mistral-conversations", "https://api.mistral.ai"),
     ("moonshotai", "openai-completions", "https://api.moonshot.ai/v1"),
     ("moonshotai-cn", "openai-completions", "https://api.moonshot.cn/v1"),

@@ -23,7 +23,7 @@ pub fn default_model_per_provider(provider: &str) -> Option<&'static str> {
         "cerebras" => "gpt-oss-120b",
         "zai" => "glm-5.3",
         "mistral" => "devstral-medium-latest",
-        "minimax" | "minimax-cn" => "MiniMax-M2.7",
+        "minimax" => "MiniMax-M2.7",
         "moonshotai" | "moonshotai-cn" | "opencode" | "opencode-go" => "kimi-k2.6",
         "huggingface" => "moonshotai/Kimi-K2.6",
         "fireworks" => "accounts/fireworks/models/kimi-k2p6",

@@ -66,8 +66,6 @@ pub enum KnownProvider {
     Zai,
     Mistral,
     Minimax,
-    #[serde(rename = "minimax-cn")]
-    MinimaxCn,
     Moonshotai,
     #[serde(rename = "moonshotai-cn")]
     MoonshotaiCn,

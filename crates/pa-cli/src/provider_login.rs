@@ -40,7 +40,6 @@ const BUILT_IN_PROVIDER_DISPLAY_NAMES: &[(&str, &str)] = &[
     ("kimi-coding", "Kimi For Coding"),
     ("mistral", "Mistral"),
     ("minimax", "MiniMax"),
-    ("minimax-cn", "MiniMax (China)"),
     ("moonshotai", "Moonshot AI"),
     ("moonshotai-cn", "Moonshot AI (China)"),
     ("opencode", "OpenCode Zen"),
