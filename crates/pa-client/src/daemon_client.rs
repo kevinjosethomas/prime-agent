@@ -363,6 +363,78 @@ impl Shared {
     }
 }
 
+/// Every task one connection owns, shared by all clones of the client:
+/// abort/join handles live once per connection, so one clone can never
+/// tear down tasks another clone still uses. `shutdown` is the single
+/// explicit owner of this set; nothing runs on `Drop`.
+#[derive(Default)]
+pub(crate) struct TaskSet {
+    /// The supervisor reader task.
+    reader: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// The supervisor writer pump.
+    writer: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Every direct-link pump this connection ever spawned: an abandoned
+    /// link's reader lingers exactly as it does today (until its worker
+    /// closes); shutdown aborts and joins them all.
+    direct: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// Shutdown is one-shot across every clone.
+    done: std::sync::atomic::AtomicBool,
+}
+
+impl TaskSet {
+    /// Register the supervisor reader/writer handles once.
+    pub(crate) fn register_connection(
+        &self,
+        reader: tokio::task::JoinHandle<()>,
+        writer: tokio::task::JoinHandle<()>,
+    ) {
+        *self.reader.lock().unwrap() = Some(reader);
+        *self.writer.lock().unwrap() = Some(writer);
+    }
+
+    /// Register one direct link's pumps.
+    pub(crate) fn register_direct(&self, handles: Vec<tokio::task::JoinHandle<()>>) {
+        self.direct.lock().unwrap().extend(handles);
+    }
+
+    /// Abort every owned task. `true` when this call won the one-shot race
+    /// (an already-shutdown connection returns `false` and aborts nothing).
+    pub(crate) fn abort_all(&self) -> bool {
+        if self
+            .done
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            return false;
+        }
+        if let Some(reader) = self.reader.lock().unwrap().take() {
+            reader.abort();
+        }
+        if let Some(writer) = self.writer.lock().unwrap().take() {
+            writer.abort();
+        }
+        for handle in std::mem::take(&mut *self.direct.lock().unwrap()) {
+            handle.abort();
+        }
+        true
+    }
+
+    /// Await the aborted tasks' ends; a second call no-ops.
+    pub(crate) async fn join_all(&self) {
+        let mut handles = Vec::new();
+        if let Some(reader) = self.reader.lock().unwrap().take() {
+            handles.push(reader);
+        }
+        if let Some(writer) = self.writer.lock().unwrap().take() {
+            handles.push(writer);
+        }
+        handles.extend(std::mem::take(&mut *self.direct.lock().unwrap()));
+        for handle in handles {
+            // An aborted task ends with a cancelled join error: ended is ended.
+            let _ = handle.await;
+        }
+    }
+}
+
 /// A live connection to the daemon supervisor socket, optionally upgraded
 /// with a direct worker link (session-plane commands and events go straight
 /// to the session process; the supervisor stays the control plane).
@@ -380,6 +452,12 @@ pub struct DaemonClient {
     direct: std::sync::Arc<crate::direct_transport::DirectState>,
     /// The supervisor reader's death watch (see `reader_dead`).
     reader_dead_rx: tokio::sync::watch::Receiver<bool>,
+    /// This client's own handle on the shared death watch sender: `shutdown`
+    /// flips the watch for every clone without waiting for the reader's own
+    /// exit.
+    reader_dead_tx: tokio::sync::watch::Sender<bool>,
+    /// The connection's tasks (see [`TaskSet`]).
+    tasks: Arc<TaskSet>,
     /// The transport options this connection was established with (the
     /// raw outbound tap rides the direct reader pumps on upgrade).
     options: DaemonClientOptions,
@@ -440,6 +518,8 @@ impl DaemonClient {
         // the event channel open after the reader exits, so a channel close can
         // never observe a supervisor socket loss.
         let (reader_dead_tx, reader_dead_rx) = tokio::sync::watch::channel(false);
+        let client_dead_tx = reader_dead_tx.clone();
+        let tasks = Arc::new(TaskSet::default());
         let (hello_tx, hello_rx) = oneshot::channel::<Value>();
         let shared = Arc::new(Shared {
             pending: Mutex::new(HashMap::new()),
@@ -448,7 +528,7 @@ impl DaemonClient {
         let reader_shared = Arc::clone(&shared);
 
         // Writer task: serializes one line per write.
-        tokio::spawn(async move {
+        let writer_task = tokio::spawn(async move {
             let mut writer = writer_half;
             while let Some(line) = line_rx.recv().await {
                 let mut payload = line.into_bytes();
@@ -604,6 +684,9 @@ impl DaemonClient {
         // Envelope protocol version: the shared minimum.
         let version = protocol.version.min(DAEMON_PROTOCOL_VERSION);
 
+        // The handshake succeeded: the reader and writer tasks now belong to
+        // the connection's shared task set (shutdown aborts, join awaits).
+        tasks.register_connection(reader_task, writer_task);
         Ok((
             DaemonClient {
                 socket_path: socket_path.to_path_buf(),
@@ -620,6 +703,8 @@ impl DaemonClient {
                     retained_event_tx,
                 )),
                 reader_dead_rx,
+                reader_dead_tx: client_dead_tx,
+                tasks,
                 options,
             },
             event_rx,
@@ -1041,7 +1126,8 @@ impl DaemonClient {
         )
         .await
         {
-            Ok(link) => {
+            Ok((link, tasks)) => {
+                self.tasks.register_direct(tasks);
                 self.direct.set_link(link);
                 Ok(true)
             }
@@ -1065,5 +1151,40 @@ impl DaemonClient {
         let (replacement, _) = mpsc::unbounded_channel::<String>();
         let writer = std::mem::replace(&mut self.writer, replacement);
         let _ = writer.send(String::new());
+    }
+
+    /// True teardown, idempotent, clone-correct: abort the supervisor reader
+    /// and writer pump plus every direct-link pump this connection ever
+    /// spawned (aborting drops each task's socket half, so the fd closes),
+    /// fail every pending request NOW as the uncertain delivery class (no
+    /// daemon-EOF dependency), flip the reader-dead watch so every clone's
+    /// request entry refuses with the provable non-delivery class, and drop
+    /// the direct link. Unlike [`Self::close`], nothing rides on the daemon
+    /// closing the socket: the tasks are aborted where they stand. Nothing
+    /// runs on `Drop` — the caller owns the teardown explicitly.
+    pub fn shutdown(&self) {
+        if !self.tasks.abort_all() {
+            return;
+        }
+        self.direct.take_event_sender();
+        self.drop_direct();
+        // The sweeps the aborted reader and direct pumps would have run:
+        // every in-flight request resolves as an uncertain delivery.
+        self.shared
+            .fail_pending("daemon_", "the daemon connection closed");
+        self.shared
+            .fail_pending("direct_", "the session connection closed");
+        let _ = self.reader_dead_tx.send(true);
+    }
+
+    /// Await the aborted tasks' ends after [`Self::shutdown`]; a second call
+    /// no-ops. When it returns, the connection owns zero live tasks, timers,
+    /// or sockets.
+    ///
+    /// # Errors
+    ///
+    /// Never returns `Err`: a cancelled task's join error is the expected end.
+    pub async fn join_tasks(&self) {
+        self.tasks.join_all().await;
     }
 }

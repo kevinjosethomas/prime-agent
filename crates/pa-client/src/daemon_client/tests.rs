@@ -1544,3 +1544,189 @@ async fn frame_cap_binds_split_lines_spilling_over_the_cap() {
     );
     client.close();
 }
+
+#[tokio::test]
+async fn shutdown_fails_pending_now_without_daemon_eof() {
+    // The daemon stays alive and never answers: `shutdown` must still fail
+    // the in-flight request immediately (the sweep is ours, not the
+    // daemon's EOF), flip the death watch, and join every task.
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let mut writer = stream;
+        let hello = json!({
+            "type": "daemon_hello",
+            "protocol": { "name": "prime-agent.daemon", "version": 7 },
+            "clientId": "srv",
+            "serverCapabilities": [],
+        })
+        .to_string();
+        writer
+            .write_all(format!("{hello}\n").as_bytes())
+            .await
+            .unwrap();
+        std::future::pending::<()>().await;
+    });
+
+    let (client, _events) = DaemonClient::connect(&socket).await.unwrap();
+    let started = std::time::Instant::now();
+    let error = client
+        .request_with_timeout(
+            DaemonCommand::List {
+                id: None,
+                all: None,
+                cwd: None,
+                session_dir: None,
+                include_client_owned: None,
+                rest: Map::default(),
+            },
+            30_000,
+        )
+        .await
+        .unwrap_err();
+    // Immediate uncertain failure — no 30s budget ride, no daemon EOF.
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(is_command_result_uncertain(&error), "unexpected error: {error}");
+    assert!(!is_command_not_sent(&error));
+    assert!(
+        error.to_string().contains("the daemon connection closed"),
+        "unexpected error: {error}"
+    );
+    // The death watch fired without the reader's own exit.
+    assert!(*client.reader_dead().borrow());
+    // Every clone's follow-up request is a provable non-delivery.
+    let clone = client.clone();
+    let error = clone
+        .request_with_timeout(
+            DaemonCommand::List {
+                id: None,
+                all: None,
+                cwd: None,
+                session_dir: None,
+                include_client_owned: None,
+                rest: Map::default(),
+            },
+            30_000,
+        )
+        .await
+        .unwrap_err();
+    assert!(is_command_not_sent(&error));
+    // Tasks join quickly, and repeated calls no-op.
+    tokio::time::timeout(Duration::from_secs(5), client.join_tasks())
+        .await
+        .expect("tasks join after shutdown");
+    tokio::time::timeout(Duration::from_secs(1), client.join_tasks())
+        .await
+        .expect("second join no-ops");
+    client.shutdown();
+}
+
+#[tokio::test]
+async fn shutdown_marks_every_clone_dead() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    tokio::spawn(async move { spawn_mock_daemon(listener).await });
+
+    let (client, _events) = DaemonClient::connect(&socket).await.unwrap();
+    let other = client.clone();
+    client.shutdown();
+    let error = other
+        .request_with_timeout(
+            DaemonCommand::List {
+                id: None,
+                all: None,
+                cwd: None,
+                session_dir: None,
+                include_client_owned: None,
+                rest: Map::default(),
+            },
+            30_000,
+        )
+        .await
+        .unwrap_err();
+    assert!(is_command_not_sent(&error), "unexpected error: {error}");
+    assert!(
+        error.to_string().contains("the daemon connection is closed"),
+        "unexpected error: {error}"
+    );
+}
+
+#[tokio::test]
+async fn shutdown_aborts_direct_link_pumps() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let worker_socket = dir.path().join("w.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let worker_listener = UnixListener::bind(&worker_socket).unwrap();
+    tokio::spawn(async move { spawn_mock_worker(worker_listener).await });
+    let ticket_socket = worker_socket.clone();
+    let supervisor = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("supervisor accept");
+        let (reader, mut writer) = stream.into_split();
+        let mut reader = BufReader::new(reader);
+        let mut line = String::new();
+        let hello = serde_json::json!({
+            "type": "daemon_hello",
+            "protocol": { "name": "prime-agent.daemon", "version": 7 },
+            "serverCapabilities": ["direct_peer_transport"],
+        });
+        writer
+            .write_all(format!("{hello}\n").as_bytes())
+            .await
+            .unwrap();
+        loop {
+            line.clear();
+            if reader.read_line(&mut line).await.unwrap() == 0 {
+                break;
+            }
+            let envelope: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+            let id = envelope["id"].as_str().unwrap().to_string();
+            let command_type = envelope["command"]["type"].as_str().unwrap();
+            let response = if command_type == "get_direct_worker_transport" {
+                let identity = pa_types::platform::socket_identity(&ticket_socket).unwrap();
+                serde_json::json!({
+                    "type": "response",
+                    "id": id,
+                    "command": command_type,
+                    "success": true,
+                    "data": {
+                        "purpose": "session_client",
+                        "socketPath": ticket_socket.to_string_lossy(),
+                        "socketIdentity": { "dev": identity.dev, "ino": identity.ino },
+                        "workerInstanceId": "inst-1",
+                        "activeSessionId": "s1",
+                        "grantId": "g1",
+                        "token": "t",
+                        "expiresAt": "2999-01-01T00:00:00.000Z",
+                    },
+                })
+            } else {
+                serde_json::json!({
+                    "type": "response",
+                    "id": id,
+                    "command": command_type,
+                    "success": true,
+                    "data": { "ok": true },
+                })
+            };
+            writer
+                .write_all(format!("{response}\n").as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+
+    let (client, _events) = DaemonClient::connect(&socket).await.unwrap();
+    assert!(client.upgrade_direct("s1").await.unwrap());
+    assert_eq!(client.direct_session_id().as_deref(), Some("s1"));
+    // The worker stays alive: its reader pump only ends by abort.
+    client.shutdown();
+    assert_eq!(client.direct_session_id(), None);
+    tokio::time::timeout(Duration::from_secs(5), client.join_tasks())
+        .await
+        .expect("direct pumps join after shutdown");
+    let _ = supervisor.await;
+}
