@@ -135,14 +135,15 @@ async fn the_default_client_id_is_the_tui_identity() {
         .await
         .unwrap();
     client.close();
-    let recorded = client_ids.lock().unwrap().clone();
-    assert_eq!(recorded.len(), 1);
+    let captured = client_ids.lock().unwrap().clone();
+    assert_eq!(captured.len(), 1);
     assert_eq!(
-        recorded[0],
+        captured[0],
         format!("daemon-tui:{}", std::process::id()),
         "the default identity must stay the historical TUI one, unchanged"
     );
 }
+
 
 #[tokio::test]
 async fn a_custom_client_id_rides_every_command_envelope() {
@@ -172,9 +173,9 @@ async fn a_custom_client_id_rides_every_command_envelope() {
         .await
         .unwrap();
     client.close();
-    let recorded = client_ids.lock().unwrap().clone();
-    assert_eq!(recorded.len(), 1);
-    assert_eq!(recorded[0], "prime-desktop:1:abc");
+    let captured = client_ids.lock().unwrap().clone();
+    assert_eq!(captured.len(), 1);
+    assert_eq!(captured[0], "prime-desktop:1:abc");
 }
 
 #[tokio::test]

@@ -99,8 +99,8 @@ pub struct ConnectionStatus {
     /// `permission_denied`, ...). `None` on every other status —
     /// announced losses, stop, and handshake/timeout failures carry no
     /// OS code and must never authorize a spawn. Platform-aware through
-    /// `ErrorKind` (windows ERROR_FILE_NOT_FOUND and WSAECONNREFUSED map
-    /// to the same labels); never parsed from the message.
+    /// `ErrorKind` (windows `ERROR_FILE_NOT_FOUND` and `WSAECONNREFUSED`
+    /// map to the same labels); never parsed from the message.
     pub error_code: Option<String>,
 }
 
@@ -2538,15 +2538,15 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let socket = dir.path().join("d.sock");
         let listener = UnixListener::bind(&socket).unwrap();
-        // A supervisor greeting with an unsupported protocol version: the
-        // connect fails as a handshake refusal — an anyhow failure with NO
-        // io source, so no code may authorize a spawn.
+        // A supervisor greeting with an unknown protocol NAME: the connect
+        // fails as a handshake refusal — an anyhow failure with NO io
+        // source, so no code may authorize a spawn.
         tokio::spawn(async move {
             let (stream, _) = listener.accept().await.expect("accept");
             let mut writer = stream;
             let hello = json!({
                 "type": "daemon_hello",
-                "protocol": { "name": "prime-agent.daemon", "version": 6 },
+                "protocol": { "name": "a.foreign.protocol", "version": 7 },
                 "clientId": "srv",
                 "serverCapabilities": [],
             });
@@ -2615,14 +2615,17 @@ mod tests {
         // The restore's attach envelope on the second connection.
         tokio::time::timeout(Duration::from_secs(20), async {
             loop {
-                let commands = supervisor.commands.lock().unwrap();
-                if commands
+                // The guard is a temporary of the condition: it drops before
+                // the sleep's await below.
+                if supervisor
+                    .commands
+                    .lock()
+                    .unwrap()
                     .iter()
-                    .any(|(connection, command)| *connection == 2)
+                    .any(|(connection, _)| *connection == 2)
                 {
                     return;
                 }
-                drop(commands);
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })

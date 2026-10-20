@@ -87,7 +87,7 @@ fn state_name(state: ConnectionState) -> &'static str {
 impl From<ManagedReconnectWindow> for ReconnectWindow {
     fn from(window: ManagedReconnectWindow) -> Self {
         ReconnectWindow {
-            window: window.window_ms.map(Duration::from_millis),
+            window: window.window_ms.map(|ms| Duration::from_millis(u64::from(ms))),
             initial_delay: Duration::from_millis(u64::from(window.initial_delay_ms)),
             max_delay: Duration::from_millis(u64::from(window.max_delay_ms)),
         }
@@ -274,7 +274,7 @@ pub(crate) struct ManagedInner {
     /// Wakes the pump and pending event pulls on teardown.
     teardown: Notify,
     /// The binding-owned operation bridges, drained during the stop chain.
-    bridges: BridgeRegistry,
+    bridges: Arc<BridgeRegistry>,
     /// Idempotent stop coordination across concurrent callers.
     stop_state: std::sync::Mutex<StopState>,
     /// Broadcasts the real stop completion to concurrent callers.
@@ -730,7 +730,7 @@ pub async fn start_session(options: ManagedSessionOptions) -> Result<ManagedDaem
         socket_path: PathBuf::from(options.socket_path),
         reconnect,
         attach_capabilities,
-        dedupe_session_events: options.dedupe_session_events.unwrap_or(true),
+        dedup_session_events: options.dedupe_session_events.unwrap_or(true),
         restore_attempt_timeout: Duration::from_millis(u64::from(
             options.restore_attempt_timeout_ms,
         )),
@@ -751,7 +751,7 @@ pub async fn start_session(options: ManagedSessionOptions) -> Result<ManagedDaem
         max_frame_bytes: Some(options.max_frame_bytes.unwrap_or(DEFAULT_MAX_FRAME_BYTES)),
         max_pending: Some(options.max_pending.unwrap_or(DEFAULT_MAX_PENDING)),
         restore_attempt_timeout_ms: options.restore_attempt_timeout_ms,
-        dedupe_session_events: config.dedupe_session_events,
+        dedupe_session_events: config.dedup_session_events,
         attach_capabilities: config.attach_capabilities.clone(),
         client_id: options.client_id.clone(),
         desktop_reconnect_policy,
@@ -775,7 +775,7 @@ pub async fn start_session(options: ManagedSessionOptions) -> Result<ManagedDaem
         event_tx: Mutex::new(Some(event_tx.clone())),
         event_rx: tokio::sync::Mutex::new(event_rx),
         teardown: Notify::new(),
-        bridges: BridgeRegistry::default(),
+        bridges: Arc::new(BridgeRegistry::default()),
         stop_state: std::sync::Mutex::new(StopState::Open),
         stop_done,
         stop_outcome: Mutex::new(None),
