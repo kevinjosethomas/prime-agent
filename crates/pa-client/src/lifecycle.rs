@@ -2145,33 +2145,33 @@ mod tests {
 
     #[tokio::test]
     async fn the_old_capture_after_a_boundary_never_adopts() {
-        // Item-10, the direct bookkeeping unit: the OLD capture (its
-        // Bookkeeping with the old token and old epoch) invoked AFTER the
-        // registry bump and the new-client install — the stale response is
-        // REJECTED; the CURRENT capture's after() with the NEW response
-        // ADOPTS. No network pretend: this drives the exact adoption
-        // boundary the wire cannot deterministically deliver.
+        // Item-10, the direct bookkeeping unit: the OLD capture (through
+        // the real before() path) invoked AFTER the registry bump — the
+        // stale response is REJECTED; the CURRENT capture's after() with
+        // the NEW response ADOPTS. No network pretend: this drives the
+        // exact adoption boundary the wire cannot deterministically
+        // deliver (the epoch tie is the gate; no client identity is
+        // involved).
         let (session, _events) =
             DaemonClientSession::start(config(std::path::Path::new("/dev/null")))
                 .await
                 .unwrap();
-        // The OLD capture, taken as a real request would (under the
-        // registry lock, the token minted on the entry).
-        let (old_id, old_bookkeeping) = {
-            let mut registry = session.state.registry.lock().unwrap();
-            registry.register("s1", vec![]);
-            let token = registry.attempt_token("s1");
-            let epoch = registry.current_epoch();
-            (
-                "s1".to_string(),
-                Bookkeeping::Attach {
-                    id: "s1".to_string(),
-                    token,
-                    capabilities: vec![],
-                    epoch,
-                },
-            )
+        // The OLD capture through the REAL before() path (the registry-side
+        // mint under the lock, exactly as a request takes it).
+        session.state.registry.lock().unwrap().register("s1", vec![]);
+        let attach = DaemonCommand::Attach {
+            id: None,
+            active_session_id: "s1".to_string(),
+            client_id: None,
+            capabilities: None,
+            resume_cursor: None,
+            telemetry_disabled: None,
+            recovery_config: None,
+            env: None,
+            launch_env: None,
+            rest: Map::new(),
         };
+        let old_bookkeeping = session.before(&attach);
         // The old response (what the OLD connection would have answered).
         let old_response = DaemonResponse {
             id: None,
@@ -2183,31 +2183,21 @@ mod tests {
             error: None,
             error_info: None,
         };
-        // THE BOUNDARY: the registry bump (the loss/stop/install boundary).
+        // THE BOUNDARY: the registry bump (the same bump the
+        // loss/stop/install paths perform — the epoch tie is the gate).
         session.state.registry.lock().unwrap().bump_epoch();
         // The old capture's after() — REJECTED: no adoption of "gold".
-        session.after(Some(&old_bookkeeping), &old_response);
+        session.after(old_bookkeeping.as_ref(), &old_response);
         {
             let entries = session.state.registry.lock().unwrap().restore_entries();
             assert!(
                 entries.iter().all(|(_, entry)| entry.cursor.is_none()),
                 "the stale old capture never adopts"
             );
-            let _ = old_id;
         }
-        // The CURRENT capture's after() with the NEW response — ADOPTS
-        // "gnew" coherently.
-        let new_bookkeeping = {
-            let mut registry = session.state.registry.lock().unwrap();
-            let token = registry.attempt_token("s1");
-            let epoch = registry.current_epoch();
-            Bookkeeping::Attach {
-                id: "s1".to_string(),
-                token,
-                capabilities: vec![],
-                epoch,
-            }
-        };
+        // The CURRENT capture through the SAME before() path, with the NEW
+        // response — ADOPTS "gnew" coherently.
+        let new_bookkeeping = session.before(&attach);
         let new_response = DaemonResponse {
             id: None,
             command: "attach".to_string(),
@@ -2233,16 +2223,16 @@ mod tests {
 
     #[tokio::test]
     async fn the_install_refuses_a_stop_marked_while_the_client_guard_holds() {
-        // P-4, the REAL contention — no sleeps as receipts: a two-accept
+        // P-4, the REAL contention — no scheduler assumptions: a two-accept
         // mock (the driver's own connection AND a fresh client with a
-        // completed handshake), the test HOLDS the client WRITE guard, the
-        // install helper's future is observed PENDING under a real-waker
-        // timeout (its receipt — genuinely parked at the client-guard
-        // await), the stop's synchronous marks land under the registry
-        // gate (guaranteed by the yield before the release), and the
-        // release lets both installs proceed to the gate where they REFUSE
-        // the mark: no Connected, no install, the fresh connections
-        // joined, a subsequent request NotSent.
+        // completed handshake, both streams held open), the test HOLDS the
+        // client WRITE guard, the install helper's future is observed
+        // PENDING under a real-waker bounded timeout (its receipt —
+        // genuinely parked at the client-guard await), then session.stop()
+        // is pinned DIRECTLY and observed PENDING under the held guard (the
+        // bounded timeout polls its synchronous prefix — the marks LAND:
+        // stopping is asserted true BEFORE the release), and after the
+        // release the pinned stop and the install are joined together.
         let dir = tempfile::TempDir::new().unwrap();
         let socket = dir.path().join("p4.sock");
         let listener = UnixListener::bind(&socket).unwrap();
@@ -2267,6 +2257,7 @@ mod tests {
             std::future::pending::<()>().await;
         });
         let (session, mut events) = DaemonClientSession::start(config(&socket)).await.unwrap();
+        // Consume the initial Connected (the driver's own install).
         wait_connected(&mut events).await;
         // A REAL fresh client with a completed handshake (its own accept).
         let (fresh, _fresh_events) = DaemonClient::connect(&socket).await.unwrap();
@@ -2283,44 +2274,60 @@ mod tests {
                 .is_err(),
             "the install is genuinely parked at the client-guard await"
         );
-        // The stop's synchronous marks (registry bump + invalidate +
-        // stopping) land under the registry gate; the yield guarantees the
-        // spawned stop ran its sync prefix BEFORE the release.
-        let stop_task = {
-            let session = session.clone();
-            tokio::spawn(async move { session.stop().await })
-        };
-        tokio::task::yield_now().await;
-        // Release: both installs proceed to the registry gate and REFUSE
-        // on the mark.
+        // session.stop() pinned DIRECTLY: the bounded timeout polls its
+        // synchronous prefix — the marks LAND (stopping asserted true
+        // BEFORE the release, observed not assumed).
+        let mut stop = Box::pin(session.stop());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), &mut stop)
+                .await
+                .is_err(),
+            "the pinned stop is genuinely pending under the held guard"
+        );
+        assert!(
+            session.state.stopping.load(Ordering::SeqCst),
+            "the stop's marks landed under the registry gate before the release"
+        );
+        // Release: the pinned stop and the install are joined together
+        // (tokio's RwLock hands the lock to the first queued waiter — both
+        // parked parties keep being polled, no orphaned waiter).
         drop(guard);
-        // Both parked parties are awaited CONCURRENTLY after the release:
-        // tokio's RwLock hands the lock to the first queued waiter at
-        // unlock, so the install future must keep being polled or it would
-        // orphan the lock.
-        let (stop_result, installed) = tokio::time::timeout(Duration::from_secs(10), async {
-            tokio::join!(stop_task, install)
-        })
-        .await
-        .expect("the stop and the install both settle");
-        stop_result
-            .expect("the stop task lives")
-            .expect("the stop completed honestly");
+        let (stop_result, installed) =
+            tokio::time::timeout(Duration::from_secs(10), async {
+                tokio::join!(stop, install)
+            })
+            .await
+            .expect("the pinned stop and the install both settle");
+        stop_result.expect("the stop completed honestly");
         assert!(
             installed.is_none(),
             "the install REFUSED on the stop mark — no epoch, no install"
         );
-        // The refused install leaves the fresh uninstalled: the test
-        // performs the same settle the driver performs for a refused
-        // fresh — shutdown, then the JOIN (the tasks' real end observed).
+        // The refused fresh connection's settle: shutdown, then the JOIN
+        // (the tasks' real end observed).
         fresh.shutdown();
         let joined = fresh.join_tasks().await;
         assert_eq!(joined, 2, "the fresh connection's tasks joined");
-        assert_ne!(
-            session.status().state,
-            ConnectionState::Connected,
-            "no Connected publish past the stop mark"
-        );
+        // R-2: EVENT-sequence evidence — drain the remaining stream bounded
+        // and assert NO Status(Connected) event appears after the stop's
+        // boundary (the initial Connected was consumed by wait_connected).
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            match tokio::time::timeout(remaining, events.recv()).await {
+                Ok(Some(ConnectionEvent::Status(status))) => {
+                    assert_ne!(
+                        status.state,
+                        ConnectionState::Connected,
+                        "no Connected publish past the stop mark (event sequence)"
+                    );
+                }
+                Ok(Some(_)) => {}
+                // The channel closes or the bounded drain expires: the
+                // sequence is proven.
+                Ok(None) | Err(_) => break,
+            }
+        }
         let error = session
             .request(DaemonCommand::List {
                 id: None,
@@ -2332,10 +2339,7 @@ mod tests {
             })
             .await
             .unwrap_err();
-        assert!(
-            crate::daemon_client::is_command_not_sent(&error),
-            "unexpected: {error}"
-        );
+        assert!(crate::daemon_client::is_command_not_sent(&error), "unexpected: {error}");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
