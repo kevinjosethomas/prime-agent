@@ -471,10 +471,10 @@ impl PrimeDaemonClient {
             let outcome = tokio::select! {
                 biased;
                 response = &mut fut => {
-                    let response = response.map_err(|error| classify(error, None));
+                    let response = response.map_err(|error| Box::new(classify(error, None)));
                     response.and_then(|response| {
                         serde_json::to_value(response).map_err(|error| {
-                            transport(format!("serialize response: {error}"))
+                            Box::new(transport(format!("serialize response: {error}")))
                         })
                     })
                 }
