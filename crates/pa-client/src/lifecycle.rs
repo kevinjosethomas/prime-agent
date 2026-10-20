@@ -473,8 +473,10 @@ async fn driver_run(
     let mut client: Option<DaemonClient> = None;
     loop {
         let Some(state) = session.upgrade() else {
+            eprintln!("DBG driver: weak gone, break");
             break; // Handles and consumer gone: nothing to serve.
         };
+        eprintln!("DBG driver: loop top, client={}", client.is_some());
         // A pending backoff sleeps FIRST — cancellation and consumer death
         // are select arms — then the window check and the next attempt's
         // delay happen before the connect below.
@@ -559,6 +561,7 @@ async fn driver_run(
                     .await
                     {
                         ServiceEnd::Loss(armed) => {
+                            eprintln!("DBG driver: loss {armed:?}");
                             // The prior connection is dead and its tasks
                             // joined in the service loop: clear the driver's
                             // clone so the loop reconnects.
@@ -570,7 +573,10 @@ async fn driver_run(
                                 .map(|window| tokio::time::Instant::now() + window);
                             delay = window.initial_delay;
                         }
-                        ServiceEnd::Stop => break,
+                        ServiceEnd::Stop => {
+                            eprintln!("DBG driver: service stop");
+                            break;
+                        }
                     }
                 }
                 Err(error) => {
