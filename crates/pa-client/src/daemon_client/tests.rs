@@ -2382,15 +2382,18 @@ async fn an_oversized_hello_line_fails_under_the_cap() {
             .unwrap();
         std::future::pending::<()>().await;
     });
-    let error = DaemonClient::connect_with_options(
+    let result = DaemonClient::connect_with_options(
         &socket,
         DaemonClientOptions {
             max_frame_bytes: Some(512),
             ..DaemonClientOptions::default()
         },
     )
-    .await
-    .unwrap_err();
+    .await;
+    let error = match result {
+        Ok(_) => panic!("the oversized hello line must be refused"),
+        Err(error) => error,
+    };
     assert!(
         error.to_string().contains("exceeded the limit"),
         "the oversized hello line is refused: {error}"
@@ -2417,15 +2420,18 @@ async fn an_oversized_pre_hello_frame_fails_under_the_cap() {
             .unwrap();
         std::future::pending::<()>().await;
     });
-    let error = DaemonClient::connect_with_options(
+    let result = DaemonClient::connect_with_options(
         &socket,
         DaemonClientOptions {
             max_frame_bytes: Some(512),
             ..DaemonClientOptions::default()
         },
     )
-    .await
-    .unwrap_err();
+    .await;
+    let error = match result {
+        Ok(_) => panic!("the oversized pre-hello line must be refused"),
+        Err(error) => error,
+    };
     assert!(
         error.to_string().contains("exceeded the limit"),
         "the oversized pre-hello line is refused: {error}"

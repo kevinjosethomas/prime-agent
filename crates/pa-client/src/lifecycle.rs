@@ -302,7 +302,7 @@ impl DaemonClientSession {
                 // Drop below would do the same; disarm first so the error
                 // path and the guard never double-clean.
                 guard.disarm();
-                self.cleanup_attempt(&bookkeeping);
+                self.cleanup_attempt(bookkeeping.as_ref());
                 return Err(error);
             }
         };
@@ -314,7 +314,7 @@ impl DaemonClientSession {
     /// The failed/cancelled attempt's cleanup: the fresh intent dies (token-
     /// matched), and a REGISTERED attempt's pinned token dangles when it is
     /// still THIS attempt's (the carryover — a newer attempt is untouched).
-    fn cleanup_attempt(&self, bookkeeping: &Option<Bookkeeping>) {
+    fn cleanup_attempt(&self, bookkeeping: Option<&Bookkeeping>) {
         if let Some(Bookkeeping::Attach { id, token, .. }) = bookkeeping {
             let mut registry = self.state.registry.lock().unwrap();
             registry.abandon(id, *token);
@@ -1677,11 +1677,9 @@ mod tests {
         let mut stop = Box::pin(session.stop());
         // Prove the stop future is still Pending (the settle is blocked on
         // the held restore), then drop it mid-flight.
+        let mut context = std::task::Context::from_waker(futures_noop_waker());
         assert!(
-            stop.as_mut().poll(&mut std::task::Context::from_waker(
-                futures_noop_waker()
-            ))
-            .is_pending(),
+            stop.as_mut().poll(&mut context).is_pending(),
             "the stop is genuinely pending on the blocked settle"
         );
         drop(stop);
@@ -1819,8 +1817,6 @@ mod tests {
         // first observation.
         let dir = tempfile::TempDir::new().unwrap();
         let socket = dir.path().join("d.sock");
-        let (_supervisor, socket, _release) = Supervisor::spawn(&dir, Vec::new(), false, false);
-        let _ = socket;
         let config = config(std::path::Path::new("/dev/null"));
         let (session, _events) = DaemonClientSession::start(config).await.unwrap();
         // Kill the driver task WITHOUT the settle: the handle is replaced by
