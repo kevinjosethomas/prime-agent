@@ -34,7 +34,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "time", "sync"] }
 napi-build = "2.6"
 
 [lints.rust]
-# Spike question: does the napi-derive macro output keep this enforceable, or
-# does registration code need `unsafe`? If macro-generated unsafe trips this,
-# the final crate documents the narrow exception at the exact site instead.
-unsafe_code = "forbid"
+# `forbid` is impossible: napi-derive's generated registration code carries
+# item-level `#[allow(unsafe_code)]` (a hard E0453 error under forbid). `warn`
+# instead keeps the zero-warning posture honest: any unsafe OUTSIDE the
+# macro-generated items fails clippy's -D warnings gate, while the N-API glue
+# the macros emit stays allowed. No hand-written unsafe is permitted.
+unsafe_code = "warn"

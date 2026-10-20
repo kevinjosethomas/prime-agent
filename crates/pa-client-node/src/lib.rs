@@ -56,8 +56,9 @@ pub struct SpikeTicker {
 impl SpikeTicker {
     #[napi(constructor)]
     pub fn new(callback: Function) -> Result<Self> {
-        let tsfn: ThreadsafeFunction<u32> =
-            callback.create_threadsafe_function(|ctx| Ok(vec![ctx.value]))?;
+        let tsfn: ThreadsafeFunction<u32> = callback
+            .build_threadsafe_function::<u32>()
+            .build_callback(|ctx| Ok(ctx.value))?;
         let stop = Arc::new(AtomicBool::new(false));
         let task_stop = Arc::clone(&stop);
         let task_tsfn = tsfn.clone();
@@ -67,7 +68,7 @@ impl SpikeTicker {
         tokio::spawn(async move {
             let mut tick = 0_u32;
             while !task_stop.load(Ordering::SeqCst) {
-                task_tsfn.call(tick, ThreadsafeFunctionCallMode::NonBlocking);
+                task_tsfn.call(Ok(tick), ThreadsafeFunctionCallMode::NonBlocking);
                 tick = tick.saturating_add(1);
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
