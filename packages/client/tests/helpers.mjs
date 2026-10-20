@@ -9,8 +9,12 @@ export function tmpSocket(name) {
 }
 
 export async function startMock(socketPath, mode = 'echo', arg = '') {
+  // Inside Electron's main process, process.execPath is the Electron
+  // binary: ELECTRON_RUN_AS_NODE runs the mock as plain Node.
+  const electron = process.versions.electron !== undefined;
   const child = spawn(process.execPath, ['mock/daemon.mjs', socketPath, mode, arg], {
     stdio: ['ignore', 'inherit', 'inherit'],
+    env: electron ? { ...process.env, ELECTRON_RUN_AS_NODE: '1' } : process.env,
   });
   const deadline = Date.now() + 5000;
   while (!existsSync(socketPath)) {
