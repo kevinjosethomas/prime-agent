@@ -53,6 +53,7 @@ pub use env::{
     WORKER_SOCKET_ENV, WORKER_SUPERVISOR_LOST_EXIT_MS_ENV, WORKER_SUPERVISOR_SOCKET_ENV,
     WORKER_TELEMETRY_DISABLED_ENV, WORKER_TOKEN_ENV,
 };
+use serde_json::Map;
 pub(crate) use session_core::SessionCore;
 use std::collections::VecDeque;
 // PathBuf is read only by this facade's in-file test modules (via `use super::*`).
