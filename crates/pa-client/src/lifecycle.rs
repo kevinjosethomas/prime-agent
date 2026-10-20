@@ -267,6 +267,10 @@ impl DaemonClientSession {
     ///
     /// [`CommandNotSent`] while stopping or disconnected; the client's own
     /// transport/refusal classes otherwise.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the registry lock is poisoned.
     pub async fn request(&self, command: DaemonCommand) -> Result<DaemonResponse> {
         if self.state.stopping.load(Ordering::SeqCst) {
             return Err(stopping_error());
@@ -321,6 +325,16 @@ impl DaemonClientSession {
     /// pending request — no live pending is awaited), cancel the driver
     /// (which true-cancels its restore tasks and joins them), then the
     /// driver's final core join; stop awaits the driver's end. Idempotent.
+    ///
+    /// # Errors
+    ///
+    /// Returns the driver's honest completion: an `Err` when the driver
+    /// panicked or ended before completing its settle (recorded in the
+    /// status, never faked as a clean completion).
+    ///
+    /// # Panics
+    ///
+    /// Panics when the registry or status locks are poisoned.
     pub async fn stop(&self) -> Result<()> {
         // The synchronous request signal, all before the first await: refuse
         // new requests, invalidate every in-flight epoch (under the registry
@@ -374,13 +388,15 @@ impl DaemonClientSession {
                     if let Some(client) = retained.as_ref() {
                         client.join_tasks().await;
                     }
-                    let mut status = self.state.status.write().unwrap();
-                    status.state = ConnectionState::Disconnected;
-                    status.error = Some(
-                        "the session driver failed before completing its settle"
-                            .to_string(),
-                    );
                     let result = self.state.driver.lock().await.memo.take();
+                    {
+                        let mut status = self.state.status.write().unwrap();
+                        status.state = ConnectionState::Disconnected;
+                        status.error = Some(
+                            "the session driver failed before completing its settle"
+                                .to_string(),
+                        );
+                    }
                     return match result {
                         // The driver ended in a panic: the honest error, never
                         // a faked clean completion.
@@ -1239,7 +1255,7 @@ mod tests {
         .await
         .expect("the streamed frame arrives");
         assert_eq!(frame, event);
-        session.stop().await;
+        let _ = session.stop().await;
         assert!(supervisor.connected.load(Ordering::SeqCst) >= 1);
     }
 
@@ -1320,7 +1336,7 @@ mod tests {
             json!({ "activeSessionId": "s1", "generation": "g", "sequence": 4 }),
             "the adopted cursor rode the restore"
         );
-        session.stop().await;
+        let _ = session.stop().await;
     }
 
     #[allow(clippy::too_many_lines)]
@@ -1538,7 +1554,7 @@ mod tests {
         })
         .await;
         assert!(reattached.is_ok(), "the restore completed after release");
-        session.stop().await;
+        let _ = session.stop().await;
     }
 
     #[tokio::test]
@@ -1653,7 +1669,7 @@ mod tests {
         })
         .await
         .expect("the hung connection's BOTH halves ended when the consumer dropped");
-        session.stop().await;
+        let _ = session.stop().await;
     }
 
     #[tokio::test]
@@ -1688,6 +1704,6 @@ mod tests {
             attempts >= 2,
             "retries actually ran before expiry (attempts: {attempts})"
         );
-        session.stop().await;
+        let _ = session.stop().await;
     }
 }

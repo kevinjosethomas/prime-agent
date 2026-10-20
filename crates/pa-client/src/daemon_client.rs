@@ -757,23 +757,20 @@ impl DaemonClient {
                     .get("type")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                match frame_type {
-                    "response" => {
-                        if let Ok(response) = serde_json::from_value::<DaemonResponse>(value) {
-                            let id = response.id.clone().unwrap_or_default();
-                            reader_shared.resolve(&id, response);
-                        }
+                if frame_type == "response" {
+                    if let Ok(response) = serde_json::from_value::<DaemonResponse>(value) {
+                        let id = response.id.clone().unwrap_or_default();
+                        reader_shared.resolve(&id, response);
                     }
-                    _ => {
-                        // The lossless tap first: every decoded application
-                        // frame AFTER the handshake, verbatim and in wire
-                        // order, before any typed conversion.
-                        if let Some(tap) = raw_tap.as_ref() {
-                            let _ = tap.send(value.clone());
-                        }
-                        if let Some(event) = client_event_from_value(&value) {
-                            let _ = event_tx.send(event);
-                        }
+                } else {
+                    // The lossless tap first: every decoded application
+                    // frame AFTER the handshake, verbatim and in wire
+                    // order, before any typed conversion.
+                    if let Some(tap) = raw_tap.as_ref() {
+                        let _ = tap.send(value.clone());
+                    }
+                    if let Some(event) = client_event_from_value(&value) {
+                        let _ = event_tx.send(event);
                     }
                 }
                 true
