@@ -50,6 +50,9 @@ WORKSPACE_DEPS = {
     "pa-core": {"pa-agent", "pa-ai", "pa-models", "pa-types", "pa-telemetry"},
     "pa-daemon": {"pa-core"},
     "pa-client": {"pa-types"},
+    # The contract generator: its schema/corpus/metadata outputs live in the
+    # Node package, but its battery is the pa-contract cargo tests.
+    "pa-contract": {"pa-types", "pa-daemon", "pa-client"},
     "pa-tui": {"pa-types", "pa-client"},
     "pa-cli": {"pa-types", "pa-telemetry", "pa-ai", "pa-models",
                "pa-agent", "pa-core", "pa-daemon", "pa-tui"},
@@ -101,6 +104,13 @@ def select_crates(rows: list[tuple[str, str]]) -> list[str] | None:
                     print(f"unknown crate {parts[1]}: the full selection runs")
                     return None
                 crates.add(parts[1])
+            elif candidate == "packages/client-contract" or candidate.startswith(
+                "packages/client-contract/"
+            ):
+                # The generated contract package: owned by pa-contract's
+                # cargo battery plus the workflow's node gate job.
+                print(f"contract package path {candidate}: pa-contract selected")
+                crates.add("pa-contract")
             else:
                 print(f"non-crate path {candidate}: the full selection runs")
                 return None

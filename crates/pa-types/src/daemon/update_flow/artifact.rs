@@ -13,6 +13,7 @@ use super::state::UpdateState;
 /// Opaque update identifier (a `UUIDv7` in practice), typed so status records, artifact paths, and
 /// prepare transactions cannot mix it up with session ids.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 #[serde(transparent)]
 pub struct UpdateId(pub String);
 
@@ -94,6 +95,7 @@ pub struct UpdateStatusFailure {
 /// Rust-only extension (the TS close frame carries no resume contract).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct DaemonUpdateResume {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub update_id: Option<UpdateId>,

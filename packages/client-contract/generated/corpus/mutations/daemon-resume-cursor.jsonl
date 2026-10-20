@@ -1,0 +1,15 @@
+{"schemaRoot":"daemon-resume-cursor","case":"drop-activeSessionId","sample":{},"rustAccepts":true}
+{"schemaRoot":"daemon-resume-cursor","case":"wrong-type-activeSessionId","sample":{"activeSessionId":"wrong-type"},"rustAccepts":true}
+{"schemaRoot":"daemon-resume-cursor","case":"null-activeSessionId","sample":{"activeSessionId":null},"rustAccepts":true}
+{"schemaRoot":"daemon-resume-cursor","case":"drop-generation","sample":{},"rustAccepts":true}
+{"schemaRoot":"daemon-resume-cursor","case":"wrong-type-generation","sample":{"generation":"wrong-type"},"rustAccepts":true}
+{"schemaRoot":"daemon-resume-cursor","case":"null-generation","sample":{"generation":null},"rustAccepts":true}
+{"schemaRoot":"daemon-resume-cursor","case":"drop-sequence","sample":{},"rustAccepts":true}
+{"schemaRoot":"daemon-resume-cursor","case":"wrong-type-sequence","sample":{"sequence":"wrong-type"},"rustAccepts":false}
+{"schemaRoot":"daemon-resume-cursor","case":"null-sequence","sample":{"sequence":null},"rustAccepts":true}
+{"schemaRoot":"daemon-resume-cursor","case":"drop-eventSequence","sample":{},"rustAccepts":true}
+{"schemaRoot":"daemon-resume-cursor","case":"wrong-type-eventSequence","sample":{"eventSequence":"wrong-type"},"rustAccepts":false}
+{"schemaRoot":"daemon-resume-cursor","case":"null-eventSequence","sample":{"eventSequence":null},"rustAccepts":true}
+{"schemaRoot":"daemon-resume-cursor","case":"drop-__contractUnknownExtra","sample":{},"rustAccepts":true}
+{"schemaRoot":"daemon-resume-cursor","case":"wrong-type-__contractUnknownExtra","sample":{"__contractUnknownExtra":"wrong-type"},"rustAccepts":true}
+{"schemaRoot":"daemon-resume-cursor","case":"null-__contractUnknownExtra","sample":{"__contractUnknownExtra":null},"rustAccepts":true}

@@ -11,6 +11,7 @@ use super::{
 /// `type: "command"` envelope wrapping a [`DaemonCommand`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct DaemonCommandEnvelope {
     #[serde(rename = "type")]
     pub frame_type: DaemonCommandFrameType,
@@ -22,6 +23,7 @@ pub struct DaemonCommandEnvelope {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum DaemonCommandFrameType {
     #[serde(rename = "command")]
     Command,
@@ -30,6 +32,7 @@ pub enum DaemonCommandFrameType {
 /// A bare command or a command envelope, both accepted on one socket line.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum DaemonCommandWire {
     Command(DaemonCommand),
     Envelope(DaemonCommandEnvelope),
@@ -37,6 +40,7 @@ pub enum DaemonCommandWire {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum StreamingBehavior {
     Steer,
     FollowUp,
@@ -44,6 +48,7 @@ pub enum StreamingBehavior {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum DaemonSessionLifecycle {
     Resident,
     ClientOwned,
@@ -86,6 +91,7 @@ pub struct FocusedThreadReply {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct FocusedThreadContextRow {
     pub id: String,
     pub role: String,
@@ -95,6 +101,7 @@ pub struct FocusedThreadContextRow {
 /// `prompt`/`steer`/`follow_up`-family input payload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct PromptInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_input_id: Option<String>,
@@ -131,6 +138,16 @@ pub struct PromptInput {
     pub rlm_notice_nonce: Option<String>,
 }
 
+/// The `set_subagent_model_default.model` schema: PRESENT-or-null — required
+/// on the wire, but nullable (a present null resets inheritance; omission is
+/// a parse error).
+#[cfg(feature = "contract")]
+fn required_nullable_model_schema(
+    _gen: &mut schemars::generate::SchemaGenerator,
+) -> schemars::Schema {
+    schemars::json_schema!({ "type": ["string", "null"] })
+}
+
 /// Client commands, tagged by `type`. Every variant carries `id` (bare
 /// commands) and a catch-all for unknown fields, so round-trips stay lossless.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -139,6 +156,7 @@ pub struct PromptInput {
     rename_all = "snake_case",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum DaemonCommand {
     GetGlobalHarnessDefaults {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -163,6 +181,12 @@ pub enum DaemonCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         #[serde(deserialize_with = "super::subagent_model_defaults::required_nullable_model")]
+        // Present-or-null on the wire: required, but nullable (a present
+        // null resets inheritance; omission is a parse error).
+        #[cfg_attr(
+            feature = "contract",
+            schemars(required, schema_with = "required_nullable_model_schema")
+        )]
         model: Option<String>,
         #[serde(flatten)]
         rest: JsonMap,
@@ -1365,6 +1389,7 @@ pub enum DaemonCommand {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum CycleDirection {
     Forward,
     Backward,
@@ -1372,6 +1397,7 @@ pub enum CycleDirection {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum ForkPosition {
     Before,
     At,

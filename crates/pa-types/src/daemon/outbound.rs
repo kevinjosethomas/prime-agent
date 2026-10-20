@@ -14,6 +14,7 @@ use super::{
 /// `type: "response"`: success or failure outcome of one command.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct DaemonResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
@@ -47,6 +48,7 @@ pub const KERNEL_NOT_RUNNING_MESSAGE: &str = "Kernel is not running";
     rename_all = "snake_case",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum DaemonErrorInfo {
     MissingSessionCwd {
         issue: Value,
@@ -93,6 +95,7 @@ pub enum DaemonErrorInfo {
 /// Saved-session row pushed by `session_list_item` progress events.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct DaemonSavedSessionInfo {
     pub path: String,
     pub id: String,
@@ -121,6 +124,7 @@ pub struct DaemonSavedSessionInfo {
 /// Full session snapshot (attach, replacement, resync).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct DaemonSessionSnapshot {
     pub active_session_id: String,
     pub summary: Value,
@@ -144,6 +148,7 @@ pub struct DaemonSessionSnapshot {
 /// Process identity of the daemon build, published in `daemon_hello`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct DaemonRuntimeIdentity {
     pub build_id: String,
     pub executable_path: String,
@@ -155,6 +160,7 @@ pub struct DaemonRuntimeIdentity {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum DaemonClosingReason {
     Shutdown,
     Update,
@@ -162,6 +168,7 @@ pub enum DaemonClosingReason {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum DaemonSessionClosedReason {
     Killed,
     Shutdown,
@@ -194,6 +201,7 @@ pub struct SocketIdentity {
 /// is `resync` on the wire, never `catchup`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum SnapshotPurpose {
     Attach,
     Replacement,
@@ -204,6 +212,7 @@ pub enum SnapshotPurpose {
 /// `type: "event"` envelope wrapping a [`DaemonOutbound`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct DaemonEventEnvelope {
     pub id: DaemonEventId,
     pub protocol: DaemonProtocolInfo,
@@ -224,6 +233,7 @@ pub struct DaemonEventEnvelope {
     rename_all = "snake_case",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum DaemonOutbound {
     Response {
         #[serde(flatten)]

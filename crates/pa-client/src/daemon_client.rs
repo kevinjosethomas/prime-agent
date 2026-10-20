@@ -73,6 +73,9 @@ pub const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30_000;
 /// Requests whose completion is bounded by the turn itself
 /// (`prompt_and_wait`, `wait_for_idle`) — a long turn cannot expire them.
 pub const LONG_RUNNING_REQUEST_TIMEOUT_MS: u64 = 600_000;
+/// The long-running request set: the commands served with
+/// [`LONG_RUNNING_REQUEST_TIMEOUT_MS`]. Contract metadata reads this table.
+pub const LONG_RUNNING_COMMAND_TYPES: &[&str] = &["prompt_and_wait", "wait_for_idle"];
 const CONNECT_TIMEOUT_MS: u64 = 3_000;
 /// Hello handshake budget. A daemon loading a very large session can take
 /// well over the 3s TS default to greet.

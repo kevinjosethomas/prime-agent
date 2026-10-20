@@ -1,0 +1,10 @@
+{"schemaRoot":"daemon-error-info","sample":{"code":"missing_session_cwd","issue":{}}}
+{"schemaRoot":"daemon-error-info","sample":{"code":"session_import_file_not_found","filePath":"wire"}}
+{"schemaRoot":"daemon-error-info","sample":{"code":"session_already_active","sessionPath":"wire"}}
+{"schemaRoot":"daemon-error-info","sample":{"code":"session_recovering","activeSessionId":"wire"}}
+{"schemaRoot":"daemon-error-info","sample":{"code":"update_restarting"}}
+{"schemaRoot":"daemon-error-info","sample":{"code":"command_result_uncertain","clientId":"wire","commandId":"wire"}}
+{"schemaRoot":"daemon-error-info","sample":{"code":"update_prepare_refused","activeUpdateId":"wire"}}
+{"schemaRoot":"daemon-error-info","sample":{"code":"model_provider_unauthenticated","provider":"wire"}}
+{"schemaRoot":"daemon-error-info","sample":{"code":"worker_overloaded"}}
+{"schemaRoot":"daemon-error-info","sample":{"code":"wire"}}
