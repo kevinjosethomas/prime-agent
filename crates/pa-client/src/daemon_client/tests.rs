@@ -2342,7 +2342,7 @@ async fn a_cancelled_connect_aborts_its_spawned_tasks() {
         DaemonClientOptions::default(),
     ));
     assert!(
-        tokio::time::timeout(Duration::from_millis(500), &mut *connect)
+        tokio::time::timeout(Duration::from_millis(500), connect.as_mut())
             .await
             .is_err(),
         "the never-greeting daemon keeps the connect pending"
