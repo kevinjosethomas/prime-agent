@@ -179,8 +179,7 @@ impl AttachmentRegistry {
                 {
                     entry.cursor = Some(cursor);
                 }
-            } else if let Some(sequence) =
-                snapshot.get("lastEventSequence").and_then(Value::as_u64)
+            } else if let Some(sequence) = snapshot.get("lastEventSequence").and_then(Value::as_u64)
             {
                 if current.as_ref().and_then(|c| c.event_sequence).unwrap_or(0) < sequence {
                     entry.cursor = Some(DaemonResumeCursor {
@@ -206,9 +205,10 @@ impl AttachmentRegistry {
     /// generation the sequence only ever rises.
     fn catch_up_marker(&mut self, id: &str, cursor: Option<&DaemonResumeCursor>) {
         let (generation, sequence) = match cursor {
-            Some(cursor) if cursor.sequence.is_some() => {
-                (cursor.generation.clone().unwrap_or_default(), cursor.sequence)
-            }
+            Some(cursor) if cursor.sequence.is_some() => (
+                cursor.generation.clone().unwrap_or_default(),
+                cursor.sequence,
+            ),
             Some(cursor) if cursor.event_sequence.is_some() => {
                 (String::new(), cursor.event_sequence)
             }
@@ -218,8 +218,7 @@ impl AttachmentRegistry {
         match self.seen.get(id) {
             Some((marker_generation, last)) if *marker_generation == generation => {
                 if sequence > *last {
-                    self.seen
-                        .insert(id.to_string(), (generation, sequence));
+                    self.seen.insert(id.to_string(), (generation, sequence));
                 }
             }
             _ => {
@@ -233,7 +232,11 @@ impl AttachmentRegistry {
     /// attachments only, `session_binding` rekeys the entry and its
     /// marker, `session_closed` drops the entry and everything it owns.
     pub(crate) fn observe_frame(&mut self, frame: &Value) -> FrameAction {
-        match frame.get("type").and_then(Value::as_str).unwrap_or_default() {
+        match frame
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+        {
             "session_event" => self.observe_session_event(frame),
             "session_binding" => self.observe_binding(frame),
             "session_closed" => {
@@ -279,7 +282,8 @@ impl AttachmentRegistry {
                 return FrameAction::Dedupe;
             }
         }
-        self.seen.insert(id.to_string(), (generation.clone(), sequence));
+        self.seen
+            .insert(id.to_string(), (generation.clone(), sequence));
         let entry = self.attachments.get_mut(id).expect("registered above");
         if generation.is_empty() {
             let previous = entry
@@ -400,9 +404,15 @@ mod tests {
         assert_eq!(cursor.sequence, Some(1));
         // A late old-generation frame replaces the marker and the cursor —
         // the documented desktop-parity limitation, never a heuristic.
-        assert_eq!(registry.observe_frame(&event("g1", 3)), FrameAction::Deliver);
+        assert_eq!(
+            registry.observe_frame(&event("g1", 3)),
+            FrameAction::Deliver
+        );
         let (_, entry) = registry.restore_entries().remove(0);
-        assert_eq!(entry.cursor.as_ref().unwrap().generation.as_deref(), Some("g1"));
+        assert_eq!(
+            entry.cursor.as_ref().unwrap().generation.as_deref(),
+            Some("g1")
+        );
     }
 
     #[test]
@@ -413,7 +423,10 @@ mod tests {
             registry.observe_frame(&event(&format!("g{index}"), 1));
         }
         assert_eq!(registry.seen.len(), 1, "one current marker, bounded");
-        assert_eq!(registry.observe_frame(&event("g49", 1)), FrameAction::Dedupe);
+        assert_eq!(
+            registry.observe_frame(&event("g49", 1)),
+            FrameAction::Dedupe
+        );
     }
 
     #[test]
@@ -445,12 +458,7 @@ mod tests {
         );
         // The legacy shape — its own attempt token.
         let legacy = registry.attempt_token("s1");
-        assert!(registry.record_attach(
-            "s1",
-            &[],
-            &json!({ "lastEventSequence": 7 }),
-            legacy
-        ));
+        assert!(registry.record_attach("s1", &[], &json!({ "lastEventSequence": 7 }), legacy));
         let (_, entry) = registry.restore_entries().remove(0);
         assert_eq!(entry.cursor.as_ref().unwrap().event_sequence, Some(7));
         // The marker rode along: a replayed sequence dedupes.
@@ -474,7 +482,10 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].0, "s3");
         assert!(entries[0].1.cursor.is_none());
-        assert_eq!(entries[0].1.capabilities, vec!["event_sequence".to_string()]);
+        assert_eq!(
+            entries[0].1.capabilities,
+            vec!["event_sequence".to_string()]
+        );
     }
 
     #[test]

@@ -27,8 +27,8 @@ mod errors;
 #[cfg(all(test, unix))]
 mod tests;
 
-use errors::{command_type_debug, DirectRequestError};
 pub(crate) use errors::response_data_or_error;
+use errors::{command_type_debug, DirectRequestError};
 pub use errors::{
     is_command_not_sent, is_command_result_uncertain, is_daemon_rejection, is_daemon_timeout,
     is_daemon_unreachable, is_kernel_not_running, is_update_restarting_rejection,

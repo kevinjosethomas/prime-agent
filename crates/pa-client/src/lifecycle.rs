@@ -394,7 +394,9 @@ enum Bookkeeping {
         token: u64,
         capabilities: Vec<String>,
     },
-    Detach { id: String },
+    Detach {
+        id: String,
+    },
 }
 
 /// The wire `type` tag of a command (the typed refusal's command name).
@@ -434,7 +436,6 @@ fn validate(config: &LifecycleConfig) -> Result<()> {
     }
     Ok(())
 }
-
 
 /// One restore attempt's outcome, consumed by the driver loop.
 enum RestoreOutcome {
@@ -621,10 +622,15 @@ async fn driver_run(
 /// Publish the window expiry: a typed event and the terminal status. The
 /// driver stops (no exit, no resend); the host decides.
 fn expire(state: &Arc<SessionState>, kind: ReconnectKind) {
-    let _ = state.events.send(ConnectionEvent::ReconnectExpired { kind });
+    let _ = state
+        .events
+        .send(ConnectionEvent::ReconnectExpired { kind });
     publish(state, |status| {
         status.state = ConnectionState::Expired;
-        status.error = Some(format!("the {} reconnect window expired", window_name(kind)));
+        status.error = Some(format!(
+            "the {} reconnect window expired",
+            window_name(kind)
+        ));
     });
 }
 
@@ -760,7 +766,9 @@ fn spawn_restores(
             let attempt = async {
                 let client = {
                     let guard = state.client.read().await;
-                    guard.clone().ok_or_else(|| anyhow!("the session is not connected"))?
+                    guard
+                        .clone()
+                        .ok_or_else(|| anyhow!("the session is not connected"))?
                 };
                 let command = DaemonCommand::Attach {
                     id: None,
@@ -798,16 +806,14 @@ fn spawn_restores(
             }
             match attempt {
                 Ok(data) => {
-                    let adopted = state
-                        .registry
-                        .lock()
-                        .unwrap()
-                        .record_attach(&id, &capabilities, &data, token);
+                    let adopted = state.registry.lock().unwrap().record_attach(
+                        &id,
+                        &capabilities,
+                        &data,
+                        token,
+                    );
                     if adopted {
-                        let _ = restore_tx.send(RestoreOutcome::Done {
-                            id,
-                            data,
-                        });
+                        let _ = restore_tx.send(RestoreOutcome::Done { id, data });
                     } else {
                         let _ = restore_tx.send(RestoreOutcome::Abandoned);
                     }
@@ -821,7 +827,8 @@ fn spawn_restores(
             }
         }));
     }
-}#[cfg(test)]
+}
+#[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
@@ -976,9 +983,7 @@ mod tests {
         }
     }
 
-    async fn next_event(
-        events: &mut mpsc::UnboundedReceiver<ConnectionEvent>,
-    ) -> ConnectionEvent {
+    async fn next_event(events: &mut mpsc::UnboundedReceiver<ConnectionEvent>) -> ConnectionEvent {
         tokio::time::timeout(Duration::from_secs(10), events.recv())
             .await
             .expect("an event arrives")
@@ -1045,8 +1050,7 @@ mod tests {
     #[tokio::test]
     async fn reconnect_restores_with_cursor_and_never_resends() {
         let dir = tempfile::TempDir::new().unwrap();
-        let (supervisor, socket, release) =
-            Supervisor::spawn(&dir, Vec::new(), false, true);
+        let (supervisor, socket, release) = Supervisor::spawn(&dir, Vec::new(), false, true);
         let (session, mut events) = DaemonClientSession::start(config(&socket)).await.unwrap();
         wait_connected(&mut events).await;
         // Attach through the request path: the cursor g/4 adopts.
@@ -1300,7 +1304,10 @@ mod tests {
             }
         })
         .await;
-        assert!(saw_frame.is_ok(), "the frame flowed while the restore was held");
+        assert!(
+            saw_frame.is_ok(),
+            "the frame flowed while the restore was held"
+        );
         // A user request completes WITHOUT waiting for the held restore.
         let list = {
             let session = session.clone();
@@ -1338,11 +1345,10 @@ mod tests {
         session.stop().await;
     }
 
-#[tokio::test]
+    #[tokio::test]
     async fn stop_settles_the_connection_and_concurrent_stops_all_wait() {
         let dir = tempfile::TempDir::new().unwrap();
-        let (supervisor, socket, _release) =
-            Supervisor::spawn(&dir, Vec::new(), false, false);
+        let (supervisor, socket, _release) = Supervisor::spawn(&dir, Vec::new(), false, false);
         let (session, mut events) = DaemonClientSession::start(config(&socket)).await.unwrap();
         wait_connected(&mut events).await;
         // Two concurrent stops: BOTH return only after the mock saw the
@@ -1372,7 +1378,10 @@ mod tests {
             })
             .await
             .unwrap_err();
-        assert!(crate::daemon_client::is_command_not_sent(&error), "unexpected: {error}");
+        assert!(
+            crate::daemon_client::is_command_not_sent(&error),
+            "unexpected: {error}"
+        );
     }
 
     #[tokio::test]
@@ -1391,7 +1400,10 @@ mod tests {
             .ok();
         release.notify_one();
         let settle = tokio::time::timeout(Duration::from_secs(10), session.stop()).await;
-        assert!(settle.is_ok(), "the driver settled after the cancelled stop");
+        assert!(
+            settle.is_ok(),
+            "the driver settled after the cancelled stop"
+        );
     }
 
     #[tokio::test]
