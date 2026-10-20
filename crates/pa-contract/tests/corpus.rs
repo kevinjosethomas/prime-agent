@@ -246,12 +246,12 @@ fn nested_blocks_are_covered_and_known_kinds_are_strict() {
     let accepted = corpus_stem("accepted", "agent-message");
     let has_typed_block = accepted.iter().any(|line| {
         let sample = line.get("sample").expect("sample");
-        sample
-            .to_string()
-            .contains(r#""type":"text""#)
-            && sample.to_string().contains("wire")
+        sample.to_string().contains(r#""type":"text""#) && sample.to_string().contains("wire")
     });
-    assert!(has_typed_block, "no non-empty typed text block in the accepted corpus");
+    assert!(
+        has_typed_block,
+        "no non-empty typed text block in the accepted corpus"
+    );
     // A malformed KNOWN block is a serde error, never a Raw fallback.
     let malformed_text = serde_json::json!({
         "role": "user",

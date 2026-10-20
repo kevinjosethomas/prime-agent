@@ -535,7 +535,9 @@ fn collect_branch_variants(
     }
     // A $ref with siblings (internally tagged enums): merge walk.
     if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
-        let Some(object) = witness.as_object() else { return };
+        let Some(object) = witness.as_object() else {
+            return;
+        };
         for (name, prop) in properties {
             let resolved = resolve_ref(prop, defs);
             if let Some(branches) = resolved
@@ -560,13 +562,7 @@ fn collect_branch_variants(
                     Value::Array(list) => {
                         if let Some(items) = resolved.get("items") {
                             for element in list {
-                                collect_branch_variants(
-                                    items,
-                                    element,
-                                    defs,
-                                    depth + 1,
-                                    out,
-                                );
+                                collect_branch_variants(items, element, defs, depth + 1, out);
                             }
                         }
                     }
@@ -616,10 +612,7 @@ pub fn tagged_object_field_drops(witness: &Value) -> Vec<(String, Value)> {
                 }
                 let mut variant = object.clone();
                 variant.remove(name);
-                out.push((
-                    format!("nested-drop-{name}"),
-                    Value::Object(variant),
-                ));
+                out.push((format!("nested-drop-{name}"), Value::Object(variant)));
                 if out.len() >= 64 {
                     return out;
                 }
