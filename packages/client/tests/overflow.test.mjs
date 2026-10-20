@@ -38,19 +38,41 @@ test('a PARKED nextFrame pull observes the sticky overflow branch', async () => 
   const socketPath = tmpSocket('overflow-parked');
   const stop = await startMock(socketPath, 'flood-trigger');
   const connection = await DaemonConnection.connect(socketPath, { frameBuffer: 1 });
-  // No frames exist yet: the pull parks INSIDE the select with the queue
-  // empty — provably pending before any overflow mark.
-  const parked = connection.nextFrame();
-  // The readiness barrier: the trigger command is answered AND the flood
-  // starts only now, so the parked pull was pending pre-mark.
+  // Readiness barrier: the gated mock sent hello ONLY; the queue is empty
+  // and stays empty until the trigger, so every parked pull below parks
+  // with a PROVABLY empty queue.
   await connection.request({
     type: 'get_connection_state',
     activeSessionId: 'wire',
     floodTrigger: true,
-  });
-  // The flood fills the one-slot queue and tears the connection down:
-  // the PARKED pull settles through the sticky terminal branch.
-  await assert.rejects(parked, (error) => error instanceof OverflowError);
+  }).catch((error) => error);
+  let witnessed = 0;
+  for (let attempt = 0; attempt < 512 && witnessed === 0; attempt += 1) {
+    const pull = connection.nextFrame();
+    // The single-consumer probe proves the pull holds the pending poll:
+    // a concurrent pull MUST reject while the first is parked.
+    const probe = connection
+      .nextFrame()
+      .then(
+        () => {
+          throw new Error('the probe should have rejected');
+        },
+        (error) => error,
+      );
+    const probeError = await probe;
+    assert.ok(/single-consumer/.test(probeError.message));
+    const outcome = await pull.then(
+      (frame) => ({ frame }),
+      (error) => ({ error }),
+    );
+    if (outcome.error !== undefined) {
+      assert.ok(outcome.error instanceof OverflowError);
+      witnessed += 1;
+    }
+    // A pre-mark frame is a legal interleave: repark with a fresh
+    // proven-pending pull and keep witnessing.
+  }
+  assert.ok(witnessed > 0, 'no proven-pending pull ever witnessed the overflow');
   // Sticky thereafter.
   await assert.rejects(connection.nextFrame(), (error) => error instanceof OverflowError);
   assert.equal(connection.currentStatus().type, 'overflow');
@@ -60,12 +82,25 @@ test('a PARKED nextFrame pull observes the sticky overflow branch', async () => 
 
 test('in-flight requests at overflow stay Uncertain with cause overflow', async () => {
   const socketPath = tmpSocket('overflow-inflight');
-  const stop = await startMock(socketPath, 'flood');
+  const stop = await startMock(socketPath, 'flood-trigger');
   const connection = await DaemonConnection.connect(socketPath, { frameBuffer: 2 });
-  const inFlight = connection.request(GET_CONNECTION_STATE, 60_000);
-  await assert.rejects(
-    inFlight,
-    (error) => error instanceof UncertainError && error.cause === 'overflow',
+  // The gated trigger request is in flight when the flood fills the queue
+  // (the mock delays the response): the in-flight line was queued and must
+  // settle Uncertain with cause overflow — never re-classified.
+  const inflight = connection
+    .request({
+      type: 'get_connection_state',
+      activeSessionId: 'wire',
+      floodTrigger: true,
+    })
+    .then(
+      (value) => value,
+      (error) => error,
+    );
+  const settled = await inflight;
+  assert.ok(
+    settled instanceof UncertainError && settled.cause === 'overflow',
+    `unexpected class: ${settled?.kind}:${settled?.cause}`,
   );
   connection.close();
   await stop();

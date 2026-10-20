@@ -110,6 +110,18 @@ const server = net.createServer((socket) => {
       }
       if (mode === 'flood-trigger' && frame.command.floodTrigger) {
         floodNow(socket);
+        setTimeout(() => {
+          socket.write(
+            JSON.stringify({
+              type: 'response',
+              id,
+              command: frame.command.type,
+              success: true,
+              data: { triggered: true },
+            }) + '\n',
+          );
+        }, 50);
+        continue;
       }
       if (mode === 'echo' || mode === 'events') {
         socket.write(
