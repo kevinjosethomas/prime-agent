@@ -181,6 +181,7 @@ fn legacy_read_session_info(path: &Path) -> Option<SessionInfo> {
         },
         all_messages_text,
         usage: usage_scan.summary(),
+        response_timing: None,
         deleted_descendant_usage: None,
     })
 }

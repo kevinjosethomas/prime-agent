@@ -30,6 +30,7 @@ pub mod provider_retry;
 pub mod refine;
 mod refinement_gate;
 pub mod request_timing;
+pub mod response_timing;
 pub mod rlm_host;
 pub mod rlm_notices;
 pub mod rlm_usage;

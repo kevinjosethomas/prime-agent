@@ -641,6 +641,11 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         std::sync::Arc::clone(&request_timing_wiring),
         stream_fn,
     );
+    // Response timing is always on (it is the product surface, not the
+    // opt-in request-timing diagnostic): it stamps every final assistant
+    // message — the main loop's and the side question's alike — inside the
+    // semantic-edge wrapper, so the persisted rows carry the measurement.
+    let timing_stream_fn = super::response_timing::instrument_response_timing(timing_stream_fn);
     let side_question_stream_fn = std::sync::Arc::clone(&timing_stream_fn);
     let semantic_recorder = config.semantic_edges.take().map(|identity| {
         std::sync::Arc::new(super::semantic_edges::SemanticEdgeRecorder::open(identity))

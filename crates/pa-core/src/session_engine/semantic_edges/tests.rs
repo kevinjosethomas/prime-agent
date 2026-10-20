@@ -305,6 +305,7 @@ fn capturing_stream_fn(
 
 fn terminal_event(reason: StopReason) -> AssistantMessageEvent {
     let message = AssistantMessage {
+        timing: None,
         content: Vec::new(),
         api: "test".to_string(),
         provider: "test".to_string(),

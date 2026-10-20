@@ -133,6 +133,10 @@ pub struct SessionSummary {
     pub rlm_child_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<Value>,
+    /// The whole-file response-timing block (assistant responses' measured
+    /// TTFT/TPS/LLM time plus tool work time; `get_state`'s `responseTiming`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_timing: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worker_state: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

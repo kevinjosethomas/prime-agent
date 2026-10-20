@@ -355,6 +355,7 @@ mod tests {
     fn error_message(kind: Option<&str>, status: Option<u16>, error: &str) -> AssistantMessage {
         let details = serde_json::json!({ "kind": kind, "status": status });
         AssistantMessage {
+            timing: None,
             content: vec![AssistantContent::Text(TextContent {
                 text: String::new(),
                 text_signature: None,
@@ -380,6 +381,7 @@ mod tests {
 
     fn ok_message(text: &str) -> AssistantMessage {
         AssistantMessage {
+            timing: None,
             content: vec![AssistantContent::Text(TextContent {
                 text: text.to_string(),
                 text_signature: None,
