@@ -126,7 +126,19 @@ test('new requests after overflow are NotSent with the overflow cause surfaced',
   const socketPath = tmpSocket('overflow-notsent');
   const stop = await startMock(socketPath, 'flood');
   const connection = await DaemonConnection.connect(socketPath, { frameBuffer: 2 });
-  await assert.rejects(connection.nextFrame(), (error) => error instanceof OverflowError);
+  // Frames queued before the mark may drain first — bounded drain until
+  // the terminal OverflowError surfaces, then the NEW request must be the
+  // provable NotSent with the overflow cause.
+  let sawOverflow = false;
+  for (let i = 0; i < 512 && !sawOverflow; i += 1) {
+    try {
+      await connection.nextFrame();
+    } catch (error) {
+      if (!(error instanceof OverflowError)) throw error;
+      sawOverflow = true;
+    }
+  }
+  assert.ok(sawOverflow, 'the terminal overflow error never surfaced');
   await assert.rejects(
     connection.request(GET_CONNECTION_STATE),
     (error) => error instanceof NotSentError && error.cause === 'overflow',
