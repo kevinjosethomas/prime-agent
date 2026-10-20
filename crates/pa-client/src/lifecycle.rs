@@ -370,16 +370,13 @@ impl DaemonClientSession {
         // resolves now — no live pending is ever awaited. CLONE, not take
         // (item 5): the SLOT retains the owner for the whole cleanup, so a
         // cancelled stop mid-join never drops the last TaskSet Arc.
-        eprintln!("DBG stop: marks done");
         let retained = {
             let slot = self.state.client.read().await;
             slot.as_ref().cloned()
         };
-        eprintln!("DBG stop: retained cloned");
         if let Some(client) = retained.as_ref() {
             client.shutdown();
         }
-        eprintln!("DBG stop: shutdown done");
         // The completion authority: the driver's mark, raced against the
         // MONITORED handle (borrowed in place — a cancelled stop retains
         // everything). The first observation of the handle's end memoizes
@@ -755,7 +752,6 @@ async fn driver_run(
                     // registry; stop's marks run under the same registry
                     // gate, so neither can pass the other mid-section).
                     let install = install_fresh(&state, &fresh, &cancel).await;
-                    eprintln!("DBG driver: install resolved = {}", install.is_some());
                     let Some(epoch) = install else {
                         // A stop landed: the fresh connection never
                         // installs; its settle runs outside the guards.
@@ -765,7 +761,6 @@ async fn driver_run(
                     };
                     let dead = fresh.reader_dead();
                     client = Some(fresh);
-                    eprintln!("DBG driver: client assigned, entering service");
                     spawn_restores(&state, &config, epoch, &restore_tx, &mut restore_handles);
                     match service(
                         &state,
@@ -779,7 +774,6 @@ async fn driver_run(
                     .await
                     {
                         ServiceEnd::Loss(armed) => {
-                            eprintln!("DBG driver: service Loss");
                             client = None;
                             kind = armed;
                             let window = config.reconnect.window_for(kind);
@@ -788,10 +782,7 @@ async fn driver_run(
                                 .map(|window| tokio::time::Instant::now() + window);
                             delay = window.initial_delay;
                         }
-                        ServiceEnd::Stop => {
-                            eprintln!("DBG driver: service Stop");
-                            break;
-                        }
+                        ServiceEnd::Stop => break,
                     }
                 }
                 Err(error) => {
@@ -822,22 +813,17 @@ async fn driver_run(
     // neither survives the settle. Every stop returns only after the mark
     // below flips.
     if let Some(state) = session.upgrade() {
-        eprintln!("DBG settle: start");
         state.stopping.store(true, Ordering::SeqCst);
         state.registry.lock().unwrap().bump_epoch();
         let handles = std::mem::take(&mut restore_handles);
-        eprintln!("DBG settle: handles {} taken", handles.len());
         for handle in &handles {
             handle.abort();
         }
         for handle in handles {
             let _ = handle.await;
         }
-        eprintln!("DBG settle: pre-take effective={}", client.is_some());
         let mut effective = client.take();
-        eprintln!("DBG settle: pre-residue-write");
         let residue = state.client.write().await.take();
-        eprintln!("DBG settle: residue taken");
         if effective.is_none() {
             effective = residue;
         }
@@ -2301,22 +2287,22 @@ mod tests {
             tokio::spawn(async move { session.stop().await })
         };
         tokio::task::yield_now().await;
-        eprintln!("DBG test: pre-drop");
         // Release: both installs proceed to the registry gate and REFUSE
         // on the mark.
         drop(guard);
-        eprintln!("DBG test: post-drop");
-        let probe = session.state.client.try_read().is_ok();
-        eprintln!("DBG test: try_read after drop ok = {probe}");
-        tokio::time::timeout(Duration::from_secs(10), stop_task)
+        // Both parked parties are awaited CONCURRENTLY after the release:
+        // tokio's RwLock hands the lock to the first queued waiter at
+        // unlock, so the install future must keep being polled or it would
+        // orphan the lock.
+        let (stop_result, installed) =
+            tokio::time::timeout(Duration::from_secs(10), async {
+                tokio::join!(stop_task, install)
+            })
             .await
-            .expect("the stop settles after the guard release")
-            .unwrap()
+            .expect("the stop and the install both settle");
+        stop_result
+            .expect("the stop task lives")
             .expect("the stop completed honestly");
-        let installed =
-            tokio::time::timeout(Duration::from_secs(5), install).await.expect(
-                "the install helper resolves after the release",
-            );
         assert!(
             installed.is_none(),
             "the install REFUSED on the stop mark — no epoch, no install"
