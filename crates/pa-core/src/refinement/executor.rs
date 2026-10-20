@@ -359,7 +359,14 @@ mod tests {
             Box::pin(async move { Ok(text_message(&reply)) })
         });
         let state = super::super::empty_harness_state();
-        plan_refinement(&[], &state, &[], &model, &RefineOptions::default(), plan_call)
+        plan_refinement(
+            &[],
+            &state,
+            &[],
+            &model,
+            &RefineOptions::default(),
+            plan_call,
+        )
         .await
         .unwrap();
         assert_eq!(
@@ -468,7 +475,6 @@ mod tests {
         .await;
         assert!(missing.is_err());
     }
-
 
     fn test_model() -> pa_types::ai::Model {
         pa_types::ai::Model {
