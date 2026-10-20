@@ -79,4 +79,3 @@ pub struct SessionManager {
     admitted_user_rows: std::collections::VecDeque<String>,
     persist_listeners: Vec<SessionPersistListener>,
 }
-

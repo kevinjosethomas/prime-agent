@@ -699,7 +699,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn ipython_sent_agent_message_maps_the_target_fallback() {
         let mut state = WireMappingState::default();
