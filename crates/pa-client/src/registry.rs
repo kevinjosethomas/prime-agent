@@ -99,12 +99,17 @@ impl AttachmentRegistry {
         revision: Option<u64>,
     ) -> bool {
         let entry = match (revision, self.attachments.get_mut(id)) {
+            // The attempt's own revision: adopt into the live entry.
             (Some(expected), Some(entry)) if entry.revision == expected => entry,
+            // An unguarded attach (no revision tracked): adopt, creating the
+            // entry when the id was never registered.
+            (None, Some(entry)) => entry,
             (None, None) => self.attachments.entry(id.to_string()).or_insert(Attachment {
                 cursor: None,
                 capabilities: capabilities.to_vec(),
                 revision: 0,
             }),
+            // Superseded by a later attempt, or detached: never adopt.
             _ => return false,
         };
         if !capabilities.is_empty() {
@@ -298,14 +303,19 @@ mod tests {
     fn dedupe_within_generation_and_accept_new_generation() {
         let mut registry = AttachmentRegistry::default();
         registry.register("s1", vec!["attach_snapshot".to_string()]);
-        for (generation, sequence) in [("g1", 2), ("g1", 2), ("g1", 1), ("g2", 1)] {
-            let action = registry.observe_frame(&event(generation, sequence));
-            match (generation, sequence) {
-                ("g1", 1) => assert_eq!(action, FrameAction::Dedupe),
-                ("g1", 2) => assert_eq!(action, FrameAction::Deliver),
-                _ => assert_eq!(action, FrameAction::Deliver),
-            }
-        }
+        let actions: Vec<FrameAction> = [("g1", 2), ("g1", 2), ("g1", 1), ("g2", 1)]
+            .iter()
+            .map(|(generation, sequence)| registry.observe_frame(&event(generation, sequence)))
+            .collect();
+        assert_eq!(
+            actions,
+            vec![
+                FrameAction::Deliver,
+                FrameAction::Dedupe,
+                FrameAction::Dedupe,
+                FrameAction::Deliver,
+            ]
+        );
         let (_, entry) = registry.restore_entries().remove(0);
         let cursor = entry.cursor.unwrap();
         assert_eq!(cursor.generation.as_deref(), Some("g2"));
@@ -363,13 +373,21 @@ mod tests {
             &json!({ "lastEventCursor": { "generation": "g", "sequence": 5 } }),
             Some(revision)
         ));
-        // A superseded attempt (the revision moved) never adopts; a detached
-        // attachment never resurrects; a fresh id adopts unguarded.
+        // A superseded attempt never adopts: the revision moved past it.
+        let superseded = registry.bump_revision("s1").unwrap();
+        assert!(superseded > revision);
         assert!(!registry.record_attach(
             "s1",
             &[],
             &json!({ "lastEventCursor": { "generation": "g", "sequence": 9 } }),
             Some(revision)
+        ));
+        // The current attempt still adopts at its own revision.
+        assert!(registry.record_attach(
+            "s1",
+            &[],
+            &json!({ "lastEventCursor": { "generation": "g", "sequence": 6 } }),
+            Some(superseded)
         ));
         registry.forget("s1");
         assert!(!registry.record_attach(
