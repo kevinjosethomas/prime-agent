@@ -343,7 +343,9 @@ async fn compact_run_schedules_inside_a_tool_call_and_status_sees_it() {
 #[tokio::test]
 async fn clear_pending_drops_scheduled_requests() {
     let requests = Arc::new(TurnBoundaryRequests::new());
-    requests.schedule_compaction(Some("summarize".to_string())).await;
+    requests
+        .schedule_compaction(Some("summarize".to_string()))
+        .await;
     requests
         .schedule_refine(PendingRefine {
             instructions: Some("x".to_string()),
