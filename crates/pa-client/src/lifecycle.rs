@@ -788,7 +788,7 @@ fn spawn_restores(
 mod tests {
     use super::*;
     use serde_json::json;
-    use tokio::io::AsyncWriteExt;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
     use tokio::net::UnixListener;
 
     fn config(socket: &std::path::Path) -> LifecycleConfig {
@@ -938,6 +938,12 @@ mod tests {
     #[tokio::test]
     async fn connects_publishes_status_and_streams_frames_with_dedupe() {
         let (mock, listener) = MockSupervisor::new();
+        let socket = listener
+            .local_addr()
+            .expect("bound socket")
+            .as_pathname()
+            .map(|p| p.to_path_buf())
+            .expect("path");
         let attach_data = json!({ "lastEventCursor": { "generation": "g", "sequence": 4 } });
         tokio::spawn(serve(
             listener,
@@ -947,10 +953,6 @@ mod tests {
             attach_data,
             None,
         ));
-        // The mock's socket path: the temp dir was forgotten into the
-        // listener — recover the path from the listener's local addr.
-        let socket = listener.local_addr().expect("bound socket").as_pathname().map(|p| p.to_path_buf()).expect("path");
-
         let (session, mut events) = DaemonClientSession::start(config(&socket)).await.unwrap();
         wait_connected(&mut events).await;
         session.register_attachment("s1", None);
@@ -979,6 +981,12 @@ mod tests {
     #[tokio::test]
     async fn stop_is_prompt_idempotent_and_awaits_the_driver() {
         let (mock, listener) = MockSupervisor::new();
+        let socket = listener
+            .local_addr()
+            .expect("bound socket")
+            .as_pathname()
+            .map(|p| p.to_path_buf())
+            .expect("path");
         tokio::spawn(serve(
             listener,
             Arc::clone(&mock.commands),
@@ -987,12 +995,6 @@ mod tests {
             json!({ "ok": true }),
             None,
         ));
-        let socket = listener
-            .local_addr()
-            .unwrap()
-            .as_pathname()
-            .map(|p| p.to_path_buf())
-            .expect("path");
         let (session, mut events) = DaemonClientSession::start(config(&socket)).await.unwrap();
         wait_connected(&mut events).await;
         // A concurrent stop settles quickly and is idempotent.
