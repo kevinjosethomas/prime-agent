@@ -95,7 +95,7 @@ struct BridgeGuard {
 }
 
 impl std::future::Future for BridgeGuard {
-    type Output = Result<(), tokio::task::JoinError>;
+    type Output = std::result::Result<(), tokio::task::JoinError>;
 
     fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
         // SAFETY: the guard holds no self-referential data (plain Arc and
@@ -206,7 +206,7 @@ impl Inner {
     /// chain marked the connection (checked under the registry lock, so no
     /// late op can escape the drain), else spawns the worker onto the
     /// owned runtime and retains its handle in the registry.
-    fn spawn_tracked<F>(&self, worker: F) -> Result<(), ErrorPayload>
+    fn spawn_tracked<F>(&self, worker: F) -> std::result::Result<(), ErrorPayload>
     where
         F: std::future::Future<Output = ()> + Send + 'static,
     {
