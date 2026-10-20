@@ -2498,7 +2498,7 @@ class FactoryHelpTest(unittest.TestCase):
         # The worked examples bound their emitted payloads — captured answers
         # are capped previews (~160-200 chars), so an unbounded json payload
         # would truncate at the cap, fail to capture, and fail its state.
-        self.assertIn('findings\": [\"at most three one-line findings\"]', doc)
+        self.assertIn(r'findings\": [\"at most three one-line findings\"]', doc)
         self.assertIn("capped at the eight most relevant", doc)
         self.assertIn(
             "an unbounded payload truncates at the cap, fails to capture, "
