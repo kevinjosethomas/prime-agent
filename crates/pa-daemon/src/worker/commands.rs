@@ -137,6 +137,7 @@ impl Worker {
             "set_follow_up_mode" => self.handle_set_queue_mode("set_follow_up_mode", payload),
             "set_auto_retry" => self.handle_set_auto_retry(payload),
             "set_prompt_guidelines" => self.handle_set_prompt_guidelines(payload).await,
+            "set_task_reporter" => Self::handle_set_task_reporter(payload),
             "abort_retry" => self.handle_abort_retry(),
             "get_session_tree" => self.tree_navigation.get_session_tree(),
             "get_user_messages_for_forking" => self.tree_navigation.get_user_messages_for_forking(),

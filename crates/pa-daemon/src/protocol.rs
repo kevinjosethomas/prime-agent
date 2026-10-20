@@ -173,6 +173,7 @@ pub const KNOWN_COMMAND_TYPES: &[&str] = &[
     "list_queued_inputs",
     "mutate_queued_input",
     "set_prompt_guidelines",
+    "set_task_reporter",
     "heartbeat_update_job",
     "set_mcp_connection_label",
 ];
@@ -347,6 +348,7 @@ pub fn default_server_capabilities() -> Vec<DaemonServerCapability> {
                 "subagent_model_defaults",
                 "global_harness_defaults",
                 "prompt_guidelines",
+                "task_reporter",
                 "mcp_multi_account",
                 "workstream_classification",
                 "side_question_transcript",
@@ -946,6 +948,7 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
         // Control-plane commands carry no session selector.
         DaemonCommand::GetGlobalHarnessDefaults { .. }
         | DaemonCommand::SetGlobalHarnessDefaults { .. }
+        | DaemonCommand::SetTaskReporter { .. }
         | DaemonCommand::GetSubagentModelDefault { .. }
         | DaemonCommand::SetSubagentModelDefault { .. }
         | DaemonCommand::List { .. }
@@ -1092,6 +1095,7 @@ pub fn command_type_name(command: &DaemonCommand) -> &'static str {
         DaemonCommand::SetSessionEntryLabel { .. } => "set_session_entry_label",
         DaemonCommand::MarkAnthropicWarningShown { .. } => "mark_anthropic_warning_shown",
         DaemonCommand::SetPromptGuidelines { .. } => "set_prompt_guidelines",
+        DaemonCommand::SetTaskReporter { .. } => "set_task_reporter",
         DaemonCommand::AckResult { .. } => "ack_result",
         DaemonCommand::PrepareUpdateRestart { .. } => "prepare_update_restart",
         DaemonCommand::CommitUpdateRestart { .. } => "commit_update_restart",
@@ -1130,6 +1134,51 @@ mod tests {
             )
             .is_err());
         }
+    }
+
+    #[test]
+    fn set_task_reporter_is_control_plane_strictly_typed_and_advertised() {
+        let parsed = parse_daemon_command_line(
+            &json!({
+                "type": "set_task_reporter",
+                "command": ["/usr/local/bin/Primer", "task-cli.cjs", "--db", "state.sqlite"],
+                "env": {"ELECTRON_RUN_AS_NODE": "1"},
+                "timeout": 15
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert_eq!(command_type_name(&parsed.command), "set_task_reporter");
+        assert_eq!(command_active_session_id(&parsed.command), None);
+        assert!(!pa_types::daemon::is_session_plane_daemon_command(
+            "set_task_reporter"
+        ));
+        assert!(default_server_capabilities().contains(&"task_reporter".to_string()));
+        // Shape errors the typed parse owns. Payload semantics (nonempty argv,
+        // extra-field rejection) belong to the supervisor handler's canonicalize.
+        for bad in [
+            json!({"type": "set_task_reporter"}),
+            json!({"type": "set_task_reporter", "command": ["a", 1]}),
+            json!({"type": "set_task_reporter", "command": ["a"], "env": {"K": 1}}),
+            json!({"type": "set_task_reporter", "command": ["a"], "timeout": "x"}),
+        ] {
+            assert!(
+                parse_daemon_command_line(&bad.to_string()).is_err(),
+                "must reject {bad}"
+            );
+        }
+        // Unknown fields flatten into the catch-all the handler rejects;
+        // the parse itself stays lossless for round-tripping.
+        let parsed = parse_daemon_command_line(
+            &json!({"type": "set_task_reporter", "command": ["a"], "activeSessionId": "sess"})
+                .to_string(),
+        )
+        .unwrap();
+        let DaemonCommand::SetTaskReporter { command, rest, .. } = &parsed.command else {
+            panic!("expected SetTaskReporter");
+        };
+        assert_eq!(command, &vec!["a".to_string()]);
+        assert_eq!(rest.get("activeSessionId"), Some(&json!("sess")));
     }
 
     #[test]

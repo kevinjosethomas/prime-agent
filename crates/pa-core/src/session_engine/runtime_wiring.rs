@@ -231,11 +231,20 @@ pub fn kernel_provisioner(
     on_unavailable_skills: Option<crate::kernel::provisioner::UnavailableSkillsCallback>,
     on_bootstrap_result: Option<crate::kernel::provisioner::KernelBootstrapResultHandler>,
 ) -> Arc<KernelProvisioner> {
-    let mut env = HashMap::with_capacity(3);
+    let mut env = HashMap::with_capacity(4);
     env.insert(
         "PRIME_AGENT_CODING_AGENT_DIR".to_string(),
         agent_dir.to_string_lossy().to_string(),
     );
+    // The trusted tasks-reporter configuration the daemon provisioned (or
+    // forwarded to this worker): rides the kernel env so `import tasks`
+    // self-configures without any prompt-based setup.
+    if let Some(reporter) = crate::kernel::tasks_reporter::current() {
+        env.insert(
+            crate::kernel::tasks_reporter::TASKS_REPORTER_ENV.to_string(),
+            reporter,
+        );
+    }
     for (key, value) in [
         ("RLM_SESSION_DIR", session_artifact_dir.clone()),
         (
