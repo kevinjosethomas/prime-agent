@@ -305,8 +305,10 @@ impl PrimeDaemonClient {
     #[napi]
     pub fn protocol(&self) -> Result<Value> {
         let client = self.inner.client_arc()?;
-        serde_json::to_value(client.protocol())
-            .map_err(|error| transport(format!("serialize protocol info: {error}")))
+        Ok(serde_json::to_value(client.protocol())
+            .map_err(|error| {
+                napi_error(transport(format!("serialize protocol info: {error}")))
+            })?)
     }
 
     #[napi]
