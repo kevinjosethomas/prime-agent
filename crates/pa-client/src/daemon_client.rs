@@ -366,6 +366,175 @@ impl Shared {
     }
 }
 
+/// Every task one connection owns, shared by all clones of the client:
+/// abort/join handles live once per connection, so one clone can never
+/// tear down tasks another clone still uses. `shutdown` is the single
+/// explicit owner of this set; nothing runs on `Drop`.
+#[derive(Default)]
+pub(crate) struct TaskSet {
+    /// One lock guards the death mark AND every handle: registration and
+    /// teardown observe the same state, so a task registered concurrently
+    /// with a shutdown can never escape it (it is aborted at registration
+    /// and RETAINED — the join still owns it).
+    state: Mutex<TaskState>,
+    /// Serializes the join phase: concurrent join callers wait behind the
+    /// in-flight drain instead of racing it.
+    join_lock: tokio::sync::Mutex<()>,
+}
+
+#[derive(Default)]
+struct TaskState {
+    /// Set under `state`'s lock before the aborts run: the atomic death
+    /// mark comes first, the sweep second.
+    done: bool,
+    /// Every owned task in insertion order (supervisor reader and writer
+    /// first, direct pumps after). Aborted handles STAY here until a join
+    /// drains them — dropping one detaches its task.
+    handles: Vec<tokio::task::JoinHandle<()>>,
+}
+
+impl TaskSet {
+    /// Whether shutdown already marked the set dead.
+    fn is_dead(&self) -> bool {
+        self.state.lock().unwrap().done
+    }
+
+    /// Register the supervisor reader/writer handles once. `false` when the
+    /// connection is already dead: the tasks are aborted AND retained, so
+    /// the join owner still drains them — nothing registered is ever
+    /// dropped un-joined.
+    pub(crate) fn register_connection(
+        &self,
+        reader: tokio::task::JoinHandle<()>,
+        writer: tokio::task::JoinHandle<()>,
+    ) -> bool {
+        let mut state = self.state.lock().unwrap();
+        if state.done {
+            reader.abort();
+            writer.abort();
+            state.handles.push(reader);
+            state.handles.push(writer);
+            return false;
+        }
+        state.handles.push(reader);
+        state.handles.push(writer);
+        true
+    }
+
+    /// Register one direct link's pumps, reaping finished handles first.
+    /// `false` when the connection is already dead: the tasks are aborted
+    /// AND retained, so the join owner still drains them.
+    pub(crate) fn register_direct(&self, handles: Vec<tokio::task::JoinHandle<()>>) -> bool {
+        let mut handles = handles;
+        let mut state = self.state.lock().unwrap();
+        if state.done {
+            for handle in &handles {
+                handle.abort();
+            }
+            state.handles.append(&mut handles);
+            return false;
+        }
+        state.handles.retain(|handle| !handle.is_finished());
+        state.handles.append(&mut handles);
+        true
+    }
+
+    /// Mark dead and abort every owned task IN PLACE. `true` when this call
+    /// won the one-shot race. The aborted handles STAY in the set — the
+    /// join drains them; dropping them here would detach the tasks and
+    /// leave `join_tasks` with nothing to await.
+    pub(crate) fn abort_all(&self) -> bool {
+        let mut state = self.state.lock().unwrap();
+        if state.done {
+            return false;
+        }
+        state.done = true;
+        for handle in &state.handles {
+            handle.abort();
+        }
+        true
+    }
+
+    /// Take one drainable handle out under the lock (nothing before
+    /// shutdown — the tasks are live).
+    fn take_one(&self) -> Option<tokio::task::JoinHandle<()>> {
+        let mut state = self.state.lock().unwrap();
+        if !state.done {
+            return None;
+        }
+        state.handles.pop()
+    }
+
+    /// Push an unfinished handle back — a cancelled join's guard re-inserts
+    /// its in-flight handle so a later join still owns it.
+    fn push_back(&self, handle: tokio::task::JoinHandle<()>) {
+        self.state.lock().unwrap().handles.push(handle);
+    }
+
+    /// The join phase, cancellation-safe: every handle is awaited through a
+    /// [`JoinGuard`] that re-inserts it if this future is cancelled
+    /// mid-await — ownership never leaves the set. Returns how many tasks
+    /// this drain awaited to completion. `0` before shutdown; a repeat
+    /// call after a complete drain also returns `0` (it waited behind the
+    /// `join_lock` and found the set empty).
+    pub(crate) async fn join_drain(self: &Arc<Self>) -> usize {
+        if !self.is_dead() {
+            return 0;
+        }
+        let _serial = self.join_lock.lock().await;
+        let mut drained = 0;
+        while let Some(handle) = self.take_one() {
+            let mut guard = JoinGuard {
+                set: self,
+                handle: Some(handle),
+            };
+            // Awaits the task's actual completion; a cancellation of this
+            // future re-inserts the unfinished handle via the guard's Drop.
+            (&mut guard).await;
+            drained += 1;
+        }
+        drained
+    }
+}
+
+/// One join in flight: the awaited handle stays SET-OWNED — if the join
+/// future is cancelled mid-await, `Drop` pushes the unfinished handle back
+/// into the set; only a completed await (the `Ready` arm consumed the
+/// handle) removes it.
+struct JoinGuard<'a> {
+    set: &'a Arc<TaskSet>,
+    handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl std::future::Future for JoinGuard<'_> {
+    type Output = ();
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let Some(handle) = self.handle.as_mut() else {
+            return std::task::Poll::Ready(());
+        };
+        match std::pin::Pin::new(handle).poll(cx) {
+            // Completed: the handle is consumed here — Drop will not re-insert.
+            std::task::Poll::Ready(_) => {
+                self.handle = None;
+                std::task::Poll::Ready(())
+            }
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    }
+}
+
+impl Drop for JoinGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            self.set.push_back(handle);
+        }
+    }
+}
+
 /// A live connection to the daemon supervisor socket, optionally upgraded
 /// with a direct worker link (session-plane commands and events go straight
 /// to the session process; the supervisor stays the control plane).
@@ -383,6 +552,12 @@ pub struct DaemonClient {
     direct: std::sync::Arc<crate::direct_transport::DirectState>,
     /// The supervisor reader's death watch (see `reader_dead`).
     reader_dead_rx: tokio::sync::watch::Receiver<bool>,
+    /// This client's own handle on the shared death watch sender: `shutdown`
+    /// flips the watch for every clone without waiting for the reader's own
+    /// exit.
+    reader_dead_tx: tokio::sync::watch::Sender<bool>,
+    /// The connection's tasks (see [`TaskSet`]).
+    tasks: Arc<TaskSet>,
     /// The transport options this connection was established with (the
     /// raw outbound tap rides the direct reader pumps on upgrade).
     options: DaemonClientOptions,
@@ -443,6 +618,8 @@ impl DaemonClient {
         // the event channel open after the reader exits, so a channel close can
         // never observe a supervisor socket loss.
         let (reader_dead_tx, reader_dead_rx) = tokio::sync::watch::channel(false);
+        let client_dead_tx = reader_dead_tx.clone();
+        let tasks = Arc::new(TaskSet::default());
         let (hello_tx, hello_rx) = oneshot::channel::<Value>();
         let shared = Arc::new(Shared {
             pending: Mutex::new(HashMap::new()),
@@ -451,7 +628,7 @@ impl DaemonClient {
         let reader_shared = Arc::clone(&shared);
 
         // Writer task: serializes one line per write.
-        tokio::spawn(async move {
+        let writer_task = tokio::spawn(async move {
             let mut writer = writer_half;
             while let Some(line) = line_rx.recv().await {
                 let mut payload = line.into_bytes();
@@ -579,6 +756,7 @@ impl DaemonClient {
             .await
             .map_err(|_| {
                 reader_task.abort();
+                writer_task.abort();
                 anyhow!(
                     "Timed out after {HELLO_TIMEOUT_MS}ms waiting for the Prime Agent daemon handshake. Socket: {}.",
                     socket_path.display()
@@ -586,6 +764,7 @@ impl DaemonClient {
             })?
             .map_err(|_| {
                 reader_task.abort();
+                writer_task.abort();
                 anyhow!("the daemon connection closed before the handshake")
             })?;
         let protocol = hello
@@ -598,6 +777,7 @@ impl DaemonClient {
             });
         if protocol.name != DAEMON_PROTOCOL_NAME {
             reader_task.abort();
+            writer_task.abort();
             return Err(anyhow!(
                 "the daemon on {} speaks an unknown protocol \"{}\"",
                 socket_path.display(),
@@ -607,6 +787,9 @@ impl DaemonClient {
         // Envelope protocol version: the shared minimum.
         let version = protocol.version.min(DAEMON_PROTOCOL_VERSION);
 
+        // The handshake succeeded: the reader and writer tasks now belong to
+        // the connection's shared task set (shutdown aborts, join awaits).
+        tasks.register_connection(reader_task, writer_task);
         Ok((
             DaemonClient {
                 socket_path: socket_path.to_path_buf(),
@@ -623,6 +806,8 @@ impl DaemonClient {
                     retained_event_tx,
                 )),
                 reader_dead_rx,
+                reader_dead_tx: client_dead_tx,
+                tasks,
                 options,
             },
             event_rx,
@@ -938,6 +1123,15 @@ impl DaemonClient {
         {
             return Err(DirectRequestError::Capped);
         }
+        // Post-insert death re-check (the supervisor leg's guard): a
+        // shutdown that flipped the watch after this registration refuses
+        // here before the queueing — the pending slot is freed, the
+        // supervisor fallback refuses in turn, and no line is ever queued
+        // to a dying pump.
+        if *self.reader_dead_rx.borrow() {
+            self.shared.pending.lock().unwrap().remove(id);
+            return Err(DirectRequestError::NotSent);
+        }
         if !link.send(frame) {
             self.shared.pending.lock().unwrap().remove(id);
             return Err(DirectRequestError::NotSent);
@@ -1044,9 +1238,17 @@ impl DaemonClient {
         )
         .await
         {
-            Ok(link) => {
-                self.direct.set_link(link);
-                Ok(true)
+            Ok((link, tasks)) => {
+                if self.tasks.register_direct(tasks) {
+                    self.direct.set_link(link);
+                    Ok(true)
+                } else {
+                    // The connection died while the handshake ran: the pumps
+                    // were aborted and retained at registration — the dead
+                    // link is never installed and no upgrade is claimed.
+                    link.close();
+                    Ok(false)
+                }
             }
             Err(_) => Ok(false),
         }
@@ -1068,5 +1270,54 @@ impl DaemonClient {
         let (replacement, _) = mpsc::unbounded_channel::<String>();
         let writer = std::mem::replace(&mut self.writer, replacement);
         let _ = writer.send(String::new());
+    }
+
+    /// True teardown, idempotent, clone-correct: flip the reader-dead watch
+    /// FIRST (the one shared death mark — every clone's request entry and
+    /// post-insert re-check refuse from here on), then abort the supervisor
+    /// reader and writer pump plus every direct-link pump this connection
+    /// ever spawned (aborting drops each task's socket half, so the fd
+    /// closes), and fail every pending request NOW as the uncertain delivery
+    /// class (no daemon-EOF dependency). Unlike [`Self::close`], nothing
+    /// rides on the daemon closing the socket: the tasks are aborted where
+    /// they stand. Nothing runs on `Drop` — the caller owns the teardown
+    /// explicitly.
+    pub fn shutdown(&self) {
+        // The death mark FIRST (the one shared truth — the reader-dead
+        // watch): a request registering after this point fails its
+        // post-insert re-check and never queues (a provable non-delivery),
+        // while every request already registered precedes the sweeps below
+        // and resolves as an uncertain delivery. No pending request can
+        // slip between the mark and the sweep.
+        let _ = self.reader_dead_tx.send(true);
+        if !self.tasks.abort_all() {
+            return;
+        }
+        self.direct.take_event_sender();
+        self.drop_direct();
+        // The sweeps the aborted reader and direct pumps would have run:
+        // every in-flight request resolves as an uncertain delivery.
+        self.shared
+            .fail_pending("daemon_", "the daemon connection closed");
+        self.shared
+            .fail_pending("direct_", "the session connection closed");
+    }
+
+    /// Await the REGISTERED tasks' ends after [`Self::shutdown`] — the
+    /// supervisor reader and writer pumps and every direct-link pump that
+    /// was registered (including any that lost a race with shutdown and
+    /// were aborted at registration). Returns how many this drain awaited
+    /// to completion. Cancellation-safe: a join future dropped mid-drain
+    /// re-inserts its in-flight handle, so a repeated call resumes and
+    /// still owns every task; concurrent callers wait behind the in-flight
+    /// drain. When a drain returns, the connection owns zero REGISTERED
+    /// tasks, timers, or sockets — caller-owned futures (an in-flight
+    /// upgrade handshake, an outstanding request) settle or drop
+    /// separately on their own; a handle registered after a drain (a
+    /// handshake that completed late) is aborted at registration and is
+    /// joined by the NEXT call, so a caller wanting one-shot exactness
+    /// settles its own operations before the final join.
+    pub async fn join_tasks(&self) -> usize {
+        self.tasks.join_drain().await
     }
 }
