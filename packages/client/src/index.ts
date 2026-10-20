@@ -11,7 +11,7 @@ import { loadAddon } from './loader.js';
 // hand-maintained TS wire mirror lives in this wrapper. Type-only SOURCE
 // reference to the generated surface (erased at runtime; the package's
 // dist ships validators, not declarations).
-import type { DaemonCommand, DaemonResponse } from '../client-contract/src/index.js';
+import type { DaemonCommand, DaemonResponse } from '../../client-contract/src/index.js';
 
 interface ConnectOptions {
   /** Bounded frame-queue capacity in frames (default 1024). */
