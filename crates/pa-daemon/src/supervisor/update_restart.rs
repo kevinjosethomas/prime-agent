@@ -258,6 +258,7 @@ impl Supervisor {
                 to_version,
                 created_at_ms: now,
                 ledger: &ledger,
+                tasks_reporter: self.tasks_reporter_config(),
             },
             &snapshots,
         )?;

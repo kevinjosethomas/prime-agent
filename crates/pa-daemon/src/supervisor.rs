@@ -221,6 +221,13 @@ pub struct Supervisor {
     /// cleared by a landed `compaction_end`.
     pub(crate) compaction_journal:
         std::sync::Mutex<Option<crate::compaction_supervision::TerminalCompactionJournal>>,
+    /// The accepted tasks-reporter configuration (canonical JSON, in memory):
+    /// stamped on every worker this supervisor spawns and forwarded to live
+    /// ones on acceptance. The desktop re-pushes it on every reconnect, so a
+    /// daemon restart intentionally starts empty — workers spawned before the
+    /// re-push boot kernels without a reporter, which the Python package
+    /// reports honestly.
+    pub(crate) tasks_reporter: std::sync::Mutex<Option<String>>,
 }
 
 impl Supervisor {
@@ -284,7 +291,16 @@ impl Supervisor {
             passive_scan_pending: std::sync::atomic::AtomicBool::new(false),
             passive_catalog_epoch: std::sync::atomic::AtomicU64::new(0),
             compaction_journal: std::sync::Mutex::new(None),
+            tasks_reporter: std::sync::Mutex::new(None),
         })
+    }
+
+    /// The accepted tasks-reporter configuration, if the desktop pushed one.
+    pub(crate) fn tasks_reporter_config(&self) -> Option<String> {
+        self.tasks_reporter
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Bind the client socket, adopt or relaunch persisted workers, serve.

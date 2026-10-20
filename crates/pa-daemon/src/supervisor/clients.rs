@@ -15,6 +15,11 @@ use super::{
 /// keeps running after its owner's last connection closes.
 const OWNED_WORKER_DISCONNECT_GRACE: Duration = Duration::from_secs(30);
 
+/// Per-worker budget for the `set_task_reporter` fan-out to live residents:
+/// the value also rides the respawn stamp, so a slow worker never blocks the
+/// desktop's ACK for long.
+const TASKS_REPORTER_FORWARD_BUDGET_MS: u64 = 2_000;
+
 async fn write_line<W: AsyncWriteExt + Unpin>(writer: &mut W, value: &Value) -> Result<usize> {
     let mut line = serde_json::to_string(value)?;
     line.push('\n');
@@ -680,6 +685,80 @@ impl Supervisor {
                     ),
                 };
                 (vec![response_line(&response)], false)
+            }
+            DaemonCommand::SetTaskReporter {
+                command,
+                env,
+                timeout,
+                rest,
+                ..
+            } => {
+                let canonical = match (!rest.is_empty(), {
+                    crate::tasks_reporter::canonicalize(command, env.as_ref(), *timeout)
+                }) {
+                    (false, Ok(canonical)) => canonical,
+                    (false, Err(error)) => {
+                        return (
+                            vec![response_line(&response_failure(
+                                Some(&command_id),
+                                &type_name,
+                                &format!("{error:#}"),
+                                None,
+                            ))],
+                            false,
+                        );
+                    }
+                    (true, _) => {
+                        return (
+                            vec![response_line(&response_failure(
+                                Some(&command_id),
+                                &type_name,
+                                "set_task_reporter accepts no extra fields",
+                                None,
+                            ))],
+                            false,
+                        );
+                    }
+                };
+                // Store first: every worker this supervisor spawns from now on
+                // (root creates, rlm children, create_session sessions, crash
+                // respawns) carries the configuration in its launch env.
+                *self
+                    .tasks_reporter
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(canonical.clone());
+                self.note_daemon_event("task_reporter_set", None);
+                // Forward to every live resident worker: its engine stores the
+                // value and injects it into each kernel (re)start's env, so an
+                // existing worker picks the configuration up without a worker
+                // restart. A worker that cannot be reached now still carries
+                // the value on its next spawn (the launch-env stamp above).
+                let residents = self.registry.list().await;
+                for resident in residents {
+                    let worker_id = resident.worker_id.clone();
+                    let forwarded = self
+                        .route_command_typed(
+                            &resident,
+                            "set_task_reporter",
+                            json!({ "config": canonical }),
+                            TASKS_REPORTER_FORWARD_BUDGET_MS,
+                            RouteAdmission::SupervisorInternal,
+                        )
+                        .await;
+                    if forwarded.is_err() {
+                        self.log_line(&format!(
+                            "the set_task_reporter forward to worker {worker_id} did not land; its next spawn replays the configuration"
+                        ));
+                    }
+                }
+                (
+                    vec![response_line(&response_success(
+                        Some(&command_id),
+                        &type_name,
+                        None,
+                    ))],
+                    false,
+                )
             }
             DaemonCommand::GetSubagentModelDefault { rest, .. }
             | DaemonCommand::SetSubagentModelDefault { rest, .. } => {

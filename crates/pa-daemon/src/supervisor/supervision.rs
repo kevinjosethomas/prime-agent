@@ -565,6 +565,7 @@ impl Supervisor {
                     &self.options.socket_path.to_string_lossy(),
                     &uuid::Uuid::new_v4().to_string(),
                     &descriptor,
+                    self.tasks_reporter_config().as_deref(),
                 ),
                 orphan_path,
             )

@@ -110,6 +110,7 @@ mod stop_cleanup;
 pub(crate) mod streaming;
 pub(crate) mod subagent_model_defaults;
 pub mod supervisor;
+pub(crate) mod tasks_reporter;
 pub mod supervisor_link;
 pub(crate) mod supervisor_lost;
 pub(crate) mod supervisor_parent_death;

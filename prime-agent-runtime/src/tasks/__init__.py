@@ -1,124 +1,83 @@
 """RLM-native task state API backed by Primer's local store.
 
-Desktop supplies configure(command=..., env=...) once per kernel. The package
-does not create a separate database, listener, or agent engine. Agent admission
-delegates to native RLM. All state calls are async. Importing performs no I/O
-and requires only the standard library.
+The daemon injects the trusted local reporter configuration into every kernel
+environment it provisions (PRIME_AGENT_INTERNAL_TASKS_REPORTER); the package
+binds that configuration lazily on first use. The package does not create a
+separate database, listener, or agent engine. All state calls are async.
+Importing performs no I/O and requires only the standard library.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+import json
+import os
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from ._client import Client
     from rlm import RLMCreateSessionHandle, RLMSpawnHandle, RLMSubagent
 
-from ._client import Client
 from ._models import Link, Status, Task
-from ._transport import AssignmentError, DeliveryError, Report
 
-__all__ = ["AssignmentError", "Client", "DeliveryError", "Link", "Report", "Status", "Task",
-           "archive", "assign", "assign_messages", "associate", "configuration", "configure", "context",
-           "create", "get", "list", "restore", "retry", "spawn", "start_agent", "sync_agents", "update",
-           "upsert"]
+__all__ = ["Link", "Status", "Task", "create", "get", "list"]
 
-_client: Client | None = None
+#: The trusted env var the daemon stamps on every kernel it provisions.
+_REPORTER_ENV = "PRIME_AGENT_INTERNAL_TASKS_REPORTER"
+
+_client: "Client | None" = None
 
 
-def configure(*, command: Sequence[str], env: Mapping[str, str] | None = None,
-              timeout: float = 15) -> Client:
-    """Bind trusted local reporter argv once, never a command from source content."""
+def _bind(client: "Client | None") -> None:
+    """Internal kernel-bootstrap hook; only ever called with trusted local setup."""
     global _client
-    _client = Client(command=command, env=env, timeout=timeout)
-    return _client
+    _client = client
 
 
-def _configured() -> Client:
+def _configured() -> "Client":
+    global _client
+    if _client is None:
+        raw = os.environ.get(_REPORTER_ENV, "")
+        if raw:
+            _client = _from_environment(raw)
     if _client is None:
         raise RuntimeError("Tasks reporter is not configured; open /root in Primer")
     return _client
 
 
-def configuration() -> dict[str, Any]:
-    """Copy trusted local reporter configuration for another authorized kernel."""
-    return _configured().configuration()
+def _from_environment(raw: str) -> "Client":
+    """Parse the trusted env configuration; never source it from task content."""
+    from ._client import Client
+
+    try:
+        spec = json.loads(raw)
+    except ValueError as error:
+        raise RuntimeError(f"Invalid {REPORTER_ENV} in the kernel environment") from error
+    if not isinstance(spec, dict):
+        raise RuntimeError(f"Invalid {REPORTER_ENV} in the kernel environment")
+    command = spec.get("command")
+    env = spec.get("env")
+    timeout = spec.get("timeout", 15)
+    if (not isinstance(command, list) or not command
+            or not all(isinstance(arg, str) and arg for arg in command)
+            or (env is not None and not isinstance(env, dict))
+            or not isinstance(timeout, (int, float))):
+        raise RuntimeError(f"Invalid {REPORTER_ENV} in the kernel environment")
+    try:
+        return Client(command=command, env=env, timeout=timeout)
+    except ValueError as error:
+        raise RuntimeError(f"Invalid {REPORTER_ENV} in the kernel environment") from error
 
 
-async def context() -> dict[str, Any]:
-    """Read metadata, linked agents and recent turn IDs, without message bodies."""
-    return await _configured().context()
-
-
-async def list(*, status: Status | None = None, parent_id: str | None = None,
-               archived: bool | None = False) -> tuple[Task, ...]:
+async def list(*, status: Status | None = None, archived: bool | None = False) -> tuple[Task, ...]:
     """List visible tasks; archived=True selects hidden ones, None includes all."""
-    return await _configured().list(status=status, parent_id=parent_id, archived=archived)
+    return await _configured().list(status=status, archived=archived)
 
 
 async def get(id: str) -> Task:
-    """Read a current immutable snapshot and async handle by stable ID."""
+    """Read one current immutable snapshot and async handle by stable ID."""
     return await _configured().get(id)
 
 
-async def create(id: str, title: str, **fields: Any) -> Task:
+async def create(id: str, title: str, summary: str = "", description: str = "") -> Task:
     """Create a distinct task; raises when the ID already exists."""
-    return await _configured().create(id, title, **fields)
-
-
-async def upsert(id: str, title: str, **fields: Any) -> Task:
-    """Replace complete state for a stable ID; omitted fields take defaults."""
-    return await _configured().upsert(id, title, **fields)
-
-
-async def update(id: str, **changes: Any) -> Task:
-    """Update named fields without resetting unrelated fields."""
-    return await _configured().update(id, **changes)
-
-
-async def archive(id: str) -> Task:
-    """Hide a task without changing its status or timestamps."""
-    return await _configured().archive(id)
-
-
-async def restore(id: str) -> Task:
-    """Show a task again without changing its status or timestamps."""
-    return await _configured().restore(id)
-
-
-async def associate(task_id: str, session_id: str, *, name: str, role: str = "worker") -> Any:
-    """Link an actual observed Prime Agent session to a task."""
-    return await _configured().associate(task_id, session_id, name=name, role=role)
-
-
-async def assign(task_id: str, agent: RLMCreateSessionHandle | RLMSpawnHandle | RLMSubagent, *, role: str = "worker") -> Any:
-    """Assign an actual native session/spawn handle or RLM roster row to a task."""
-    return await _configured().assign(task_id, agent, role=role)
-
-
-async def spawn(task_id: str, prompt: str, *, name: str, model: str | None = None,
-                thinking: str | None = None, role: str = "worker") -> RLMSpawnHandle:
-    """Spawn a native RLM child and inherit trusted local task setup."""
-    return await _configured().spawn(task_id, prompt, name=name, model=model, thinking=thinking, role=role)
-
-
-async def start_agent(task_id: str, prompt: str, *, name: str, model: str | None = None,
-                      thinking: str | None = None, cwd: str | None = None,
-                      role: str = "worker-parent") -> RLMCreateSessionHandle:
-    """Create an independent native depth-0 agent; this is not an RLM child spawn."""
-    return await _configured().start_agent(task_id, prompt, name=name, model=model,
-                                           thinking=thinking, cwd=cwd, role=role)
-
-
-async def sync_agents(task_id: str) -> tuple[RLMSubagent, ...]:
-    """Observe the direct-child roster once and refresh only already assigned children."""
-    return await _configured().sync_agents(task_id)
-
-
-async def assign_messages(message_ids: Sequence[str], task_id: str | None) -> Any:
-    """Move messages to one task, or to none, as Kevin explicitly asked."""
-    return await _configured().assign_messages(message_ids, task_id)
-
-
-async def retry(report: Report) -> Any:
-    """Retry the same event ID and payload after uncertain delivery."""
-    return await _configured().retry(report)
+    return await _configured().create(id, title, summary=summary, description=description)

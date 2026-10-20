@@ -363,6 +363,32 @@ impl Worker {
         response_success(None, "set_prompt_guidelines", None)
     }
 
+    /// `set_task_reporter { config }` (supervisor-internal forward): store the
+    /// accepted tasks-reporter configuration so every kernel (re)start this
+    /// worker performs carries it in its env — an existing worker picks the
+    /// configuration up without a worker restart; already-running kernels
+    /// only see it after their own restart.
+    pub(crate) fn handle_set_task_reporter(&self, payload: &Value) -> DaemonResponse {
+        let Some(config) = payload.get("config").and_then(Value::as_str) else {
+            return response_failure(
+                None,
+                "set_task_reporter",
+                "set_task_reporter requires a config string",
+                None,
+            );
+        };
+        if config.trim().is_empty() {
+            return response_failure(
+                None,
+                "set_task_reporter",
+                "set_task_reporter requires a nonempty config string",
+                None,
+            );
+        }
+        pa_core::kernel::tasks_reporter::store_forwarded(config);
+        response_success(None, "set_task_reporter", None)
+    }
+
     /// `cycle_thinking_level`: reasoning models cycle their supported levels (the same flow as
     /// `set_thinking_level`); models without reasoning answer success with `null` data.
     pub(crate) async fn handle_cycle_thinking_level(&self) -> DaemonResponse {

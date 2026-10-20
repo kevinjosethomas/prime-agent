@@ -47,6 +47,7 @@ pub fn worker_launch_env(
     supervisor_socket: &str,
     instance_id: &str,
     descriptor: &DaemonWorkerDescriptor,
+    tasks_reporter: Option<&str>,
 ) -> std::collections::BTreeMap<String, String> {
     let cwd = descriptor
         .create_command
@@ -114,6 +115,13 @@ pub fn worker_launch_env(
             crate::worker::WORKER_TELEMETRY_DISABLED_ENV.to_string(),
             "1".to_string(),
         );
+    }
+    // The trusted tasks-reporter configuration the desktop pushed: stamped on
+    // every worker spawn, so the worker's kernels (and only they) inherit it
+    // for free. `None` before the desktop's first push (or after a daemon
+    // restart, until the desktop reconnects and re-pushes).
+    if let Some(reporter) = tasks_reporter {
+        env.insert(crate::worker::TASKS_REPORTER_ENV.to_string(), reporter.to_string());
     }
     env
 }
@@ -474,6 +482,41 @@ use std::io::Write as _;
 mod tests {
     use super::*;
     use serde_json::Map;
+
+    /// A pushed tasks-reporter configuration rides every worker spawn env;
+    /// without one (pre-push or after a daemon restart) the var is absent.
+    #[test]
+    fn worker_launch_env_carries_the_tasks_reporter_configuration() {
+        let descriptor: WorkerDescriptor = serde_json::from_value(json!({
+            "version": 2,
+            "workerId": "wenv",
+            "socketPath": "/tmp/w.sock",
+            "recoveryJournalPath": "/tmp/w.recovery.jsonl",
+            "supervisorSocketPath": "/tmp/d.sock",
+            "authenticationToken": "tok",
+            "rootActiveSessionId": "wenv",
+            "createdAt": "t",
+            "updatedAt": "t",
+            "lifecycle": "starting",
+            "createCommand": {"cwd": "/w"},
+        }))
+        .expect("descriptor");
+        let without = worker_launch_env(Path::new("/agent"), "/tmp/d.sock", "inst", &descriptor, None);
+        assert!(!without.contains_key(crate::worker::TASKS_REPORTER_ENV));
+        let config = r#"{"command":["/primer","--db","state.sqlite"],"env":{},"timeout":15.0}"#;
+        let with = worker_launch_env(
+            Path::new("/agent"),
+            "/tmp/d.sock",
+            "inst",
+            &descriptor,
+            Some(config),
+        );
+        assert_eq!(
+            with.get(crate::worker::TASKS_REPORTER_ENV),
+            Some(&config.to_string()),
+            "the accepted configuration rides the worker env verbatim"
+        );
+    }
 
     #[test]
     fn write_file_atomic_replaces_an_existing_destination() {
