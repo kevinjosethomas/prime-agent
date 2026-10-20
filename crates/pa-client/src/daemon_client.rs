@@ -536,6 +536,45 @@ impl Drop for JoinGuard<'_> {
     }
 }
 
+/// The pre-handshake spawn ownership: the reader and writer tasks exist
+/// from their spawn until the handshake resolves, but the connect future can
+/// be CANCELLED at the hello await (a select arm, a dropped future) — an
+/// unguarded drop would detach both tasks with the socket halves and every
+/// channel sender they hold (the tap, the event channel) still alive. The
+/// guard aborts whatever it still owns at Drop; the handshake's success
+/// path RELEASES both into the connection's TaskSet first.
+struct HandshakeTasks {
+    reader: Option<tokio::task::JoinHandle<()>>,
+    writer: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl HandshakeTasks {
+    /// Transfer both tasks into the connection's TaskSet (the guard then
+    /// owns nothing and its Drop aborts nothing).
+    fn release(mut self, tasks: &TaskSet) -> bool {
+        let reader = self.reader.take();
+        let writer = self.writer.take();
+        match (reader, writer) {
+            (Some(reader), Some(writer)) => tasks.register_connection(reader, writer),
+            _ => false,
+        }
+    }
+}
+
+impl Drop for HandshakeTasks {
+    fn drop(&mut self) {
+        // Cancellation of the connect future (or a handshake failure): the
+        // tasks are ABORTED where they stand, their socket halves and
+        // senders dropping with them.
+        if let Some(reader) = self.reader.take() {
+            reader.abort();
+        }
+        if let Some(writer) = self.writer.take() {
+            writer.abort();
+        }
+    }
+}
+
 /// A live connection to the daemon supervisor socket, optionally upgraded
 /// with a direct worker link (session-plane commands and events go straight
 /// to the session process; the supervisor stays the control plane).

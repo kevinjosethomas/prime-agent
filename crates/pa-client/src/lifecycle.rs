@@ -343,9 +343,13 @@ impl DaemonClientSession {
             }),
             DaemonCommand::Detach {
                 active_session_id, ..
-            } => active_session_id
-                .clone()
-                .map(|id| Bookkeeping::Detach { id }),
+            } => {
+                let id = active_session_id.clone()?;
+                // Invalidate any in-flight attach attempt BEFORE the await: a
+                // racing attach response can never adopt past the detach.
+                registry.invalidate(&id);
+                Some(Bookkeeping::Detach { id })
+            }
             DaemonCommand::Kill {
                 active_session_id, ..
             } => Some(Bookkeeping::Detach {
@@ -476,6 +480,9 @@ async fn driver_run(
         let Some(state) = session.upgrade() else {
             break; // Handles and consumer gone: nothing to serve.
         };
+        if stopped(&state, &cancel) {
+            break;
+        }
         // A pending backoff sleeps FIRST — cancellation and consumer death
         // are select arms — then the window check and the next attempt's
         // delay happen before the connect below.
@@ -494,7 +501,7 @@ async fn driver_run(
             let window = config.reconnect.window_for(kind);
             delay = delay.saturating_mul(2).min(window.max_delay);
         }
-        if client.is_none() {
+        if client.is_none() && !stopped(&state, &cancel) {
             publish(&state, |status| status.state = ConnectionState::Connecting);
             let mut transport = config.transport.clone();
             let (tap_tx, tap_rx) = mpsc::unbounded_channel::<Value>();
@@ -522,6 +529,15 @@ async fn driver_run(
             };
             match result {
                 Ok((fresh, _legacy_events)) => {
+                    // The persistent gate: a stop that landed during the
+                    // connect settles the fresh connection instead of
+                    // installing it — no install-after-stop, no stale
+                    // Connected status.
+                    if stopped(&state, &cancel) {
+                        fresh.shutdown();
+                        fresh.join_tasks().await;
+                        break;
+                    }
                     // A new connection is a new epoch: every in-flight
                     // operation from the prior connection abandons.
                     let epoch = state.epoch.fetch_add(1, Ordering::SeqCst) + 1;
@@ -595,12 +611,16 @@ async fn driver_run(
             }
         }
     }
-    // The settle (stop or teardown): true-cancel the restore tasks (never a
-    // wedged await), join them, then the final core join of the live
-    // connection — the driver's own clone, so stop()'s slot-take can never
-    // orphan the join. Every stop returns only after the mark below flips.
+    // The settle (stop, consumer gone, or weak death): refuse new requests
+    // and mark the terminal state FIRST, true-cancel the restore tasks
+    // (never a wedged await), join them, then the final core join — the
+    // driver's retained clone AND the request-path slot are both taken, so
+    // neither survives the settle. Every stop returns only after the mark
+    // below flips.
     if let Some(state) = session.upgrade() {
-        let handles = std::mem::take(&mut restore_handles);
+        state.stopping.store(true, Ordering::SeqCst);
+        state.epoch.fetch_add(1, Ordering::SeqCst);
+        let mut handles = std::mem::take(&mut restore_handles);
         for handle in &handles {
             handle.abort();
         }
@@ -608,15 +628,31 @@ async fn driver_run(
             let _ = handle.await;
         }
         let mut effective = client.take();
+        let residue = state.client.write().await.take();
         if effective.is_none() {
-            effective = state.client.write().await.take();
+            effective = residue;
         }
         if let Some(client) = effective {
             client.shutdown();
             client.join_tasks().await;
         }
+        // The terminal snapshot: no request clones a client afterwards, and
+        // the sync status() never says Connected past completion.
+        {
+            let mut status = state.status.write().unwrap();
+            status.state = ConnectionState::Disconnected;
+            status.error.get_or_insert_with(|| "the session stopped".to_string());
+            let _ = state.events.send(ConnectionEvent::Status(status.clone()));
+        }
         state.stopped.send_replace(true);
     }
+}
+
+/// The persistent stopping check: the watch's `changed()` only fires on a
+/// transition, so every state — sleep, connect, install — reads the truth
+/// directly (the flag, or the cancel watch's current value).
+fn stopped(state: &Arc<SessionState>, cancel: &watch::Receiver<bool>) -> bool {
+    state.stopping.load(Ordering::SeqCst) || *cancel.borrow()
 }
 
 /// Publish the window expiry: a typed event and the terminal status. The
@@ -669,15 +705,26 @@ async fn service(
             () = state.events.closed() => return ServiceEnd::Stop,
             _ = dead.changed() => {
                 if *dead.borrow() {
+                    // The epoch moves FIRST: every in-flight operation and
+                    // response of the lost connection is invalidated before
+                    // anything else runs, so no stale adoption window exists.
+                    state.epoch.fetch_add(1, Ordering::SeqCst);
+                    // The loss's restore tasks are cancelled and joined now:
+                    // they held old-connection clones and cannot emit stale
+                    // outcomes afterwards.
+                    let mut stale = std::mem::take(restore_handles);
+                    for handle in &stale {
+                        handle.abort();
+                    }
+                    for handle in stale {
+                        let _ = handle.await;
+                    }
                     // The prior connection's registered tasks are joined
-                    // NOW: no swap leaves a prior join behind — and the
-                    // epoch moves with the loss, so an old response can
-                    // never adopt while the session is disconnected.
+                    // NOW: no swap leaves a prior join behind.
                     if let Some(client) = state.client.write().await.take() {
                         client.shutdown();
                         client.join_tasks().await;
                     }
-                    state.epoch.fetch_add(1, Ordering::SeqCst);
                     return ServiceEnd::Loss(announced.take().unwrap_or(ReconnectKind::Lost));
                 }
             }
@@ -702,6 +749,11 @@ async fn service(
                 }
             }
             outcome = restore_rx.recv() => {
+                // Finished restore handles are reaped on EVERY outcome: the
+                // outcome channel never closes (the driver holds a sender),
+                // so completed handles must not accumulate across
+                // reconnects.
+                restore_handles.retain(|handle| !handle.is_finished());
                 match outcome {
                     Some(RestoreOutcome::Done { id, data }) => {
                         let _ = state.events.send(ConnectionEvent::Reattached {
@@ -715,11 +767,7 @@ async fn service(
                             error,
                         });
                     }
-                    Some(RestoreOutcome::Abandoned) => {}
-                    // All restore senders dropped: reap finished handles.
-                    None => {
-                        restore_handles.retain(|handle| !handle.is_finished());
-                    }
+                    Some(RestoreOutcome::Abandoned) | None => {}
                 }
             }
         }
@@ -1415,19 +1463,28 @@ mod tests {
         let listener = UnixListener::bind(&socket).unwrap();
         let accepted = Arc::new(AtomicBool::new(false));
         let eof = Arc::new(AtomicBool::new(false));
+        let reader_gone = Arc::new(AtomicBool::new(false));
         {
             let accepted = Arc::clone(&accepted);
             let eof = Arc::clone(&eof);
+            let reader_gone = Arc::clone(&reader_gone);
             tokio::spawn(async move {
                 let (stream, _) = listener.accept().await.expect("accept");
                 accepted.store(true, Ordering::SeqCst);
-                let (mut reader, _writer) = stream.into_split();
+                let (mut reader, mut writer) = stream.into_split();
                 let mut chunk = [0u8; 64];
                 match reader.read(&mut chunk).await {
                     Ok(0) | Err(_) => {
                         eof.store(true, Ordering::SeqCst);
                     }
                     Ok(_) => {}
+                }
+                // The write half closed above; the read half must close too
+                // (the handshake guard aborts the reader task): this write
+                // errors only when the client's read half is gone — the
+                // reader-completion proof, not just the writer's shutdown.
+                if writer.write_all(b"x").await.is_err() {
+                    reader_gone.store(true, Ordering::SeqCst);
                 }
             });
         }
@@ -1442,12 +1499,12 @@ mod tests {
         // Drop the consumer: the driver must tear the hung connection down.
         drop(events);
         tokio::time::timeout(Duration::from_secs(10), async {
-            while !eof.load(Ordering::SeqCst) {
+            while !(eof.load(Ordering::SeqCst) && reader_gone.load(Ordering::SeqCst)) {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
         .await
-        .expect("the hung connection ended when the consumer dropped");
+        .expect("the hung connection's BOTH halves ended when the consumer dropped");
         session.stop().await;
     }
 

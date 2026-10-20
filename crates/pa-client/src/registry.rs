@@ -113,6 +113,26 @@ impl AttachmentRegistry {
         token
     }
 
+    /// Invalidate an id's in-flight attempt WITHOUT dropping the entry
+    /// (detach/kill at SEND time): the fresh token leaves a racing attach
+    /// response's old token dangling, so it can never adopt.
+    pub(crate) fn invalidate(&mut self, id: &str) {
+        self.attempts += 1;
+        if let Some(entry) = self.attachments.get_mut(id) {
+            entry.attempt = self.attempts;
+        }
+    }
+
+    /// Abandon a fresh attach attempt that failed or was cancelled: the
+    /// intent slot is removed only when it still holds THIS attempt's
+    /// token (a re-attempt's intent survives). Without it, failed fresh
+    /// ids would accumulate unbounded.
+    pub(crate) fn abandon(&mut self, id: &str, token: u64) {
+        if self.intents.get(id) == Some(&token) {
+            self.intents.remove(id);
+        }
+    }
+
     /// Drop an attachment and every marker and intent it owns
     /// (detach/kill/close): an in-flight attempt's token dangles and can
     /// never adopt afterwards.
@@ -316,9 +336,17 @@ impl AttachmentRegistry {
         ) else {
             return FrameAction::Deliver;
         };
-        if let Some(entry) = self.attachments.remove(previous) {
+        if let Some(mut entry) = self.attachments.remove(previous) {
+            // The cursor's session id follows the rebind (the desktop
+            // machine's insert replaces any entry under the new id).
+            if let Some(cursor) = entry.cursor.as_mut() {
+                cursor.active_session_id = Some(next.to_string());
+            }
             self.attachments.insert(next.to_string(), entry);
-            self.order.retain(|registered| registered != previous);
+            // One order slot for the bound id — a pre-existing entry under
+            // `next` was replaced, never duplicated.
+            self.order
+                .retain(|registered| registered != previous && registered != next);
             self.order.push(next.to_string());
         }
         // The marker and the fresh intent follow the attachment: the bound

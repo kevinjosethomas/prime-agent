@@ -2299,3 +2299,60 @@ async fn dropped_mid_flight_upgrade_leaves_no_residual_tasks() {
     assert_eq!(drained, 2, "exactly the supervisor pair — zero residual");
     let _ = supervisor.await;
 }
+
+#[tokio::test]
+async fn a_cancelled_connect_aborts_its_spawned_tasks() {
+    // The handshake guard's proof: the reader and writer tasks are spawned
+    // BEFORE the hello await; cancelling the connect future there drops
+    // their handles — the guard ABORTS both, and BOTH socket halves close.
+    // The mock observes the write half's EOF (its read) AND the read
+    // half's closure (its write erroring).
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let write_failed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let read_ended = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let failed = std::sync::Arc::clone(&write_failed);
+    let ended = std::sync::Arc::clone(&read_ended);
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let (mut reader, mut writer) = stream.into_split();
+        let mut chunk = [0u8; 64];
+        // The write half closes first (the writer pump aborts): EOF here.
+        match reader.read(&mut chunk).await {
+            Ok(0) | Err(_) => {
+                ended.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            Ok(_) => {}
+        }
+        // The read half closes too (the reader task aborts): this write
+        // must error — a live reader would just buffer it.
+        writer
+            .write_all(b"x")
+            .await
+            .expect_err("the client's read half is gone");
+        failed.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+
+    // Drive the connect into its hello wait, then cancel the future: the
+    // guard must abort the spawned tasks (the pre-fix code detached them,
+    // and this write below would have buffered forever).
+    let connect = DaemonClient::connect_with_options(&socket, DaemonClientOptions::default());
+    tokio::pin!(connect);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), &mut connect)
+            .await
+            .is_err(),
+        "the never-greeting daemon keeps the connect pending"
+    );
+    // The future is dropped here (the elapsed timeout discards it).
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !(read_ended.load(std::sync::atomic::Ordering::SeqCst)
+            && write_failed.load(std::sync::atomic::Ordering::SeqCst))
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("both halves closed: reader AND writer were aborted");
+}
