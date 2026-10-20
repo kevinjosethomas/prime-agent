@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+# `list` below names the catalog call, so the builtin stays reachable for checks.
+_builtin_list = list
+
 
 @dataclass(frozen=True)
 class Heartbeat:
@@ -71,7 +74,7 @@ async def list(include_inactive: bool = False) -> list[Heartbeat]:
         raise TypeError(f"include_inactive must be bool, got {type(include_inactive).__name__}")
     response = await _host_request("rlm_heartbeat.list", {"include_inactive": include_inactive})
     rows = response.get("heartbeats")
-    if not isinstance(rows, list):
+    if not isinstance(rows, _builtin_list):
         raise RuntimeError("rlm_heartbeat.list returned an invalid heartbeats list")
     return [_from_row(row) for row in rows]
 
