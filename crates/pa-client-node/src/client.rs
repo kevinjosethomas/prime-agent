@@ -262,15 +262,34 @@ impl PrimeDaemonClient {
 
     #[napi]
     pub async fn next_frame(&self) -> Result<Option<Value>> {
-        if self.inner.overflow.load(Ordering::SeqCst) {
-            return Err(overflow());
-        }
         let mut receiver = self.inner.frame_rx.try_lock().map_err(|_| {
             transport("a frame pull is already pending: nextFrame is single-consumer".to_string())
         })?;
-        match receiver.recv().await {
-            Some(frame) => Ok(Some(frame)),
-            None => {
+        // The wakeup is BINDING-OWNED: register on the teardown notify
+        // BEFORE checking the flags, then race the queue against the wake —
+        // the pull never depends on the core channel closing (whose chain
+        // rides on socket EOF).
+        let notified = self.inner.teardown.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if self.inner.overflow.load(Ordering::SeqCst) {
+            return Err(overflow());
+        }
+        if self.inner.teardown_cause().is_some() {
+            return Ok(None);
+        }
+        tokio::select! {
+            frame = receiver.recv() => match frame {
+                Some(frame) => Ok(Some(frame)),
+                None => {
+                    if self.inner.overflow.load(Ordering::SeqCst) {
+                        Err(overflow())
+                    } else {
+                        Ok(None)
+                    }
+                }
+            },
+            _ = &mut notified => {
                 if self.inner.overflow.load(Ordering::SeqCst) {
                     Err(overflow())
                 } else {
@@ -467,15 +486,26 @@ pub async fn connect(
         let frame_tx = frame_tx;
         let mut tap_rx = tap_rx;
         bridge(async move {
-            while let Some(frame) = tap_rx.recv().await {
-                if frame_tx.try_send(frame).is_err() {
-                    inner.teardown(true, "the frame queue overflowed");
-                    break;
+            // The pump also exits on the binding-owned teardown wake (the
+            // core tap closing is NOT a teardown trigger here: its chain
+            // rides on socket EOF, which is the shutdown PR's to prove).
+            let notified = inner.teardown.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            loop {
+                tokio::select! {
+                    maybe = tap_rx.recv() => match maybe {
+                        Some(frame) => {
+                            if frame_tx.try_send(frame).is_err() {
+                                inner.teardown(true, "the frame queue overflowed");
+                                break;
+                            }
+                        }
+                        None => break,
+                    },
+                    _ = &mut notified => break,
                 }
             }
-            // The core client was released (tap closed) or overflow tore it
-            // down: dropping this sender wakes a pending nextFrame with
-            // end-of-stream (null) or the sticky overflow error.
         });
     }
     // The typed event channel is unbound from JS (no TUI enum serde, no
