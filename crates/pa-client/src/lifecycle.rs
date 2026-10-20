@@ -204,11 +204,7 @@ impl DaemonClientSession {
             events: event_tx,
             driver: tokio::sync::Mutex::new(None),
         });
-        let driver = tokio::spawn(driver_run(
-            Arc::downgrade(&state),
-            config,
-            cancel_rx,
-        ));
+        let driver = tokio::spawn(driver_run(Arc::downgrade(&state), config, cancel_rx));
         *state.driver.lock().await = Some(driver);
         Ok((DaemonClientSession { state }, event_rx))
     }
@@ -320,14 +316,17 @@ impl DaemonClientSession {
                 revision: registry.bump_revision(active_session_id),
             }),
             DaemonCommand::Reattach {
-                target_active_session_id, ..
+                target_active_session_id,
+                ..
             } => Some(Bookkeeping::Attach {
                 id: target_active_session_id.clone(),
                 revision: registry.bump_revision(target_active_session_id),
             }),
             DaemonCommand::Detach {
                 active_session_id, ..
-            } => active_session_id.clone().map(|id| Bookkeeping::Detach { id }),
+            } => active_session_id
+                .clone()
+                .map(|id| Bookkeeping::Detach { id }),
             DaemonCommand::Kill {
                 active_session_id, ..
             } => Some(Bookkeeping::Detach {
@@ -407,8 +406,14 @@ fn validate(config: &LifecycleConfig) -> Result<()> {
 
 /// One restore attempt's outcome, consumed by the driver loop.
 enum RestoreOutcome {
-    Done { id: String, data: Value },
-    Failed { id: String, error: String },
+    Done {
+        id: String,
+        data: Value,
+    },
+    Failed {
+        id: String,
+        error: String,
+    },
     /// The connection epoch moved (a swap or a stop): the attempt is moot
     /// and nothing adopts.
     Abandoned,
@@ -467,9 +472,7 @@ async fn driver_run(
                             })
                             .unwrap_or_default();
                     });
-                    spawn_restores(
-                        &state, &config, epoch, &restore_tx, &mut restore_handles,
-                    );
+                    spawn_restores(&state, &config, epoch, &restore_tx, &mut restore_handles);
                     match service(
                         &state,
                         &config,
@@ -531,7 +534,6 @@ async fn driver_run(
     }
 }
 
-
 /// One backoff tick: sleep with cancellation/consumer-death arms, then
 /// expiry (a typed event; the driver stops) and the doubling delay.
 /// Returns `false` when the driver must stop.
@@ -558,13 +560,18 @@ async fn backoff_tick(
         .and_then(|state| state.deadline)
         .is_some_and(|deadline| tokio::time::Instant::now() > deadline);
     if expired {
-        let kind = backoff.as_ref().map_or(ReconnectKind::Lost, |state| state.kind);
+        let kind = backoff
+            .as_ref()
+            .map_or(ReconnectKind::Lost, |state| state.kind);
         let _ = state
             .events
             .send(ConnectionEvent::ReconnectExpired { kind });
         publish(state, |status| {
             status.state = ConnectionState::Expired;
-            status.error = Some(format!("the {} reconnect window expired", window_name(kind)));
+            status.error = Some(format!(
+                "the {} reconnect window expired",
+                window_name(kind)
+            ));
         });
         return false;
     }
@@ -727,7 +734,9 @@ fn spawn_restores(
             let attempt = async {
                 let client = {
                     let guard = state.client.read().await;
-                    guard.clone().ok_or_else(|| anyhow!("the session is not connected"))?
+                    guard
+                        .clone()
+                        .ok_or_else(|| anyhow!("the session is not connected"))?
                 };
                 let command = DaemonCommand::Attach {
                     id: None,
@@ -782,7 +791,6 @@ fn spawn_restores(
         }));
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -895,9 +903,7 @@ mod tests {
         }
     }
 
-    async fn next_event(
-        events: &mut mpsc::UnboundedReceiver<ConnectionEvent>,
-    ) -> ConnectionEvent {
+    async fn next_event(events: &mut mpsc::UnboundedReceiver<ConnectionEvent>) -> ConnectionEvent {
         tokio::time::timeout(Duration::from_secs(10), events.recv())
             .await
             .expect("an event arrives")
@@ -1016,7 +1022,10 @@ mod tests {
             })
             .await
             .unwrap_err();
-        assert!(crate::daemon_client::is_command_not_sent(&error), "unexpected: {error}");
+        assert!(
+            crate::daemon_client::is_command_not_sent(&error),
+            "unexpected: {error}"
+        );
     }
 
     #[tokio::test]
@@ -1035,9 +1044,7 @@ mod tests {
             loop {
                 match next_event(&mut events).await {
                     ConnectionEvent::ReconnectExpired { .. } => return,
-                    ConnectionEvent::Status(status)
-                        if status.state == ConnectionState::Expired =>
-                    {
+                    ConnectionEvent::Status(status) if status.state == ConnectionState::Expired => {
                         return;
                     }
                     _ => {}

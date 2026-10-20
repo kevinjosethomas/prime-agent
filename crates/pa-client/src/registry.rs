@@ -288,7 +288,6 @@ impl AttachmentRegistry {
             })
             .collect()
     }
-
 }
 
 /// The wire shape of a snapshot's `lastEventCursor`.
