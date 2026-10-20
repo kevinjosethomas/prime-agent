@@ -137,7 +137,7 @@ launch path must keep that test red-first.
   (2) interactive behavior — the same input handled identically (keys, mouse, timing); 
   (3) wire parity — byte-compare the TS daemon's traffic for protocol changes; (4) user-visible
   invariants — every user action produces the same visible reaction as TS (`/compact` shows
-  started+completed; `/model` shows the selector; a refinement shows its decoration). A feature
+  started+completed; `/model` shows the selector). A feature
   that "works" but was never diffed against the TS binary does not pass review. If TS shows it,
   Rust shows it identically; if Rust shows something TS does not, that is also a parity bug.
 - PRs must state ownership compliance (crate README scope/non-goals/public API, dependency
@@ -176,7 +176,7 @@ EXPLICIT EXCEPTION: wire-protocol identifiers that must stay byte-compatible wit
 
 - Tools exposed to the model: `bash`, `edit`, `python_repl` (internal helpers: `rename`, `stdout`).
 - RLM kernel API in the persistent Python REPL: `rlm.spawn/find_models/collect/list_subagents/delete_subagent/create_session/progress_note`, `agent_message.send`, `agent_observe`, `compact`, `goal`, `attach_image`, skills (markdown + Python) per the skill contract in the base system prompt.
-- System prompt structure: layered — cache-stable static layer files (core harness description with the full API surface, mandatory usage rules, opinionated guidelines, per-model additions from the model-prompts TOML rule map) followed by one dynamic tail (packages, project context, skills inventory, MCP servers, environment, session role); the harness digest stays a separate `[harness-digest]` user message. `prime-agent prompt` dumps the assembled prompt with its layer breakdown.
+- System prompt structure: layered — cache-stable static layer files (core harness description with the full API surface, mandatory usage rules, opinionated guidelines, per-model additions from the model-prompts TOML rule map) followed by one dynamic tail (packages, project context, skills inventory, MCP servers, environment, session role). `prime-agent prompt` dumps the assembled prompt with its layer breakdown.
 - CLI shape: `prime-agent` with the same commands/flags as the TS product; headless modes (RPC/daemon/session-worker) with identical behavior.
 
 ## Crates
