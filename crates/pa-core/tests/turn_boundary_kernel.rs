@@ -138,7 +138,7 @@ async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
     ]);
 
     // A persisted session with a local harness state dir, like the
-    // daemon's depth-0 sessions (TS `_autoRefineAllowedForSession`).
+    // daemon's depth-0 sessions.
     let mut session = SessionManager::in_memory(&cwd);
     session.materialize_session_file(Some(sessions_dir));
 
