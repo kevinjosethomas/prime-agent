@@ -1685,11 +1685,10 @@ mod tests {
         );
         drop(stop);
         release.notify_one();
-        let result = tokio::time::timeout(Duration::from_secs(10), session.stop())
+        tokio::time::timeout(Duration::from_secs(10), session.stop())
             .await
             .expect("the fresh stop settles")
             .expect("the driver completed its settle honestly");
-        let _ = result;
         // The connection is really torn down: the second stop returns only
         // after the settle, and the session refuses requests afterwards.
         let error = session
@@ -1816,10 +1815,10 @@ mod tests {
         // (the panic shape): EVERY stop returns the same honest Err — the
         // memo is read, never consumed — including stops issued AFTER the
         // first observation.
-        let dir = tempfile::TempDir::new().unwrap();
-        let socket = dir.path().join("d.sock");
-        let config = config(std::path::Path::new("/dev/null"));
-        let (session, _events) = DaemonClientSession::start(config).await.unwrap();
+        let (session, _events) =
+            DaemonClientSession::start(config(std::path::Path::new("/dev/null")))
+                .await
+                .unwrap();
         // Kill the driver task WITHOUT the settle: the handle is replaced by
         // a probe that aborts the real driver (no mark, no memo).
         {

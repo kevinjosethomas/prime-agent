@@ -2390,9 +2390,8 @@ async fn an_oversized_hello_line_fails_under_the_cap() {
         },
     )
     .await;
-    let error = match result {
-        Ok(_) => panic!("the oversized hello line must be refused"),
-        Err(error) => error,
+    let Err(error) = result else {
+        panic!("the oversized hello line must be refused")
     };
     assert!(
         error.to_string().contains("exceeded the limit"),
@@ -2428,9 +2427,8 @@ async fn an_oversized_pre_hello_frame_fails_under_the_cap() {
         },
     )
     .await;
-    let error = match result {
-        Ok(_) => panic!("the oversized pre-hello line must be refused"),
-        Err(error) => error,
+    let Err(error) = result else {
+        panic!("the oversized pre-hello line must be refused")
     };
     assert!(
         error.to_string().contains("exceeded the limit"),
