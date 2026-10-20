@@ -36,7 +36,9 @@ test('nextFrame yields raw frames verbatim, unknown types included, in order', a
 
 test('nextFrame is single-consumer: a concurrent pull rejects', async () => {
   const socketPath = tmpSocket('single');
-  const stop = await startMock(socketPath, 'events');
+  // An echo mock pushes no frames: the first pull stays genuinely pending
+  // so the concurrent pull hits the single-consumer gate.
+  const stop = await startMock(socketPath, 'echo');
   const connection = await DaemonConnection.connect(socketPath);
   const pending = connection.nextFrame();
   await assert.rejects(connection.nextFrame(), (error) => /single-consumer/.test(error.message));

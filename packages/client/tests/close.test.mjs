@@ -8,16 +8,26 @@ test('close resolves after pending request, upgrade, and pull are all torn down'
   const socketPath = tmpSocket('close-full');
   const stop = await startMock(socketPath, 'silent');
   const connection = await DaemonConnection.connect(socketPath);
-  const pendingRequest = connection.request(GET_CONNECTION_STATE, 60_000);
+  // Handlers attach at creation: the teardown rejections must not pass
+  // through an unhandled window.
+  const pendingRequest = connection
+    .request(GET_CONNECTION_STATE, 60_000)
+    .then(
+      () => {
+        throw new Error('the request should have been torn down');
+      },
+      (error) => error,
+    );
   const pendingUpgrade = connection.upgradeDirect('active-1');
   const pendingFrame = connection.nextFrame();
   const pendingStatus = connection.nextStatus();
   await connection.close();
   // The close promise resolved: the registry drained and the core task set
   // joined for real.
-  await assert.rejects(
-    pendingRequest,
-    (error) => error instanceof UncertainError && error.cause === 'closed',
+  const requestError = await pendingRequest;
+  assert.ok(
+    requestError instanceof UncertainError && requestError.cause === 'closed',
+    `unexpected class: ${requestError?.kind}`,
   );
   assert.equal(await pendingUpgrade, false);
   assert.equal(await pendingFrame, null);

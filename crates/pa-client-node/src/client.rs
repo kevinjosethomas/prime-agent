@@ -181,11 +181,16 @@ impl Inner {
 
     fn closed_refusal(&self) -> ErrorPayload {
         if self.overflow.load(Ordering::SeqCst) {
-            not_sent(
+            let mut payload = not_sent(
                 "the connection was torn down after the frame queue overflowed; the command was never queued".to_string(),
-            )
+            );
+            payload.cause = Some("overflow");
+            payload
         } else {
-            not_sent("the client is closed; the command was never queued".to_string())
+            let mut payload =
+                not_sent("the client is closed; the command was never queued".to_string());
+            payload.cause = Some("closed");
+            payload
         }
     }
 

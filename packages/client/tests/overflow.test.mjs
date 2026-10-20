@@ -13,12 +13,20 @@ test('a full frame queue tears the connection down with a sticky Overflow', asyn
   const socketPath = tmpSocket('overflow');
   const stop = await startMock(socketPath, 'flood');
   const connection = await DaemonConnection.connect(socketPath, { frameBuffer: 2 });
-  // Do NOT drain: the mock floods; the pump fills the bounded queue and
-  // fails closed. The overflow surfaces to the first pull.
-  await assert.rejects(
-    connection.nextFrame(),
-    (error) => error instanceof OverflowError,
-  );
+  // The mock floods; the pump fills the bounded queue and fails closed.
+  // Frames queued before the terminal mark may drain first — then the
+  // sticky OverflowError surfaces and no further frame is observable.
+  let sawOverflow = false;
+  for (let i = 0; i < 512; i += 1) {
+    try {
+      await connection.nextFrame();
+    } catch (error) {
+      if (!(error instanceof OverflowError)) throw error;
+      sawOverflow = true;
+      break;
+    }
+  }
+  assert.ok(sawOverflow, 'the terminal overflow error never surfaced');
   // Sticky: every later pull observes the terminal error, not a stream.
   await assert.rejects(connection.nextFrame(), (error) => error instanceof OverflowError);
   assert.equal(connection.currentStatus().type, 'overflow');
