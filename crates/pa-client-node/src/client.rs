@@ -104,7 +104,7 @@ impl std::future::Future for BridgeGuard {
         let Some(handle) = this.handle.as_mut() else {
             return std::task::Poll::Ready(Ok(()));
         };
-        match handle.poll(cx) {
+        match std::pin::Pin::new(handle).poll(cx) {
             std::task::Poll::Ready(outcome) => {
                 this.handle = None;
                 std::task::Poll::Ready(outcome)
@@ -719,7 +719,7 @@ pub async fn connect(
         frame_tx: Mutex::new(Some(frame_tx.clone())),
         frame_rx: tokio::sync::Mutex::new(frame_rx),
         teardown: Arc::new(Notify::new()),
-        bridges: BridgeHandles::default(),
+        bridges: BridgeRegistry::default(),
         close_state: std::sync::Mutex::new(CloseState::Open),
         close_done,
         overflow: AtomicBool::new(false),
