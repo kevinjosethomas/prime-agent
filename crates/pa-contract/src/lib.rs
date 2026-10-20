@@ -481,42 +481,103 @@ pub fn mutation_candidates(stem: &str, schema: &Value, witness: &Value) -> Vec<(
     out
 }
 
-/// Nested branch variants: where a property's subschema is a union
-/// (oneOf/anyOf), emit one variant per branch so the corpus covers every
-/// nested wire form (message content as a bare string vs. typed block
-/// arrays) — synthesized from the schema, never hand-written.
+/// Nested union branches: walk the schema and the witness in parallel; where
+/// a property's subschema is a union (oneOf/anyOf), emit one variant per
+/// branch with that property re-synthesized (message content as a bare
+/// string vs. typed block arrays) — all synthesized from the schema, never
+/// hand-written.
 pub fn nested_branch_variants(
     schema: &Value,
     witness: &Value,
     defs: &Map<String, Value>,
 ) -> Vec<Value> {
     let mut out = Vec::new();
-    let Some(props) = schema.get("properties").and_then(Value::as_object) else {
-        return out;
-    };
-    let Some(object) = witness.as_object() else {
-        return out;
-    };
-    for (name, prop) in props {
-        let resolved = resolve_ref(prop, defs);
-        if let Some(branches) = resolved
-            .get("anyOf")
-            .or_else(|| resolved.get("oneOf"))
-            .and_then(Value::as_array)
-        {
+    collect_branch_variants(schema, witness, defs, 0, &mut out);
+    out
+}
+
+fn collect_branch_variants(
+    schema: &Value,
+    witness: &Value,
+    defs: &Map<String, Value>,
+    depth: usize,
+    out: &mut Vec<Value>,
+) {
+    if depth > 4 || out.len() >= 32 {
+        return;
+    }
+    let schema = &resolve_ref(schema, defs);
+    // A tagged union: descend into the branch that claims the witness (its
+    // discriminant const matches) so the walk stays schema-driven.
+    if let Some(branches) = schema
+        .get("oneOf")
+        .or_else(|| schema.get("anyOf"))
+        .and_then(Value::as_array)
+    {
+        let Some(discriminant) = discriminant_property(schema) else {
+            return;
+        };
+        if let Some(tag) = witness.get(&discriminant).and_then(Value::as_str) {
             for branch in branches {
-                if out.len() >= 32 {
-                    return out;
+                if branch
+                    .get("properties")
+                    .and_then(|props| props.get(&discriminant))
+                    .and_then(|prop| prop.get("const"))
+                    .and_then(Value::as_str)
+                    == Some(tag)
+                {
+                    collect_branch_variants(branch, witness, defs, depth + 1, out);
+                    return;
                 }
-                let mut variant = witness.clone();
-                if let Some(target) = variant.as_object_mut() {
-                    target.insert(name.clone(), synth(branch, defs, 0));
+            }
+        }
+        return;
+    }
+    // A $ref with siblings (internally tagged enums): merge walk.
+    if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
+        let Some(object) = witness.as_object() else { return };
+        for (name, prop) in properties {
+            let resolved = resolve_ref(prop, defs);
+            if let Some(branches) = resolved
+                .get("anyOf")
+                .or_else(|| resolved.get("oneOf"))
+                .and_then(Value::as_array)
+            {
+                for branch in branches {
+                    if out.len() >= 32 {
+                        return;
+                    }
+                    let mut variant = witness.clone();
+                    if let Some(target) = variant.as_object_mut() {
+                        target.insert(name.clone(), synth(branch, defs, 0));
+                    }
+                    out.push(variant);
                 }
-                out.push(variant);
+            }
+            // Descend into the property's own value (arrays included).
+            if let Some(child) = object.get(name) {
+                match child {
+                    Value::Array(list) => {
+                        if let Some(items) = resolved.get("items") {
+                            for element in list {
+                                collect_branch_variants(
+                                    items,
+                                    element,
+                                    defs,
+                                    depth + 1,
+                                    out,
+                                );
+                            }
+                        }
+                    }
+                    Value::Object(_) => {
+                        collect_branch_variants(prop, child, defs, depth + 1, out);
+                    }
+                    _ => {}
+                }
             }
         }
     }
-    out
 }
 
 fn resolve_ref(schema: &Value, defs: &Map<String, Value>) -> Value {
