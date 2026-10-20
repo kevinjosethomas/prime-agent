@@ -1,4 +1,4 @@
-"""Load on-disk images into the model's context as multimodal attachments."""
+"""Load on-disk images into the model's context as viewable attachments."""
 
 from __future__ import annotations
 
@@ -192,7 +192,7 @@ def _resize_image(filepath: Path, mime_type: str, size: int, dimensions: tuple[i
 
 
 def _emit_attachment(filepath: Path, mime_type: str, size: int, dimensions: tuple[int, int]) -> str | None:
-    from rlm import emit
+    from . import emit
 
     data_b64, emitted_mime_type, resize_note = _resize_image(filepath, mime_type, size, dimensions)
     emit(
@@ -204,35 +204,12 @@ def _emit_attachment(filepath: Path, mime_type: str, size: int, dimensions: tupl
     return resize_note
 
 
-async def run(*paths: str) -> str:
-    """Load one or more on-disk images into the model's context as attachments.
-
-    Use this when the model needs to actually SEE an image file — a screenshot,
-    diagram, chart, photo, or scanned page. The image is sent to the model as a
-    viewable attachment (the same way a pasted image is).
-
-    Do NOT use this for programmatic image analysis (reading pixels, cropping,
-    resizing, hashing, measuring colors). For that, open the file with PIL in
-    the kernel instead.
-
-    Args:
-        *paths: One or more image paths. Relative, absolute, or `~`-prefixed.
-            Supported formats: PNG, JPEG, GIF, WebP. Other types (PDF, audio,
-            video) are not supported and raise an error.
-
-    Returns:
-        A short confirmation listing the images loaded into context.
-
-    Raises:
-        FileNotFoundError: If a path does not exist or is not a regular file.
-        ValueError: If a file is not a supported image, is too large, or cannot
-            be compressed enough for safe inline rendering and replay.
-        RuntimeError: If the current model cannot accept images.
-    """
+async def attach_image(*paths: str) -> str:
+    """Load one or more on-disk images into the model's context as attachments."""
     if not paths:
         raise ValueError("attach_image requires at least one image path")
 
-    from rlm import host_request
+    from . import host_request
 
     info = await host_request("model.info")
     if "image" not in info.get("input", []):
