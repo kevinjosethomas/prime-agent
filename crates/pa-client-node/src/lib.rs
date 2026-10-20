@@ -55,17 +55,15 @@ pub struct SpikeTicker {
 #[napi]
 impl SpikeTicker {
     #[napi(constructor)]
-    pub fn new(callback: Function) -> Result<Self> {
-        let tsfn: ThreadsafeFunction<u32> = callback
-            .build_threadsafe_function::<u32>()
-            .callee_handled::<true>()
-            .build_callback(|ctx| Ok(ctx.value))?;
+    pub fn new(callback: ThreadsafeFunction<u32>) -> Result<Self> {
+        // A ThreadsafeFunction param is napi-rs' direct conversion path: the
+        // JS function arrives already bound with the struct's callee-handled
+        // defaults (call(Ok(value), mode)). Not Clone in v3 — the docs' idiom
+        // wraps it in Arc; the last drop releases the underlying function.
+        let tsfn = Arc::new(callback);
+        let task_tsfn = Arc::clone(&tsfn);
         let stop = Arc::new(AtomicBool::new(false));
         let task_stop = Arc::clone(&stop);
-        // napi-rs 3 ThreadsafeFunction is not Clone; the docs' idiom wraps it
-        // in Arc — the last drop releases the underlying function.
-        let tsfn = Arc::new(tsfn);
-        let task_tsfn = Arc::clone(&tsfn);
         // Runs on the napi-rs tokio_rt runtime; the loop exits on the stop
         // flag and drops its TSFN clone, so a stopped ticker leaves nothing
         // holding the Node event loop.
