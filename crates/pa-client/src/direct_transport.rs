@@ -184,7 +184,7 @@ pub(crate) async fn connect_direct(
     shared: Arc<Shared>,
     event_tx: mpsc::UnboundedSender<DaemonClientEvent>,
     raw_tap: Option<mpsc::UnboundedSender<Value>>,
-) -> Result<DirectLink> {
+) -> Result<(DirectLink, Vec<tokio::task::JoinHandle<()>>)> {
     let stream = timeout(
         Duration::from_millis(CONNECT_TIMEOUT_MS),
         connect_transport(Path::new(&ticket.socket_path)),
@@ -245,7 +245,7 @@ pub(crate) async fn connect_direct(
     let owner = Arc::new(());
     let (frame_tx, mut frame_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     // Writer pump: one frame at a time, exits when the link closes.
-    tokio::spawn(async move {
+    let writer_task = tokio::spawn(async move {
         while let Some(frame) = frame_rx.recv().await {
             if writer.write_all(&frame).await.is_err() || writer.flush().await.is_err() {
                 break;
@@ -254,7 +254,7 @@ pub(crate) async fn connect_direct(
         let _ = writer.shutdown().await;
     });
     // Reader pump: responses to the shared pending map, events to the UI.
-    {
+    let reader_task = {
         let shared = Arc::clone(&shared);
         let event_tx = event_tx.clone();
         let raw_tap = raw_tap.clone();
@@ -309,15 +309,18 @@ pub(crate) async fn connect_direct(
                     active_session_id: active_session_id.clone(),
                 });
             }
-        });
-    }
-    Ok(DirectLink {
-        active_session_id: ticket.active_session_id.clone(),
-        socket_path: ticket.socket_path.clone(),
-        owner,
-        writer: frame_tx,
-        alive,
-    })
+        })
+    };
+    Ok((
+        DirectLink {
+            active_session_id: ticket.active_session_id.clone(),
+            socket_path: ticket.socket_path.clone(),
+            owner,
+            writer: frame_tx,
+            alive,
+        },
+        vec![writer_task, reader_task],
+    ))
 }
 
 /// Read frames until the `peer_auth` response lands.
@@ -541,7 +544,7 @@ mod tests {
         tokio::spawn(async move { spawn_mock_worker(listener, None).await });
         let shared = Arc::new(crate::daemon_client::Shared::default());
         let (event_tx, event_rx) = mpsc::unbounded_channel();
-        let link = connect_direct(&ticket, shared, event_tx, None)
+        let (link, _tasks) = connect_direct(&ticket, shared, event_tx, None)
             .await
             .expect("direct link");
         (link, event_rx, dir)
@@ -607,7 +610,7 @@ mod tests {
             let (close_tx, close_rx) = tokio::sync::oneshot::channel();
             tokio::spawn(async move { spawn_mock_worker(listener, Some(close_rx)).await });
             let (event_tx, _) = mpsc::unbounded_channel();
-            let link = connect_direct(&ticket, shared, event_tx, None)
+            let (link, _tasks) = connect_direct(&ticket, shared, event_tx, None)
                 .await
                 .unwrap();
             (link, close_tx, dir)
