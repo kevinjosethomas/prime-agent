@@ -186,8 +186,12 @@ impl AgentSession {
         session: SessionManager,
         prompt_templates: Vec<PromptTemplate>,
     ) -> anyhow::Result<Self> {
-        Self::from_session_arc(agent, Arc::new(tokio::sync::Mutex::new(session)), prompt_templates)
-            .await
+        Self::from_session_arc(
+            agent,
+            Arc::new(tokio::sync::Mutex::new(session)),
+            prompt_templates,
+        )
+        .await
     }
 
     /// Build a session from an already-shared session manager handle, so the
