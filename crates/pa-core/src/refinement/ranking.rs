@@ -274,9 +274,7 @@ pub fn format_harness_state_for_prompt(
         }
         if let Some(terms) = query_terms.as_ref() {
             if !terms.is_empty() && entries.len() > max_entries_per_kind {
-                lines.push(
-                    "(entries ranked by relevance to the current task)".to_string(),
-                );
+                lines.push("(entries ranked by relevance to the current task)".to_string());
             }
         }
         for entry in entries.iter().take(max_entries_per_kind) {
