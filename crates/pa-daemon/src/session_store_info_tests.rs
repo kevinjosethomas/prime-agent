@@ -564,6 +564,150 @@ fn a_persisted_scan_state_resumes_like_the_full_fold() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+/// The response-timing fold through `read_session_info` itself: assistant
+/// `timing` blocks plus `usage.output` and toolResult `details.durationMs`
+/// appended over rounds accumulate identically on the warm in-memory resume
+/// (`clone_for_resume`), the persisted info-sidecar reload after the
+/// in-process state is dropped, and a cold whole-file rescan - the
+/// cumulative totals and latest response a persisted state that lost the
+/// timing fold would starve. Unix-only like the sidecar siblings: only
+/// Unix certifies a state worth persisting.
+#[cfg(unix)]
+#[test]
+fn response_timing_serves_identically_from_warm_resume_cold_rescan_and_the_sidecar() {
+    let dir = test_dir();
+    let path = dir.join("timing.jsonl");
+    let assistant = |id: &str, ttft_ms: f64, generation_ms: f64, llm_time_ms: f64, output: u64| {
+        json!({
+            "type": "message", "id": id, "timestamp": "2026-09-23T00:00:00.000Z",
+            "message": {
+                "role": "assistant", "content": format!("answer {id}"),
+                "timestamp": 1_790_110_000_000_u64,
+                "usage": { "input": 1, "output": output, "totalTokens": output + 1 },
+                "timing": { "ttftMs": ttft_ms, "generationMs": generation_ms, "llmTimeMs": llm_time_ms },
+            },
+        })
+    };
+    let tool_result = |id: &str, duration_ms: f64| {
+        json!({
+            "type": "message", "id": id, "timestamp": "2026-09-23T00:00:00.000Z",
+            "message": {
+                "role": "toolResult", "content": format!("tool {id}"),
+                "timestamp": 1_790_110_000_000_u64,
+                "details": { "durationMs": duration_ms },
+            },
+        })
+    };
+    // The expected wire block: one whole-object comparison per round, the
+    // latest response riding as its own whole row.
+    let expected = |avg_ttft_ms: f64,
+                    avg_tokens_per_second: f64,
+                    llm_time_ms: f64,
+                    tool_time_ms: f64,
+                    last: (f64, f64, f64, f64)| {
+        crate::session_timing::ResponseTimingSummary {
+            avg_ttft_ms: Some(avg_ttft_ms),
+            avg_tokens_per_second: Some(avg_tokens_per_second),
+            llm_time_ms: Some(llm_time_ms),
+            tool_time_ms: Some(tool_time_ms),
+            last_response: Some(crate::session_timing::LastResponseTiming {
+                ttft_ms: Some(last.0),
+                generation_ms: Some(last.1),
+                tokens_per_second: Some(last.2),
+                llm_time_ms: Some(last.3),
+            }),
+        }
+    };
+    append_rows(
+        &path,
+        &[
+            json!({"type":"session","id":"t","timestamp":"2026-09-23T00:00:00.000Z","cwd":"/test"}),
+            assistant("a1", 100.0, 900.0, 1000.0, 90),
+            tool_result("r1", 10.0),
+        ],
+    );
+    let first = read_session_info(&path).unwrap();
+    assert_eq!(
+        first.response_timing,
+        Some(expected(
+            100.0,
+            100.0,
+            1000.0,
+            10.0,
+            (100.0, 900.0, 100.0, 1000.0)
+        ))
+    );
+    // The unchanged file answers from the process cache.
+    assert_eq!(read_session_info(&path), Some(first));
+    // Round two grows the file: the in-memory state resumes and folds only
+    // the appended rows.
+    append_rows(
+        &path,
+        &[
+            assistant("a2", 200.0, 800.0, 1000.0, 80),
+            tool_result("r2", 15.0),
+        ],
+    );
+    let resumed = read_session_info(&path).unwrap();
+    assert_eq!(
+        resumed.response_timing,
+        Some(expected(
+            150.0,
+            100.0,
+            2000.0,
+            25.0,
+            (200.0, 800.0, 100.0, 1000.0)
+        ))
+    );
+    // The lease-release write persists the certified fold state, timing
+    // included: a sidecar whose state lost the timing scan would starve the
+    // next process of the prefix rounds.
+    super::persist_info_sidecar(&path);
+    let sidecar: Value =
+        serde_json::from_slice(&fs::read(path.with_extension("info-cache.json")).unwrap()).unwrap();
+    assert_eq!(
+        sidecar["state"]["acc"]["timing_scan"]["ttft_count"],
+        json!(2)
+    );
+    assert_eq!(
+        sidecar["state"]["acc"]["timing_scan"]["tool_count"],
+        json!(2)
+    );
+    super::session_info_cache()
+        .lock()
+        .unwrap()
+        .drop_state(&path);
+    // Round three grows the file again: the persisted sidecar state serves
+    // the resume of a cache-less process.
+    append_rows(
+        &path,
+        &[
+            assistant("a3", 300.0, 300.0, 600.0, 60),
+            tool_result("r3", 25.0),
+        ],
+    );
+    let from_sidecar = read_session_info(&path).unwrap();
+    assert_eq!(
+        from_sidecar.response_timing,
+        Some(expected(
+            200.0,
+            115.0,
+            2600.0,
+            50.0,
+            (300.0, 300.0, 200.0, 600.0)
+        ))
+    );
+    // A cold whole-file rescan - no process state, no sidecar - folds the
+    // same cumulative timing into the identical whole row.
+    super::session_info_cache()
+        .lock()
+        .unwrap()
+        .drop_state(&path);
+    fs::remove_file(path.with_extension("info-cache.json")).unwrap();
+    assert_eq!(read_session_info(&path).unwrap(), from_sidecar);
+    fs::remove_dir_all(dir).unwrap();
+}
+
 /// The sidecar round trip through a real lease, for a session opened by
 /// a symlinked dir (macOS `/var`, a symlinked `~/.prime`): the release
 /// persists what the holder's raw-path reads cached, though the lease
