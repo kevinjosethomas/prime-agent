@@ -60,7 +60,18 @@ impl AttachmentRegistry {
             }
             return;
         }
-        if self.attachments.insert(id.to_string(), Attachment { cursor: None, capabilities, revision: 0 }).is_none() {
+        if self
+            .attachments
+            .insert(
+                id.to_string(),
+                Attachment {
+                    cursor: None,
+                    capabilities,
+                    revision: 0,
+                },
+            )
+            .is_none()
+        {
             self.order.push(id.to_string());
         }
     }
@@ -104,11 +115,14 @@ impl AttachmentRegistry {
             // An unguarded attach (no revision tracked): adopt, creating the
             // entry when the id was never registered.
             (None, Some(entry)) => entry,
-            (None, None) => self.attachments.entry(id.to_string()).or_insert(Attachment {
-                cursor: None,
-                capabilities: capabilities.to_vec(),
-                revision: 0,
-            }),
+            (None, None) => self
+                .attachments
+                .entry(id.to_string())
+                .or_insert(Attachment {
+                    cursor: None,
+                    capabilities: capabilities.to_vec(),
+                    revision: 0,
+                }),
             // Superseded by a later attempt, or detached: never adopt.
             _ => return false,
         };
@@ -121,7 +135,8 @@ impl AttachmentRegistry {
             if current
                 .as_ref()
                 .map_or(true, |c| c.generation != cursor.generation)
-                || current.as_ref().and_then(|c| c.sequence).unwrap_or(0) < cursor.sequence.unwrap_or(0)
+                || current.as_ref().and_then(|c| c.sequence).unwrap_or(0)
+                    < cursor.sequence.unwrap_or(0)
             {
                 entry.cursor = Some(cursor);
             }
@@ -139,7 +154,9 @@ impl AttachmentRegistry {
             self.order.push(id.to_string());
         }
         let (sequence, generation) = match entry.cursor.as_ref() {
-            Some(cursor) if cursor.sequence.is_some() => (cursor.sequence, cursor.generation.clone()),
+            Some(cursor) if cursor.sequence.is_some() => {
+                (cursor.sequence, cursor.generation.clone())
+            }
             Some(cursor) if cursor.event_sequence.is_some() => (cursor.event_sequence, None),
             _ => (None, None),
         };
@@ -156,7 +173,11 @@ impl AttachmentRegistry {
     /// attachments only, `session_binding` rekeys the entry and its
     /// markers, `session_closed` drops the entry and its markers.
     pub(crate) fn observe_frame(&mut self, frame: &Value) -> FrameAction {
-        match frame.get("type").and_then(Value::as_str).unwrap_or_default() {
+        match frame
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+        {
             "session_event" => self.observe_session_event(frame),
             "session_binding" => self.observe_binding(frame),
             "session_closed" => {
@@ -208,7 +229,10 @@ impl AttachmentRegistry {
                 event_sequence: None,
             });
         } else {
-            let previous = entry.cursor.as_ref().and_then(|cursor| cursor.event_sequence);
+            let previous = entry
+                .cursor
+                .as_ref()
+                .and_then(|cursor| cursor.event_sequence);
             if previous.unwrap_or(0) < sequence {
                 entry.cursor = Some(DaemonResumeCursor {
                     active_session_id: Some(id.to_string()),
@@ -242,7 +266,10 @@ impl AttachmentRegistry {
             .cloned()
             .collect();
         for (marker_id, generation) in stale {
-            let last = self.seen.remove(&(marker_id, generation.clone())).unwrap_or(0);
+            let last = self
+                .seen
+                .remove(&(marker_id, generation.clone()))
+                .unwrap_or(0);
             self.seen.insert((next.to_string(), generation), last);
         }
         FrameAction::Deliver
@@ -254,7 +281,11 @@ impl AttachmentRegistry {
     pub(crate) fn restore_entries(&self) -> Vec<(String, Attachment)> {
         self.order
             .iter()
-            .filter_map(|id| self.attachments.get(id).map(|entry| (id.clone(), entry.clone())))
+            .filter_map(|id| {
+                self.attachments
+                    .get(id)
+                    .map(|entry| (id.clone(), entry.clone()))
+            })
             .collect()
     }
 
@@ -342,12 +373,7 @@ mod tests {
         let entry = registry.restore_entries()[0].1.clone();
         assert_eq!(entry.cursor.as_ref().unwrap().sequence, Some(4));
         // The legacy shape.
-        assert!(registry.record_attach(
-            "s1",
-            &[],
-            &json!({ "lastEventSequence": 7 }),
-            None,
-        ));
+        assert!(registry.record_attach("s1", &[], &json!({ "lastEventSequence": 7 }), None,));
         let entry = registry.restore_entries()[0].1.clone();
         assert_eq!(entry.cursor.as_ref().unwrap().event_sequence, Some(7));
         // The seen marker rode along: a replayed sequence dedupes.
