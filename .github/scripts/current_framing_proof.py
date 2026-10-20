@@ -21,6 +21,7 @@ def main() -> None:
     evidence = root / "framing-proof"
     evidence.mkdir(exist_ok=True)
     baseline = Path(tempfile.mkdtemp(prefix="primer-framing-baseline-")) / "source"
+    subprocess.run(["git", "fetch", "--no-tags", "--depth=1", "origin", BASELINE], check=True)
     subprocess.run(["git", "worktree", "add", "--detach", str(baseline), BASELINE], check=True)
     try:
         (baseline / FIXTURE).parent.mkdir(parents=True, exist_ok=True)
