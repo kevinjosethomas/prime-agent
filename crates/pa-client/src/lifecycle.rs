@@ -2102,9 +2102,7 @@ mod tests {
             verdict.unwrap_or(false),
             "the new connection's restore surfaced, and no old-epoch outcome did"
         );
-        session.stop()
-            .await
-            .expect("the settle completed honestly");
+        session.stop().await.expect("the settle completed honestly");
     }
 
     #[tokio::test]
@@ -2160,7 +2158,10 @@ mod tests {
             })
             .await
             .unwrap_err();
-        assert!(crate::daemon_client::is_command_not_sent(&error), "unexpected: {error}");
+        assert!(
+            crate::daemon_client::is_command_not_sent(&error),
+            "unexpected: {error}"
+        );
         assert_ne!(
             session.status().state,
             ConnectionState::Connected,
