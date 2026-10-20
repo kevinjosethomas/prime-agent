@@ -564,14 +564,11 @@ fn a_persisted_scan_state_resumes_like_the_full_fold() {
     fs::remove_dir_all(dir).unwrap();
 }
 
-/// The response-timing fold through `read_session_info` itself: assistant
-/// `timing` blocks plus `usage.output` and toolResult `details.durationMs`
-/// appended over rounds accumulate identically on the warm in-memory resume
-/// (`clone_for_resume`), the persisted info-sidecar reload after the
-/// in-process state is dropped, and a cold whole-file rescan - the
-/// cumulative totals and latest response a persisted state that lost the
-/// timing fold would starve. Unix-only like the sidecar siblings: only
-/// Unix certifies a state worth persisting.
+/// responseTiming parity across warm resume (clone_for_resume), sidecar
+/// reload after drop_state, and cold whole-file rescan through the real
+/// read_session_info.
+/// Dropping the timing scan from clone_for_resume or the sidecar starves
+/// the later rounds (red-first).
 #[cfg(unix)]
 #[test]
 fn response_timing_serves_identically_from_warm_resume_cold_rescan_and_the_sidecar() {
@@ -637,10 +634,7 @@ fn response_timing_serves_identically_from_warm_resume_cold_rescan_and_the_sidec
             (100.0, 900.0, 100.0, 1000.0)
         ))
     );
-    // The unchanged file answers from the process cache.
     assert_eq!(read_session_info(&path), Some(first));
-    // Round two grows the file: the in-memory state resumes and folds only
-    // the appended rows.
     append_rows(
         &path,
         &[
@@ -659,9 +653,7 @@ fn response_timing_serves_identically_from_warm_resume_cold_rescan_and_the_sidec
             (200.0, 800.0, 100.0, 1000.0)
         ))
     );
-    // The lease-release write persists the certified fold state, timing
-    // included: a sidecar whose state lost the timing scan would starve the
-    // next process of the prefix rounds.
+    // A sidecar whose state lost the timing scan starves the next process.
     super::persist_info_sidecar(&path);
     let sidecar: Value =
         serde_json::from_slice(&fs::read(path.with_extension("info-cache.json")).unwrap()).unwrap();
@@ -677,8 +669,6 @@ fn response_timing_serves_identically_from_warm_resume_cold_rescan_and_the_sidec
         .lock()
         .unwrap()
         .drop_state(&path);
-    // Round three grows the file again: the persisted sidecar state serves
-    // the resume of a cache-less process.
     append_rows(
         &path,
         &[
@@ -697,8 +687,6 @@ fn response_timing_serves_identically_from_warm_resume_cold_rescan_and_the_sidec
             (300.0, 300.0, 200.0, 600.0)
         ))
     );
-    // A cold whole-file rescan - no process state, no sidecar - folds the
-    // same cumulative timing into the identical whole row.
     super::session_info_cache()
         .lock()
         .unwrap()

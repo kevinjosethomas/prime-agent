@@ -1,49 +1,22 @@
-//! Whole-file response-timing scan: the resumable cumulative fold behind
-//! `get_state`'s `summary.responseTiming`, the timing twin of the whole-file
-//! usage scan in [`crate::session_usage`].
-//!
-//! Accounting class (matching `summary.usage` exactly): the fold walks the
-//! session file's rows in persisted order — every in-file branch included,
-//! cumulative across compactions because rows are never deleted. The
-//! persisted scan state caches the consumed prefix (the info sidecar);
-//! per-row contributions are keyed by row id (assistant and tool-result rows
-//! alike) so a re-appended id (a retried durable append) replaces its earlier
-//! contribution instead of double-counting, exactly like the usage scan's
-//! assistant map.
-//!
-//! Scope: assistant responses of the agent loop (the row `timing` block
-//! stamped by `pa_core::session_engine::response_timing`) and tool
-//! executions (the toolResult row's `details.durationMs`: the loop's
-//! uniform full-call wall duration for every executed tool call — a
-//! documented fork deviation from the TS python rows' narrower
-//! kernel-execution value, so the cumulative metric never mixes spans).
-//! The compaction/branch summarizer calls are excluded by design. Measured
-//! values only — a row without a timing block contributes nothing, and an
-//! absent field is `None`, never a fabricated zero.
-//!
-//! Aggregates (each field omitted when its samples are all absent):
-//!
-//! * `avgTtftMs`: plain mean over the responses with a measured TTFT.
-//! * `avgTokensPerSecond`: overall generation throughput — the summed
-//!   output tokens of the responses with a measured generation interval,
-//!   divided by their summed generation seconds (`SUM(tokens) /
-//!   SUM(seconds)`, not a mean of per-response rates). A generation
-//!   interval that rounds to zero is not a usable rate sample: its row is
-//!   omitted from the numerator and denominator rather than inflating
-//!   every other sample's apparent rate.
-//! * `llmTimeMs` / `toolTimeMs`: cumulative sums (tool time is total tool
-//!   work — parallel executions sum).
-//! * `lastResponse`: the latest-written measured assistant row, with each
-//!   of its own unmeasured fields omitted (a tool-only response shows
-//!   `llmTimeMs` without a stale TTFT).
+//! Whole-file resumable timing fold behind `get_state`'s `responseTiming`,
+//! the timing twin of the usage scan: every in-file branch, cumulative
+//! across compactions (rows are never deleted); contributions keyed by row
+//! id so a re-appended id replaces instead of double-counting; the consumed
+//! prefix persists in the info sidecar (v4). Scope: assistant `timing` blocks
+//! and toolResult `details.durationMs` (the loop's uniform wall duration —
+//! intentional fork deviation from the TS python rows' kernel-only value);
+//! summarizers excluded; absent fields are never fabricated zeros.
+//! Aggregates: avgTtftMs = plain mean; avgTokensPerSecond = SUM output
+//! tokens / SUM generation seconds (not a mean of rates); llmTimeMs/toolTimeMs
+//! cumulative sums (parallel tool work sums); lastResponse = the latest
+//! written measured row, fields independently omitted.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::session_store::SessionEntry;
 
-/// The assistant-row timing block as persisted (one decimal, ms). The scan-side
-/// parse of `message.timing`.
+/// The assistant row's persisted timing block (scan-side parse of message.timing).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResponseTimingRow {
@@ -114,13 +87,8 @@ impl MeasuredRow {
     }
 }
 
-/// Id-keyed contributions in first-insertion order: a later row with the
-/// same id replaces its contribution in place (the usage scan's
-/// assistant-map semantics, applied to the timing sums). The displaced
-/// contribution is returned so the caller can subtract it. Each entry also
-/// carries its write ordinal (persisted with the state): the fold serves
-/// rows in file order, so the highest measured ordinal is the latest
-/// measured write.
+/// Insert-or-replace by id, first-insertion order (the usage scan's
+/// assistant-map semantics); the write ordinal tracks the latest measured write.
 #[derive(Default, Clone)]
 struct MeasuredRowsById {
     entries: Vec<(String, MeasuredRow, u64)>,
@@ -129,8 +97,6 @@ struct MeasuredRowsById {
 }
 
 impl MeasuredRowsById {
-    /// Insert or replace by id; the displaced contribution is `Some` when the
-    /// id existed. Returns (displaced, this write's ordinal).
     fn replace(&mut self, id: &str, row: MeasuredRow) -> (Option<MeasuredRow>, u64) {
         let ordinal = self.next_ordinal;
         self.next_ordinal += 1;
@@ -145,11 +111,7 @@ impl MeasuredRowsById {
         (None, ordinal)
     }
 
-    /// The measured entry with the highest write ordinal as its owning
-    /// `(id, ordinal, row)` triple: the `lastResponse` re-derivation after an
-    /// eviction (rare: a re-appended row wrote over the latest measured one
-    /// with an unmeasured row). The triple keeps the slot's id and ordinal
-    /// truthful, so a later unmeasured replacement of THAT id evicts again.
+    /// Highest write ordinal among measured rows (the lastResponse re-derivation).
     fn latest_measured(&self) -> Option<(String, u64, MeasuredRow)> {
         self.entries
             .iter()
@@ -183,17 +145,13 @@ impl<'de> Deserialize<'de> for MeasuredRowsById {
     }
 }
 
-/// The persisted form of one tool-result row's contribution (see
-/// [`PersistedRow`] for the bits encoding).
+/// The persisted form of one tool-result row's contribution.
 #[derive(Serialize, Deserialize, Clone)]
 struct PersistedToolRow {
     duration_ms_bits: Option<u64>,
 }
 
-/// Tool-result durations keyed by id in first-insertion order (the same
-/// insert-or-replace semantics as [`MeasuredRowsById`], over the persisted
-/// bits form — see [`PersistedRow`] for the encoding). The id index keeps
-/// the fold O(1) per row on cold whole-file scans.
+/// Tool durations keyed by id (same replacement semantics).
 #[derive(Default, Clone)]
 struct ToolDurationsById {
     entries: Vec<(String, PersistedToolRow)>,
@@ -250,14 +208,13 @@ pub struct ResponseTimingScan {
     generation_output_tokens: u64,
     llm_time_ms_sum_bits: u64,
     llm_count: u64,
-    /// Tool-result durations keyed by row id (the same replacement
-    /// semantics as the assistant rows).
+    /// Tool durations keyed by row id (same replacement semantics).
     tool_rows: ToolDurationsById,
     tool_time_ms_sum_bits: u64,
     tool_count: u64,
-    /// The latest-written measured assistant row as `(id, write ordinal,
-    /// contribution)`: the ordinal lets an unmeasured replacement of that id
-    /// re-derive the slot instead of serving stale numbers.
+    /// Latest-written measured row as (id, ordinal, contribution): the
+    /// ordinal lets an unmeasured replacement of that id re-derive instead of
+    /// serving stale values.
     last: Option<(String, u64, PersistedRow)>,
 }
 
@@ -283,10 +240,8 @@ impl ResponseTimingScan {
             .is_some_and(|(last_id, _, _)| last_id == id)
         {
             // The id that held the latest measured write was re-written
-            // unmeasured: the slot must not serve its stale values. Re-derive
-            // the latest remaining measured write with its own id and ordinal
-            // (rare: retried durable writes), so a later unmeasured
-            // replacement of THAT id evicts again.
+            // unmeasured: re-derive the latest remaining measured write with
+            // its own id and ordinal (rare: retried durable writes).
             self.last = self
                 .rows
                 .latest_measured()
@@ -512,8 +467,7 @@ fn round_tokens_per_second(value: f64) -> f64 {
 }
 
 impl ResponseTimingScan {
-    /// The fold's retained per-id rows, counted toward the scan cache's
-    /// bounded-entry budget alongside the usage scan's rows.
+    /// Counted against the scan cache's bounded-entry budget.
     #[must_use]
     pub(crate) fn retained_entries(&self) -> usize {
         self.rows.entries.len() + self.tool_rows.entries.len()

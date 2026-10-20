@@ -107,9 +107,7 @@ async fn prepare_tool_call_inner(
 pub(crate) struct ExecutedToolCallOutcome {
     result: AgentToolResult,
     is_error: bool,
-    /// Wall time of the tool execution itself (one decimal, ms): the
-    /// measurement spans the `execute` call only, never the update-emitter
-    /// drain or the argument preparation.
+    /// Wall time of the execute call only (one decimal, ms).
     duration_ms: f64,
 }
 
@@ -337,14 +335,9 @@ pub(crate) async fn emit_tool_execution_end(
 pub(crate) fn create_tool_result_message(
     finalized: &FinalizedToolCallOutcome,
 ) -> ToolResultMessage {
-    // The measured execution duration rides the row's `details` block as
-    // `durationMs` (the TS wire name, reused): this fork stamps the loop's
-    // uniform full-call wall duration for every executed tool call — the
-    // TS python rows carried the narrower kernel-execution value, and a
-    // cumulative tool-time metric must not mix spans, so the loop's value
-    // overwrites a tool-local one (a documented, intentional fork
-    // deviation from the TS timing values). A scalar details value is
-    // pathological and keeps its shape unmeasured rather than being dropped.
+    // The loop's uniform wall durationMs overwrites a tool-local value
+    // (intentional fork deviation; the cumulative metric never mixes spans).
+    // A scalar details value keeps its shape unmeasured.
     let mut details = if finalized.result.details.is_null() {
         None
     } else {

@@ -1,33 +1,14 @@
-//! Always-on per-response timing: the product-surface measurement behind
-//! `get_state`'s cumulative `responseTiming` summary.
-//!
-//! The wrapper sits at the same `StreamFn` boundary as the opt-in
-//! [`super::request_timing`] diagnostic logging, but is independent of it and
-//! of telemetry consent: timing is a first-class session fact, not an
-//! opt-in diagnostic.
-//!
-//! Measurements (real instants only, one decimal, ms — never estimates):
-//!
-//! * `ttftMs`: request sent (the provider fired the payload hook) -> the
-//!   first nonempty streamed text/thinking delta.
-//! * `generationMs`: that first delta -> the terminal `done`/`error` event.
-//! * `llmTimeMs`: request sent -> the terminal event.
-//!
-//! A response measures only what actually happened: the marks are set when
-//! their events fire, and any field whose endpoints did not both fire stays
-//! absent (a tool-only response carries `llmTimeMs` without a TTFT; a
-//! request whose payload hook never fired carries no `llmTimeMs` either).
-//! A terminal `error` event is measured like `done`; a hard user abort
-//! that closes the stream without a terminal event synthesizes its aborted
-//! message outside this seam, and that row honestly carries no timing.
-//!
-//! The terminal event's message is stamped in place and the same measured
-//! timing rides `result()`'s final message, so the measurement persists with
-//! the session JSONL under the assistant row's `timing` block and folds into
-//! the daemon's whole-file scan. Scope:
-//! assistant responses of the agent loop; the compaction/branch summarizer
-//! calls are excluded by design (they never cross this seam — see
-//! `compaction_exec`'s `SummarizerFn`).
+//! Always-on per-response timing behind `get_state`'s cumulative
+//! `responseTiming`: independent of the request-timing diagnostic and of
+//! telemetry consent. Real instants only (ms, one decimal — never estimates):
+//! ttftMs = payload hook (request sent) -> first nonempty text/thinking delta;
+//! generationMs = that delta -> terminal done/error event;
+//! llmTimeMs = request sent -> terminal event.
+//! A field whose endpoints did not both fire stays absent; `result()` carries
+//! the terminal event's timing onto the fresh final message, so the persisted
+//! assistant row keeps content and timing. Scope: agent-loop assistant
+//! responses only — summarizers never cross this seam; user aborts (no
+//! terminal event) honestly carry no timing.
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -37,8 +18,6 @@ use pa_agent::stream::{
 };
 use pa_agent::types::{AssistantMessage, AssistantMessageTiming};
 
-/// The per-request measurement state, shared by the payload hook and the
-/// event-stream wrapper.
 #[derive(Debug, Default)]
 struct ResponseClock {
     inner: Mutex<ResponseClockInner>,
@@ -49,16 +28,12 @@ struct ResponseClockInner {
     request_sent_at: Option<Instant>,
     first_delta_at: Option<Instant>,
     terminal_at: Option<Instant>,
-    /// The measured timing of the terminal event: `result()` carries it onto
-    /// the resolved message (the provider's final row, not a cached event
-    /// message) so the persisted row keeps both its final content and its
-    /// timing.
+    /// result() carries this onto the fresh final message, not a cached event message.
     stamped_timing: Option<AssistantMessageTiming>,
 }
 
 impl ResponseClock {
-    /// Request sent: only a fired payload hook ever sets the mark (no
-    /// fabricated fallback timestamps).
+    /// Only a fired payload hook sets the mark — no fabricated fallback timestamps.
     fn mark_request_sent(&self) {
         let mut inner = self.lock();
         if inner.request_sent_at.is_none() {
@@ -66,8 +41,7 @@ impl ResponseClock {
         }
     }
 
-    /// The first nonempty streamed text/thinking delta clears the wait; tool
-    /// call deltas are not generation tokens and never start the interval.
+    /// Tool-call deltas never start the interval.
     fn mark_first_delta(&self, event: &AssistantMessageEvent) {
         let delta = match event {
             AssistantMessageEvent::TextDelta { delta, .. }
@@ -83,9 +57,7 @@ impl ResponseClock {
         }
     }
 
-    /// Stamp the terminal message (the measurement ends at the terminal
-    /// event) and remember it for `result()`. Idempotent: the first terminal
-    /// event wins and a later one changes nothing.
+    /// Idempotent: the first terminal event wins.
     fn stamp_terminal(&self, message: &mut AssistantMessage) {
         let mut inner = self.lock();
         if inner.terminal_at.is_some() {
@@ -120,9 +92,7 @@ impl ResponseClock {
     }
 }
 
-/// The measured fields for the recorded instants; every field whose
-/// endpoints did not both fire stays `None` (serialized away). `None` marks a
-/// request with no measurable span at all.
+/// None unless one pair of endpoints fired.
 fn measured_timing(inner: &ResponseClockInner) -> Option<AssistantMessageTiming> {
     let terminal_at = inner.terminal_at?;
     let ttft_ms = inner
@@ -155,13 +125,9 @@ fn round_ms(delta_ms: f64) -> f64 {
     (delta_ms * 10.0).round() / 10.0
 }
 
-/// Compose the always-on response-timing measurement over a stream function.
-///
-/// The wrapped call marks request-sent through the payload hook (chained
-/// over any existing hook), stamps the final assistant message on the
-/// terminal event and on an early `result()` resolution, and passes every
-/// event through unchanged otherwise. The measurement cannot fail the request:
-/// a clock that never saw its events simply stamps nothing.
+/// Always-on wrapper: marks request sent (after the composed payload hook),
+/// stamps the terminal message, carries timing through result(). Cannot
+/// fail the request.
 #[must_use]
 pub fn instrument_response_timing(stream_fn: StreamFn) -> StreamFn {
     std::sync::Arc::new(move |model, context, options: StreamRequestOptions| {
@@ -172,9 +138,7 @@ pub fn instrument_response_timing(stream_fn: StreamFn) -> StreamFn {
             let inner_payload: Option<OnPayloadHook> = options.on_payload.take();
             let clock_for_payload = std::sync::Arc::clone(&clock);
             options.on_payload = Some(std::sync::Arc::new(move |payload, model| {
-                // The composed hook runs first: the request leaves for
-                // the provider only once the (possibly transformed)
-                // payload is final, so the mark follows the chain.
+                // The mark follows the composed hook: the request leaves only once the payload is final.
                 let payload = match inner_payload.as_ref() {
                     Some(hook) => hook(payload, model),
                     None => Some(payload),

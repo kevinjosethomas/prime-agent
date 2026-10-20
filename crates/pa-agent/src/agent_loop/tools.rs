@@ -26,8 +26,7 @@ pub(crate) struct FinalizedToolCallOutcome {
     pub(crate) tool_call: ToolCall,
     pub(crate) result: AgentToolResult,
     pub(crate) is_error: bool,
-    /// Measured execution duration (one decimal, ms); `None` marks a call
-    /// that never executed (blocked or unknown tool: no duration exists).
+    /// None = never executed (blocked or unknown tool).
     pub(crate) duration_ms: Option<f64>,
 }
 

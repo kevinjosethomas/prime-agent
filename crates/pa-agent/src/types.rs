@@ -223,10 +223,7 @@ pub enum UserPart {
     Image(ImageContent),
 }
 
-/// Measured per-response timing stamped on the final assistant message by
-/// the session engine's response-timing wrapper: real measurements only,
-/// one decimal of precision (ms); an absent field was not measured for that
-/// response (a tool-only response carries no TTFT), never an estimate.
+/// Per-response timing on the final assistant message; absent field = not measured, never estimated.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssistantMessageTiming {

@@ -34,8 +34,7 @@ pub struct SessionInfo {
     /// The own-usage summary — assistant aggregates plus summarization calls,
     /// minus every attributed child block; `None` when the session recorded no billable work.
     pub usage: Option<crate::session_usage::SessionUsageSummary>,
-    /// The whole-file response-timing summary (`get_state`'s
-    /// `responseTiming`); `None` when no assistant response was measured.
+    /// Whole-file response-timing summary; None when nothing was measured.
     pub response_timing: Option<crate::session_timing::ResponseTimingSummary>,
     /// The recursive spend of ledger-tombstoned descendants, attached by the
     /// catalog's listing arm from the spawn ledger. Never set by the file
@@ -229,8 +228,7 @@ pub(super) struct SessionScanAccumulator {
     last_activity_ms: Option<u64>,
     last_user_prompt_ms: Option<u64>,
     usage_scan: crate::session_usage::UsageScan,
-    /// The response-timing twin of `usage_scan` (see
-    /// [`crate::session_timing`]).
+    /// The response-timing twin of usage_scan.
     timing_scan: crate::session_timing::ResponseTimingScan,
 }
 
@@ -378,12 +376,10 @@ pub(super) struct SessionInfoMessage<'a> {
     /// Borrowed `content` span (zero copy): read only when the fold's guard passes.
     #[serde(default, borrow)]
     pub(super) content: Option<&'a serde_json::value::RawValue>,
-    /// The assistant row's `timing` block (zero copy; read only by the
-    /// response-timing fold).
+    /// Borrowed timing span (read only by the timing fold).
     #[serde(default, borrow)]
     timing: Option<&'a serde_json::value::RawValue>,
-    /// The toolResult row's `details` span (zero copy; the response-timing
-    /// fold reads `details.durationMs`).
+    /// Borrowed details span (timing reads durationMs).
     #[serde(default, borrow)]
     details: Option<&'a serde_json::value::RawValue>,
 }
@@ -713,8 +709,7 @@ pub(super) fn fold_scan_entry(acc: &mut SessionScanAccumulator, raw: &str) -> Op
                 let role = role.as_deref();
                 acc.usage_scan
                     .fold_message(&entry.id, role, message.usage.map(Usage::from));
-                // The response-timing fold (assistant `timing` blocks and
-                // toolResult `details.durationMs`) rides the same message arm.
+                // The timing fold rides the same message arm.
                 let timing = message
                     .timing
                     .and_then(|raw| serde_json::from_str(raw.get()).ok())

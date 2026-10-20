@@ -551,9 +551,7 @@ pub(crate) fn session_summary(core: &SessionCore, inputs: SummaryInputs) -> Sess
             }
         })
         .map(|usage| json!(usage));
-    // Response timing rides the same single scan read as `usage` (the
-    // whole-file fold's timing twin); a pathless store folds its in-memory
-    // entries, mirroring the usage fallback.
+    // responseTiming rides the same single scan read as usage; pathless stores fold in-memory entries.
     let response_timing = store
         .and_then(|store| {
             if store.path.as_os_str().is_empty() {
