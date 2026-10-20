@@ -2,6 +2,8 @@
 //! real session worker over the socket, with the faux engine answering turns.
 //! The edit command must reach the live owner's store, preserve the job id and
 //! status, and answer the TS-style errors for missing jobs and empty payloads.
+// Fn length is a style gate, not correctness (the readoption e2e convention).
+#![allow(clippy::too_many_lines)]
 #![allow(clippy::large_futures)]
 #![allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
 #![cfg(unix)]
