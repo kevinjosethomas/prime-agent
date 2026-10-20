@@ -1467,3 +1467,77 @@ async fn frame_cap_binds_partial_lines_across_fills() {
     );
     client.close();
 }
+
+#[tokio::test]
+async fn frame_cap_binds_split_lines_spilling_over_the_cap() {
+    // A line split across fills: its head is inside the cap alone, the
+    // final tail carries the newline — the total must still tear the
+    // transport down (the newline branch counts the spill, not just the
+    // tail).
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let (reader, mut writer) = stream.into_split();
+        let mut reader = BufReader::new(reader);
+        let hello = json!({
+            "type": "daemon_hello",
+            "protocol": { "name": "prime-agent.daemon", "version": 7 },
+            "clientId": "srv",
+            "serverCapabilities": [],
+        });
+        writer
+            .write_all(format!("{hello}\n").as_bytes())
+            .await
+            .unwrap();
+        let mut seen = String::new();
+        match reader.read_line(&mut seen).await {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {}
+        }
+        // The head: 250 bytes, inside the 300-byte cap alone.
+        writer.write_all("x".repeat(250).as_bytes()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        // The tail: 100 bytes plus the newline — 350 total, over the cap.
+        let mut tail = "x".repeat(100);
+        tail.push('\n');
+        writer.write_all(tail.as_bytes()).await.unwrap();
+        std::future::pending::<()>().await;
+    });
+
+    let (client, _events) = DaemonClient::connect_with_options(
+        &socket,
+        DaemonClientOptions {
+            max_frame_bytes: Some(300),
+            ..DaemonClientOptions::default()
+        },
+    )
+    .await
+    .unwrap();
+    let started = std::time::Instant::now();
+    let error = client
+        .request_with_timeout(
+            DaemonCommand::List {
+                id: None,
+                all: None,
+                cwd: None,
+                session_dir: None,
+                include_client_owned: None,
+                rest: Map::default(),
+            },
+            30_000,
+        )
+        .await
+        .unwrap_err();
+    // The teardown's sweep resolves the in-flight request as uncertain —
+    // without the spill counted, the oversized line would be accepted and
+    // this request would ride its 30s budget out.
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(is_command_result_uncertain(&error), "unexpected error: {error}");
+    assert!(
+        error.to_string().contains("the daemon connection closed"),
+        "unexpected error: {error}"
+    );
+    client.close();
+}

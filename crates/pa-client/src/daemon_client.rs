@@ -535,9 +535,11 @@ impl DaemonClient {
                     Err(_) => break,
                 };
                 if let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
-                    // The cap covers the line without its newline, like
-                    // the bounded readers' byte accounting.
-                    if max_frame_bytes.is_some_and(|cap| newline > cap) {
+                    // The cap covers the line without its newline, like the
+                    // bounded readers' byte accounting — the spill's already
+                    // accumulated bytes count toward it too, so a split line
+                    // whose head passed the cap alone still tears down.
+                    if max_frame_bytes.is_some_and(|cap| partial.len() + newline > cap) {
                         break;
                     }
                     let line: Vec<u8> = if partial.is_empty() {
