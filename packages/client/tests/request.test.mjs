@@ -87,15 +87,20 @@ test('the pending cap refuses as a provable NotSent', async () => {
   await stop();
 });
 
-test('close tears down an in-flight request as Uncertain with cause closed', async () => {
+test('close tears down an in-flight request with the honest class', async () => {
   const socketPath = tmpSocket('close-inflight');
   const stop = await startMock(socketPath, 'silent');
   const connection = await DaemonConnection.connect(socketPath);
   const inFlight = connection.request({ type: 'get_connection_state' }, 60_000);
   connection.close();
-  await assert.rejects(
-    inFlight,
-    (error) => error instanceof UncertainError && error.cause === 'closed',
-  );
+  // Structural, not timing-dependent: if close raced before the line was
+  // queued the provable NotSent wins; after the first poll the line may be
+  // queued and the class is conservatively Uncertain. Both carry cause.
+  await assert.rejects(inFlight, (error) => {
+    if (error instanceof NotSentError) {
+      return error.cause === 'closed';
+    }
+    return error instanceof UncertainError && error.cause === 'closed';
+  });
   await stop();
 });
