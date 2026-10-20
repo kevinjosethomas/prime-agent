@@ -273,18 +273,30 @@ fn grown_fixture(dir: &Path, turns: usize) -> PathBuf {
 }
 
 /// The durable session rows of `type`, re-read from the imported copy.
-fn session_rows(harness: &Harness, type_: &str) -> Vec<Value> {
+fn session_rows(harness: &mut Harness, type_: &str) -> Vec<Value> {
+    let request_id = format!("durable-path-{type_}");
+    harness.client.send_command(
+        &request_id,
+        &json!({"type":"get_state", "activeSessionId":harness.session_id}),
+    );
+    let state = harness.client.request(&request_id);
+    assert_eq!(state["success"], true, "active imported state: {state}");
+    let file = PathBuf::from(
+        state["data"]["sessionFile"]
+            .as_str()
+            .expect("active imported session file"),
+    );
     let session_dir = harness.dir.path().join("agent").join("sessions");
-    let file = std::fs::read_dir(&session_dir)
-        .expect("session dir readable")
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .find(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("grown-import"))
-        })
-        .expect("the imported session's copy in the session dir");
+    assert_eq!(
+        file.parent().unwrap().canonicalize().unwrap(),
+        session_dir.canonicalize().unwrap(),
+        "the active imported file belongs to the fixture"
+    );
+    assert_eq!(
+        file.file_name().and_then(|name| name.to_str()),
+        Some("grown-import.jsonl"),
+        "read the active JSONL, never a same-prefix info-cache sidecar"
+    );
     std::fs::read_to_string(file)
         .expect("session file readable")
         .lines()
@@ -297,6 +309,16 @@ fn session_rows(harness: &Harness, type_: &str) -> Vec<Value> {
 #[test]
 fn imported_session_compacts() {
     let mut harness = setup("import-compact");
+    // Catalog sidecars can share the import's basename prefix. They are not
+    // transcript rows; the durable-file check must follow the active binding.
+    std::fs::write(
+        harness
+            .dir
+            .path()
+            .join("agent/sessions/grown-import-decoy.info-cache.json"),
+        "{\"fixture\":\"metadata without transcript rows\"}\n",
+    )
+    .expect("same-prefix metadata fixture");
     // Big enough that the default 20k-token keep window still leaves history
     // before the cut (the perf-wave corpus: 1500 turns).
     let fixture = grown_fixture(harness.dir.path(), 1200);
@@ -316,7 +338,7 @@ fn imported_session_compacts() {
 
     // The imported transcript is the session the compact walks: every row the TS
     // loader keeps must persist (a lossy parse drops two of every three rows here).
-    let rows = session_rows(&harness, "message");
+    let rows = session_rows(&mut harness, "message");
     assert_eq!(rows.len(), 3600, "the imported rows persist: {rows:?}");
     assert!(
         rows.iter().any(|row| row["message"]["role"] == "assistant"
@@ -368,7 +390,7 @@ fn imported_session_compacts() {
         "the cut keeps the recent tail of the imported transcript: {compact}"
     );
 
-    let compactions = session_rows(&harness, "compaction");
+    let compactions = session_rows(&mut harness, "compaction");
     assert_eq!(
         compactions.len(),
         1,
