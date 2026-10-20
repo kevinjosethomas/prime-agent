@@ -528,6 +528,10 @@ const WIRE_FIXTURES: &[(&str, &str)] = &[
         "mutate_queued_input",
         r#"{"type": "mutate_queued_input", "activeSessionId": "sess", "inputId": "qi_1", "action": "remove"}"#,
     ),
+    (
+        "set_prompt_guidelines",
+        r#"{"type": "set_prompt_guidelines", "activeSessionId": "sess", "appendSystemPrompt": []}"#,
+    ),
 ];
 
 /// The accept list is the TS list, in TS order, then the Rust-native supervisor/worker frames.
@@ -563,6 +567,7 @@ fn known_command_types_match_the_ts_list() {
                     | "set_subagent_model_default"
                     | "list_queued_inputs"
                     | "mutate_queued_input"
+                    | "set_prompt_guidelines"
             ),
             "unexpected non-TS command type: {extra}"
         );

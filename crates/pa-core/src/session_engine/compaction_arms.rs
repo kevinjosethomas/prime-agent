@@ -197,6 +197,8 @@ impl AgentSession {
         // interleave with the replace: it would duplicate in the rebuilt
         // view or vanish under it while staying durable either way.
         let _flight = self.compaction_flight.lock().await;
+        // Resolve fallible prompt sources before committing a compaction.
+        let prompt = self.build_current_system_prompt(model).await?;
         let mut outcome = self.compaction_attempts(&options, started_at).await?;
         if matches!(outcome, CompactOutcome::Skipped(_)) {
             compaction_trace::trace("compact.skipped", &serde_json::Value::Null);
@@ -209,6 +211,10 @@ impl AgentSession {
         let loop_messages: Vec<AgentMessage> = rebuilt_loop_messages(rebuilt);
         let rebuilt_message_count = loop_messages.len();
         self.agent.set_messages(loop_messages).await;
+        if let Some(prompt) = prompt {
+            self.agent.set_system_prompt(prompt.clone()).await;
+            *self.pinned_prompt.write().unwrap() = Some(prompt);
+        }
         compaction_trace::trace(
             "compact.rebuilt_context",
             &serde_json::json!({ "messages": rebuilt_message_count }),

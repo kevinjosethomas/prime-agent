@@ -2,6 +2,10 @@
 
 The session engine.
 
+System prompts stay pinned between compactions. `AgentSession::set_prompt_guidelines`
+stages appended prompt sources; successful compaction rebuilds the prompt from current
+resources. `pinned_system_prompt` exposes the current pin for exports.
+
 ## Scope
 MCP host side (`mcp/`): auth gating for built-in integrations (the
 disabled-skill overrides and `/mcp list` status), the `mcpServers` settings

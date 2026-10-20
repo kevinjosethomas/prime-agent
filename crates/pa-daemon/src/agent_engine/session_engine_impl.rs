@@ -510,9 +510,14 @@ impl SessionEngine for AgentSessionEngine {
     }
 
     /// The built session's assembled prompt (the export embeds it); best-effort.
+    /// The compaction-pinned prompt wins over the creation-time snapshot.
     fn export_system_prompt(&self) -> Option<String> {
         let session = self.session.try_lock().ok()?;
-        session.as_deref().map(|core| core.system_prompt.clone())
+        session.as_deref().map(|core| {
+            core.session
+                .pinned_system_prompt()
+                .unwrap_or_else(|| core.system_prompt.clone())
+        })
     }
 
     /// The built session's live tool registry mapped to the export's tools
@@ -1196,7 +1201,31 @@ impl SessionEngine for AgentSessionEngine {
             self.ensure_core_session_async(&model).await?;
             let guard = self.session.lock().await;
             let engine = guard.as_deref().expect("session built above");
-            Ok(engine.system_prompt.clone())
+            // The live agent state holds the compaction-refreshed prompt,
+            // not the creation-time snapshot.
+            Ok(engine.session.agent().state().await.system_prompt)
+        })
+    }
+
+    fn set_prompt_guidelines(
+        &self,
+        sources: Vec<String>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            // The core session builds lazily; staging before any turn
+            // builds it on the async path (the caller's runtime).
+            let model = self.resolve_model()?;
+            self.ensure_core_session_async(&model).await?;
+            let guard = self.session.lock().await;
+            let engine = guard.as_deref().expect("session built above");
+            // Staged only until the next successful compaction; a later core
+            // rebuild re-reads the create resources, so the sources ride both.
+            engine.session.set_prompt_guidelines(sources.clone());
+            self.create_resources
+                .write()
+                .expect("create resources lock")
+                .append_system_prompt = sources;
+            Ok(())
         })
     }
 

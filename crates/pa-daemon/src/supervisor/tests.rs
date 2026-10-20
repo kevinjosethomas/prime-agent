@@ -1425,6 +1425,112 @@ async fn first_signal_drains_a_settling_turn_and_rejects_new_work() {
     pump.abort();
 }
 
+/// `set_prompt_guidelines` persists the staged sources on the durable
+/// create command: the resident's descriptor carries them so a respawned
+/// worker replays them.
+#[tokio::test]
+async fn set_prompt_guidelines_persists_the_durable_create_sources() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let options = SupervisorOptions {
+        socket_path: dir.path().join("daemon.sock"),
+        agent_dir: dir.path().join("agent"),
+    };
+    let supervisor = Arc::new(Supervisor::new(options).expect("supervisor"));
+    let descriptor: DaemonWorkerDescriptor = serde_json::from_value(json!({
+        "version": 2,
+        "workerId": "w-guidelines",
+        "pid": 0,
+        "socketPath": "/tmp/none.sock",
+        "recoveryJournalPath": "/tmp/none.jsonl",
+        "supervisorSocketPath": "/tmp/none.sock",
+        "authenticationToken": "test",
+        "rootActiveSessionId": "w-guidelines",
+        "createdAt": "t",
+        "updatedAt": "t",
+        "lifecycle": "ready",
+        "createCommand": {},
+        "consecutiveFailures": 0,
+    }))
+    .expect("descriptor");
+    let descriptor_dir = dir.path().join("descriptors");
+    std::fs::create_dir_all(&descriptor_dir).unwrap();
+    let descriptor_path = descriptor_dir.join("w-guidelines.descriptor.json");
+    let resident = Arc::new(ResidentWorker::new(
+        "w-guidelines".to_string(),
+        descriptor,
+        descriptor_path.clone(),
+    ));
+    let (cmd_tx, mut cmd_rx) = mpsc::channel::<WorkerRequest>(1);
+    *resident.cmd_tx.lock().await = Some(cmd_tx);
+    let pump_resident = Arc::clone(&resident);
+    tokio::spawn(async move {
+        let request = cmd_rx.recv().await.expect("the route lands the command");
+        let reply = pump_resident
+            .pending
+            .lock()
+            .await
+            .remove(&request.request_id)
+            .expect("the routed command holds a reply slot");
+        // The relayed shape a real worker answers: response bytes with the
+        // id field absent, the form the raw splice path looks for.
+        let response = crate::protocol::response_success(None, "set_prompt_guidelines", None);
+        let _ = reply.send(WorkerReply::Relayed(crate::registry::WorkerRelay {
+            success: Some(true),
+            active_session_id: None,
+            payload: crate::protocol::response_line_bytes(&response),
+        }));
+    });
+    supervisor.registry.insert(Arc::clone(&resident)).await;
+    resident.note_connection_live();
+    resident.note_session_ready();
+    let (targeted_tx, _targeted_rx) = tokio::sync::mpsc::channel::<Arc<Value>>(16);
+    let attached = subscribers::ClientSubscriptions::new("c".to_string(), targeted_tx);
+    let command: DaemonCommand = serde_json::from_value(json!({
+        "type": "set_prompt_guidelines",
+        "activeSessionId": "w-guidelines",
+        "appendSystemPrompt": ["/abs/guidance.md"],
+    }))
+    .expect("command");
+    // The raw queue mirrors the desktop's relayed connection: the command
+    // must take the typed route (a raw splice would bypass the descriptor
+    // persist below), so the queue stays unused.
+    let (raw_tx, mut raw_rx) = tokio::sync::mpsc::channel::<(Vec<Outbound>, bool)>(4);
+    let (lines, stop) = supervisor
+        .route_client_command(
+            &command,
+            "c",
+            &attached,
+            "c1".to_string(),
+            "set_prompt_guidelines".to_string(),
+            Some(&raw_tx),
+        )
+        .await;
+    assert!(!stop);
+    assert!(raw_rx.try_recv().is_err(), "the raw relay must stay unused");
+    assert_eq!(
+        lines.first().expect("the route answers with one line")["success"],
+        json!(true)
+    );
+    let staged = json!(["/abs/guidance.md"]);
+    {
+        let descriptor = resident.descriptor.lock().await;
+        assert_eq!(
+            descriptor
+                .create_command
+                .rest
+                .get("appendSystemPrompt")
+                .expect("the durable create carries the sources"),
+            &staged
+        );
+    }
+    let persisted: Value =
+        serde_json::from_str(&std::fs::read_to_string(&descriptor_path).unwrap()).unwrap();
+    assert_eq!(
+        persisted["createCommand"]["appendSystemPrompt"], staged,
+        "the descriptor file carries the sources"
+    );
+}
+
 /// A turn-long client route rides TS's 24 h worker-request budget
 /// (`WORKER_REQUEST_TIMEOUT_MS`, daemon-supervisor.ts:204), not the
 /// invented ten-minute cap: a `prompt_and_wait` whose worker answers a

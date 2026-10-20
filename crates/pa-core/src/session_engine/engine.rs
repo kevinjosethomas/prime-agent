@@ -110,6 +110,7 @@ pub struct SessionEngine {
     pub skill_diagnostics: Vec<crate::skills::ResourceDiagnostic>,
     pub prompt_templates: Vec<PromptTemplate>,
     pub agents_files: Vec<crate::resources::ContextFile>,
+    /// Creation-time snapshot; `session.pinned_system_prompt()` tracks compaction refreshes.
     pub system_prompt: String,
     /// The same instance the kernel `goal.*` host handlers reach, so `/goal`
     /// and `goal.complete()` observe one state machine.
@@ -538,35 +539,31 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 &model_prompts.errors,
             ));
     }
-    let system_prompt = crate::prompts::system_prompt::build_system_prompt(
-        &crate::prompts::system_prompt::BuildSystemPromptOptions {
-            custom_prompt: resources.system_prompt.clone(),
-            model_prompt_extras: model_prompts.extras.as_deref(),
-            vision_capable: prompt_vision_capable,
-            cwd: cwd.display().to_string(),
-            messages_path: conversation_log.clone(),
-            context_files: resources
-                .agents_files
-                .iter()
-                .map(|file| (file.path.display().to_string(), file.content.clone()))
-                .collect(),
-            skills: resources.skills.clone(),
-            selected_tools: Some(
-                active_tool_names
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>(),
-            ),
-            allow_recursion: config.allow_recursion,
-            // A spawned child's prompt must read "depth: N (not root)" with
-            // the child-agent reply doctrine, never the root identity.
-            rlm_depth: config.rlm_depth,
-            daemonless: config.daemonless,
-            can_spawn: config.rlm_subagent_host.is_some(),
-            generic_mcp_servers,
-            append_system_prompt: Some(resources.append_system_prompt.join("\n\n")),
+    let prompt_sources = Arc::new(super::prompt_refresh::PromptSources {
+        resource_options: ResourceLoaderOptions {
+            cwd: cwd.clone(),
+            agent_dir: config.agent_dir.clone(),
+            extra_builtin_skill_overrides: config.extra_builtin_skill_overrides.clone(),
+            additional_skill_paths: config.additional_skill_paths.clone(),
+            additional_prompt_paths: config.additional_prompt_paths.clone(),
+            system_prompt: config.custom_system_prompt.clone(),
+            append_system_prompt: config.prompt_guidelines.clone(),
             ..Default::default()
         },
+        messages_path: conversation_log.clone(),
+        selected_tools: active_tool_names.clone(),
+        allow_recursion: config.allow_recursion,
+        rlm_depth: config.rlm_depth,
+        daemonless: config.daemonless,
+        can_spawn: config.rlm_subagent_host.is_some(),
+        generic_mcp_servers: config.generic_mcp_servers.clone(),
+        mcp_manager: mcp_manager.clone(),
+    });
+    let system_prompt = prompt_sources.assemble(
+        &resources,
+        &prompt_model_selector,
+        generic_mcp_servers,
+        prompt_vision_capable,
     );
 
     // Captured before the digest context moves the local harness dir and
@@ -722,6 +719,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             .then_some(digest_context.clone()),
     )
     .await?;
+    session.prompt_sources = Some(prompt_sources);
+    *session.pinned_prompt.write().unwrap() = Some(system_prompt.clone());
     session.set_auto_refine(auto_refine_allowed, auto_refine_gates);
     session.set_agent_dir(config.agent_dir.clone());
     // Keep the context descriptor even while disabled, so re-enabling can load it.
@@ -1023,3 +1022,6 @@ mod tests;
 
 #[cfg(test)]
 mod append_system_tests;
+
+#[cfg(test)]
+mod prompt_refresh_tests;
