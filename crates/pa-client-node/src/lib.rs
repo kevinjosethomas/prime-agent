@@ -49,7 +49,7 @@ pub async fn spike_delay(ms: u32) -> u32 {
 #[napi]
 pub struct SpikeTicker {
     stop: Arc<AtomicBool>,
-    tsfn: Option<ThreadsafeFunction<u32>>,
+    tsfn: Option<Arc<ThreadsafeFunction<u32>>>,
 }
 
 #[napi]
@@ -62,7 +62,10 @@ impl SpikeTicker {
             .build_callback(|ctx| Ok(ctx.value))?;
         let stop = Arc::new(AtomicBool::new(false));
         let task_stop = Arc::clone(&stop);
-        let task_tsfn = tsfn.clone();
+        // napi-rs 3 ThreadsafeFunction is not Clone; the docs' idiom wraps it
+        // in Arc — the last drop releases the underlying function.
+        let tsfn = Arc::new(tsfn);
+        let task_tsfn = Arc::clone(&tsfn);
         // Runs on the napi-rs tokio_rt runtime; the loop exits on the stop
         // flag and drops its TSFN clone, so a stopped ticker leaves nothing
         // holding the Node event loop.
