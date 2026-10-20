@@ -180,15 +180,6 @@ pub(crate) fn render_shell_completion(
     out
 }
 
-/// Pad a rendered line to the full width with a base style.
-pub(crate) fn pad_with(mut line: Line, width: usize, base: Style) -> Line {
-    let used: usize = line.iter().map(|s| str_width(&s.content)).sum();
-    if used < width {
-        line.push(Span::styled(" ".repeat(width - used), base));
-    }
-    line
-}
-
 /// One generic custom row: a leading blank, the bold `[<customType>]` label, then the
 /// always-shown markdown body in `customMessageText` under the branch gutter.
 pub(crate) fn render_custom_panel(row: &CustomPanelRow, theme: &Theme, width: usize) -> Vec<Line> {
