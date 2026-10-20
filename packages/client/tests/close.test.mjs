@@ -30,10 +30,15 @@ test('close resolves after pending request, upgrade, and pull are all torn down'
   await connection.close();
   // The close promise resolved: the registry drained and the core task set
   // joined for real.
+  // The teardown race is structural: if close marked before the request
+  // line was queued, the honest class is NotSent (provably never sent);
+  // after the first poll it is conservatively Uncertain. Both carry the
+  // closed cause — same rule as the request battery's close-inflight test.
   const requestError = await pendingRequest;
   assert.ok(
-    requestError instanceof UncertainError && requestError.cause === 'closed',
-    `unexpected class: ${requestError?.kind}`,
+    (requestError instanceof UncertainError || requestError instanceof NotSentError) &&
+      requestError.cause === 'closed',
+    `unexpected class: ${requestError?.kind}:${requestError?.cause}`,
   );
   assert.equal(await pendingUpgrade, false);
   assert.equal(await pendingFrame, null);
