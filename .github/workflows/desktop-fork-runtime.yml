@@ -55,11 +55,11 @@ jobs:
       # skip without TASKS_DESKTOP_REPORTER. See docs/desktop-runtime-verification.md.
       - name: Verify complete Python source and readiness suite (not desktop interop)
         run: PYTHONPATH=prime-agent-runtime/src python -m unittest discover -s prime-agent-runtime/tests -v
-      - name: Verify session and subagent runtime regressions
+      - name: Verify agents and harness runtime regressions
         working-directory: prime-agent-runtime
         run: |
-          PYTHONPATH=src python -m unittest discover -s test -p test_create_session.py -v
-          PYTHONPATH=src python -m unittest discover -s test -p test_subagent_registry.py -v
+          PYTHONPATH=src python -m unittest discover -s test -p test_agents.py -v
+          PYTHONPATH=src python -m unittest discover -s test -p test_harness.py -v
       - name: State canonical reporter coverage boundary
         run: |
           echo 'Python source/readiness coverage is not canonical desktop archive verification. The 3 reporter tests skip here because this repository does not stage the desktop reporter. Require an exact-candidate, exact-desktop-artifact full discovery run with zero skips before installation; see docs/desktop-runtime-verification.md.' >> "$GITHUB_STEP_SUMMARY"
