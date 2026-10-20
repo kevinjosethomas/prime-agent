@@ -401,8 +401,7 @@ fn wire_name(command: &DaemonCommand) -> String {
     serde_json::to_value(command)
         .ok()
         .and_then(|value| value.get("type").cloned())
-        .and_then(Value::as_str)
-        .map(str::to_string)
+        .and_then(|tag| tag.as_str().map(str::to_string))
         .unwrap_or_else(|| "command".to_string())
 }
 
@@ -600,16 +599,13 @@ async fn driver_run(
         for handle in handles {
             let _ = handle.await;
         }
-        let effective = client
-            .take()
-            .or_else(|| state.client.write().await.take());
+        let mut effective = client.take();
+        if effective.is_none() {
+            effective = state.client.write().await.take();
+        }
         if let Some(client) = effective {
             client.shutdown();
             client.join_tasks().await;
-        }
-        if let Some(residue) = state.client.write().await.take() {
-            residue.shutdown();
-            residue.join_tasks().await;
         }
         state.stopped.send_replace(true);
     }
@@ -859,8 +855,7 @@ mod tests {
             let commands = Arc::new(Mutex::new(Vec::new()));
             let connected = Arc::new(AtomicU64::new(0));
             let eof = Arc::new(AtomicU64::new(0));
-            let release = tokio::sync::Notify::new();
-            let release_waiter = release.notified();
+            let release = std::sync::Arc::new(tokio::sync::Notify::new());
             tokio::spawn(supervisor_serve(
                 listener,
                 Arc::clone(&commands),
@@ -869,7 +864,7 @@ mod tests {
                 frames,
                 hold_attach,
                 drop_first_after_release,
-                release_waiter,
+                release,
             ));
             (
                 Supervisor {
@@ -892,9 +887,8 @@ mod tests {
         frames: Vec<Value>,
         hold_attach: bool,
         drop_first_after_release: bool,
-        release: tokio::sync::Notify,
+        release: std::sync::Arc<tokio::sync::Notify>,
     ) {
-        let mut release: Option<tokio::sync::Notify> = Some(release);
         let mut connections = 0u64;
         loop {
             let (stream, _) = listener.accept().await.expect("supervisor accept");
@@ -904,9 +898,7 @@ mod tests {
             let commands = Arc::clone(&commands);
             let eof = Arc::clone(&eof);
             let frames = frames.clone();
-            let release_waiter = release
-                .take()
-                .map(|notify| notify.notified());
+            let release = Arc::clone(&release);
             tokio::spawn(async move {
                 let (reader, mut writer) = stream.into_split();
                 let mut reader = tokio::io::BufReader::new(reader);
@@ -945,9 +937,7 @@ mod tests {
                     let is_attach = command["type"] == "attach";
                     if hold_attach && is_attach {
                         // The held restore: everything else flows first.
-                        if let Some(waiter) = release_waiter.as_ref() {
-                            waiter.await;
-                        }
+                        release.notified().await;
                     }
                     let data = if is_attach {
                         json!({ "lastEventCursor": { "generation": "g", "sequence": 4 } })
@@ -967,9 +957,7 @@ mod tests {
                         .unwrap();
                     // The scripted first-connection death after release.
                     if drop_first_after_release && connection == 1 {
-                        if let Some(waiter) = release_waiter.as_ref() {
-                            waiter.await;
-                        }
+                        release.notified().await;
                         break;
                     }
                 }

@@ -320,7 +320,7 @@ impl AttachmentRegistry {
         }
         // The marker and the fresh intent follow the attachment: the bound
         // session continues its sequence line under the new id.
-        if let Some((_, marker)) = self.seen.remove(previous) {
+        if let Some(marker) = self.seen.remove(previous) {
             self.seen.insert(next.to_string(), marker);
         }
         if let Some(intent) = self.intents.remove(previous) {
