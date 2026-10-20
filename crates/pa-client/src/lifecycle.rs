@@ -382,23 +382,19 @@ impl DaemonClientSession {
         let mut stopped = self.state.stopped.subscribe();
         loop {
             if *stopped.borrow_and_update() {
-                eprintln!("DBG stop: mark-at-loop-top break");
                 break;
             }
             let mut driver = self.state.driver.lock().await;
             let Some(handle) = driver.handle.as_mut() else {
-                eprintln!("DBG stop: handle-None break");
                 break; // A prior stop observed and memoized the end.
             };
             tokio::select! {
                 changed = stopped.changed() => {
-                    eprintln!("DBG stop: changed arm");
                     if changed.is_err() {
                         break;
                     }
                 }
                 result = &mut *handle => {
-                    eprintln!("DBG stop: handle arm {result:?}");
                     // The driver task ended: memoize the cloneable outcome
                     // once, clear the handle (no re-poll).
                     driver.handle = None;
@@ -448,7 +444,14 @@ impl DaemonClientSession {
             client.join_tasks().await;
         }
         self.state.client.write().await.take();
-        Ok(())
+        // A prior stop observed the driver's honest failure and memoized it
+        // (the handle is gone): EVERY subsequent stop returns the identical
+        // Err — the memo is read, never consumed (item 4).
+        let outcome = self.state.driver.lock().await.memo.clone();
+        match outcome {
+            Some(Err(message)) => Err(anyhow!("{message}")),
+            _ => Ok(()),
+        }
     }
 
     fn before(&self, command: &DaemonCommand) -> Option<Bookkeeping> {
@@ -1835,11 +1838,10 @@ mod tests {
                 panic!("the session driver failed");
             }));
         }
-        let first_result = tokio::time::timeout(Duration::from_secs(5), session.stop())
+        let first = tokio::time::timeout(Duration::from_secs(5), session.stop())
             .await
-            .expect("the first stop settles");
-        eprintln!("DBG first stop result: {first_result:?}");
-        let first = first_result.unwrap_err();
+            .expect("the first stop settles")
+            .unwrap_err();
         let message = first.to_string();
         let second = tokio::time::timeout(Duration::from_secs(5), session.stop())
             .await
