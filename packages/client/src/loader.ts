@@ -35,6 +35,10 @@ export interface LoadAddonOptions {
   /** Explicit TEST option: load `native/<name>` instead of the platform
    * artifact. Production callers never pass this. */
   testArtifact?: string;
+  /** Explicit TEST option: verify against this manifest file instead of
+   * the package provenance.json, so mismatch tests never mutate the real
+   * manifest other parallel test processes are reading. */
+  testManifestPath?: string;
 }
 
 function packageRoot(): string {
@@ -55,7 +59,7 @@ export function loadAddon(options?: LoadAddonOptions): {
 } {
   const root = packageRoot();
   const manifest = JSON.parse(
-    readFileSync(join(root, 'provenance.json'), 'utf8'),
+    readFileSync(options?.testManifestPath ?? join(root, 'provenance.json'), 'utf8'),
   ) as ProvenanceManifest;
   const artifact = options?.testArtifact ?? platformArtifact();
   const addonPath = join(root, 'native', artifact);

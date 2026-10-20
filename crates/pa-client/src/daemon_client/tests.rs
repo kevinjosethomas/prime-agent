@@ -72,6 +72,111 @@ fn empty_prompt_input() -> pa_types::daemon::PromptInput {
     }
 }
 
+/// A recording supervisor: greets, captures every command envelope's
+/// `clientId`, and answers with a plain success response.
+async fn spawn_recording_daemon(listener: UnixListener, client_ids: Arc<Mutex<Vec<String>>>) {
+    let (stream, _) = listener.accept().await.expect("accept");
+    let (reader, mut writer) = stream.into_split();
+    let mut reader = BufReader::new(reader);
+    let hello = json!({
+        "type": "daemon_hello",
+        "protocol": { "name": "prime-agent.daemon", "version": 7 },
+        "clientId": "srv",
+        "serverCapabilities": [],
+    });
+    let mut line = serde_json::to_string(&hello).unwrap();
+    line.push('\n');
+    writer.write_all(line.as_bytes()).await.unwrap();
+    let mut seen = String::new();
+    loop {
+        seen.clear();
+        match reader.read_line(&mut seen).await {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
+        }
+        let envelope: Value = serde_json::from_str(seen.trim()).unwrap();
+        let id = envelope["id"].as_str().unwrap().to_string();
+        let command_type = envelope["command"]["type"].as_str().unwrap().to_string();
+        if let Some(client_id) = envelope["clientId"].as_str() {
+            client_ids.lock().unwrap().push(client_id.to_string());
+        }
+        let response = json!({
+            "type": "response",
+            "id": id,
+            "command": command_type,
+            "success": true,
+            "data": { "ok": true },
+        });
+        let mut payload = serde_json::to_string(&response).unwrap();
+        payload.push('\n');
+        writer.write_all(payload.as_bytes()).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn the_default_client_id_is_the_tui_identity() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let client_ids = Arc::new(Mutex::new(Vec::new()));
+    let recorder = Arc::clone(&client_ids);
+    tokio::spawn(async move { spawn_recording_daemon(listener, recorder).await });
+
+    let (client, _events) = DaemonClient::connect(&socket).await.unwrap();
+    client
+        .request_ok(DaemonCommand::List {
+            id: None,
+            all: None,
+            cwd: None,
+            session_dir: None,
+            include_client_owned: None,
+            rest: Map::default(),
+        })
+        .await
+        .unwrap();
+    client.close();
+    let captured = client_ids.lock().unwrap().clone();
+    assert_eq!(captured.len(), 1);
+    assert_eq!(
+        captured[0],
+        format!("daemon-tui:{}", std::process::id()),
+        "the default identity must stay the historical TUI one, unchanged"
+    );
+}
+
+#[tokio::test]
+async fn a_custom_client_id_rides_every_command_envelope() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let client_ids = Arc::new(Mutex::new(Vec::new()));
+    let recorder = Arc::clone(&client_ids);
+    tokio::spawn(async move { spawn_recording_daemon(listener, recorder).await });
+
+    let options = DaemonClientOptions {
+        client_id: Some("prime-desktop:1:abc".to_string()),
+        ..DaemonClientOptions::default()
+    };
+    let (client, _events) = DaemonClient::connect_with_options(&socket, options)
+        .await
+        .unwrap();
+    client
+        .request_ok(DaemonCommand::List {
+            id: None,
+            all: None,
+            cwd: None,
+            session_dir: None,
+            include_client_owned: None,
+            rest: Map::default(),
+        })
+        .await
+        .unwrap();
+    client.close();
+    let captured = client_ids.lock().unwrap().clone();
+    assert_eq!(captured.len(), 1);
+    assert_eq!(captured[0], "prime-desktop:1:abc");
+}
+
 #[tokio::test]
 async fn handshake_and_request_round_trip() {
     let dir = tempfile::TempDir::new().unwrap();

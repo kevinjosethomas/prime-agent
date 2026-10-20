@@ -33,6 +33,75 @@ export interface Caps {
   maxPending?: number;
 }
 
+/** One explicit reconnect window: omitted windowMs is unbounded. */
+export interface ReconnectWindow {
+  windowMs?: number;
+  initialDelayMs: number;
+  maxDelayMs: number;
+}
+
+/**
+ * An explicit reconnect policy. A null/omitted update/shutdown slot gives
+ * that loss kind no special window — the core falls back to the lost
+ * policy. Omit `reconnect` entirely for the Rust desktop policy.
+ */
+export interface ReconnectPolicy {
+  update?: ReconnectWindow | null;
+  shutdown?: ReconnectWindow | null;
+  lost: ReconnectWindow;
+}
+
+export interface ManagedSessionOptions {
+  socketPath: string;
+  /** Bounded event-queue capacity in events (default 1024). */
+  eventBuffer?: number;
+  /** Omitted = the Rust desktop reconnect policy. */
+  reconnect?: ReconnectPolicy;
+  /** Default ["attach_snapshot", "event_sequence"]. */
+  attachCapabilities?: string[];
+  /** Registry dedupe of replayed session events (default true). */
+  dedupeSessionEvents?: boolean;
+  /** One restore-attach attempt's budget. REQUIRED, nonzero. */
+  restoreAttemptTimeoutMs: number;
+  /** Inbound frame byte cap (default 64 MiB). */
+  maxFrameBytes?: number;
+  /** Pending-request cap (default 128). */
+  maxPending?: number;
+  /** Client identity on every command envelope (default: core's daemon-tui:{pid}). */
+  clientId?: string;
+}
+
+/** The managed session's synchronous status snapshot. */
+export interface ManagedStatus {
+  state: 'connecting' | 'connected' | 'disconnected' | 'expired';
+  socketPath: string;
+  appVersion?: string;
+  capabilities: string[];
+  error?: string;
+  /** The structural io::ErrorKind label of the LAST connect failure ("not_found", "connection_refused", ...); absent on every other status. */
+  errorCode?: string;
+}
+
+/** The serialized event stream (the shared Rust lifecycle's ConnectionEvent). */
+export type ManagedEvent =
+  | { type: 'status'; status: ManagedStatus }
+  | { type: 'frame'; frame: unknown }
+  | { type: 'reattachBegin'; activeSessionId: string }
+  | { type: 'reattached'; activeSessionId: string; data: unknown }
+  | { type: 'reattachFailed'; activeSessionId: string; error: string }
+  | { type: 'reconnectExpired'; kind: 'update' | 'shutdown' | 'lost' };
+
+export interface ManagedCaps {
+  eventBuffer: number;
+  maxFrameBytes?: number;
+  maxPending?: number;
+  restoreAttemptTimeoutMs: number;
+  dedupeSessionEvents: boolean;
+  attachCapabilities: string[];
+  clientId?: string;
+  desktopReconnectPolicy: boolean;
+}
+
 interface NativeClient {
   nextFrame(): Promise<unknown>;
   nextStatus(): Promise<StatusValue>;
@@ -50,8 +119,20 @@ interface NativeClient {
   close(): Promise<void>;
 }
 
+interface NativeManagedSession {
+  status(): ManagedStatus;
+  caps(): ManagedCaps;
+  nextEvent(): Promise<ManagedEvent | null>;
+  request(command: DaemonCommand): Promise<DaemonResponse>;
+  requestOk(command: DaemonCommand): Promise<unknown>;
+  registerAttachment(id: string, capabilities?: string[]): void;
+  forgetAttachment(id: string): void;
+  stop(): Promise<void>;
+}
+
 interface NativeAddon {
   connect(socketPath: string, options?: ConnectOptions): Promise<NativeClient>;
+  startSession(options: ManagedSessionOptions): Promise<NativeManagedSession>;
   clientMetadata(): unknown;
 }
 
@@ -139,6 +220,92 @@ export class DaemonConnection {
 
   close(): Promise<void> {
     return decode(this.native.close());
+  }
+}
+
+/**
+ * The napi boundary accepts omitted fields but not JS null for optional
+ * object slots: normalize the contract's `Window|null` reconnect slots
+ * (and a null windowMs) by omission before crossing.
+ */
+function normalizeWindow(window: ReconnectWindow): ReconnectWindow {
+  return window.windowMs == null
+    ? { initialDelayMs: window.initialDelayMs, maxDelayMs: window.maxDelayMs }
+    : window;
+}
+
+function normalizeOptions(options: ManagedSessionOptions): ManagedSessionOptions {
+  const { reconnect } = options;
+  if (reconnect == null) return options;
+  return {
+    ...options,
+    reconnect: {
+      lost: normalizeWindow(reconnect.lost),
+      ...(reconnect.update ? { update: normalizeWindow(reconnect.update) } : {}),
+      ...(reconnect.shutdown ? { shutdown: normalizeWindow(reconnect.shutdown) } : {}),
+    },
+  };
+}
+
+/**
+ * The managed daemon session: reconnect, restore-attach, and dedupe are
+ * owned by the shared Rust lifecycle; this wrapper only decodes errors.
+ * Pull events in a single-consumer loop, send requests, and stop
+ * explicitly (the finalizer schedules the same stop chain on GC).
+ */
+export class ManagedDaemonSession {
+  private constructor(private readonly native: NativeManagedSession) {}
+
+  /** Start the managed lifecycle (connect/reconnect owned by Rust). */
+  static async start(options: ManagedSessionOptions): Promise<ManagedDaemonSession> {
+    const native = await decode(nativeAddon().startSession(normalizeOptions(options)));
+    return new ManagedDaemonSession(native);
+  }
+
+  /** The core's synchronous status snapshot. */
+  status(): ManagedStatus {
+    return this.native.status();
+  }
+
+  /** The effective configuration this session was built with. */
+  caps(): ManagedCaps {
+    return this.native.caps();
+  }
+
+  /**
+   * Pull the next serialized event; null at end of stream. Fail-closed:
+   * a full event queue tears the session down and every pull rejects with
+   * the sticky OverflowError, which precedes any buffered event.
+   */
+  nextEvent(): Promise<ManagedEvent | null> {
+    return decode(this.native.nextEvent());
+  }
+
+  request(command: DaemonCommand): Promise<DaemonResponse> {
+    return decode(this.native.request(command));
+  }
+
+  requestOk(command: DaemonCommand): Promise<unknown> {
+    return decode(this.native.requestOk(command));
+  }
+
+  /** Register an attachment (idempotent per id) for restore-attach and dedupe. */
+  registerAttachment(id: string, capabilities?: string[]): void {
+    this.native.registerAttachment(id, capabilities);
+  }
+
+  /** Drop an attachment and every marker it owns. */
+  forgetAttachment(id: string): void {
+    this.native.forgetAttachment(id);
+  }
+
+  /**
+   * The full stop, awaited on real completion (idempotent; the driver's
+   * honest failure rejects). The event stream ends at the mark: drain to
+   * your quiescent point BEFORE stopping.
+   */
+  stop(): Promise<void> {
+    return decode(this.native.stop());
   }
 }
 
