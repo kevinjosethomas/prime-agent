@@ -144,12 +144,52 @@ impl AttachmentRegistry {
 
     /// Invalidate an id's in-flight attempt WITHOUT dropping the entry
     /// (detach/kill at SEND time): the fresh token leaves a racing attach
-    /// response's old token dangling, so it can never adopt.
+    /// response's old token dangling, so it can never adopt — and the id's
+    /// FRESH INTENT dies with it (a pending fresh attach cannot adopt past
+    /// the command either).
     pub(crate) fn invalidate(&mut self, id: &str) {
         self.attempts += 1;
         if let Some(entry) = self.attachments.get_mut(id) {
             entry.attempt = self.attempts;
         }
+        self.intents.remove(id);
+    }
+
+    /// A cancelled registered attempt's cleanup: the ENTRY's pinned token
+    /// dangles ONLY when it is still THIS attempt's token (a newer attempt
+    /// is never disturbed).
+    pub(crate) fn invalidate_matching(&mut self, id: &str, token: u64) {
+        if let Some(entry) = self.attachments.get_mut(id) {
+            if entry.attempt == token {
+                self.attempts += 1;
+                entry.attempt = self.attempts;
+            }
+        }
+    }
+
+    /// The restore path's single-lock epoch comparison AND adoption (item 8).
+    pub(crate) fn adopt_at_epoch(
+        &mut self,
+        id: &str,
+        capabilities: &[String],
+        data: &Value,
+        token: u64,
+        epoch: u64,
+    ) -> bool {
+        if self.epoch != epoch {
+            return false;
+        }
+        self.record_attach(id, capabilities, data, token)
+    }
+
+    /// The request path's single-lock epoch comparison AND forget (the
+    /// detach carryover: no check-then-lock helper).
+    pub(crate) fn forget_at_epoch(&mut self, id: &str, epoch: u64) -> bool {
+        if self.epoch != epoch {
+            return false;
+        }
+        self.forget(id);
+        true
     }
 
     /// Abandon a fresh attach attempt that failed or was cancelled: the

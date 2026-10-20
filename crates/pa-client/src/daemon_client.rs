@@ -642,15 +642,32 @@ impl DaemonClient {
             tokio::pin!(deadline);
             let hello = {
                 loop {
+                    // The deadline is checked inside the buffered scan too: a
+                    // pre-hello flood already in the socket cannot starve it.
+                    if deadline.is_elapsed() {
+                        return Err(anyhow!(
+                            "Timed out after {HELLO_TIMEOUT_MS}ms waiting for the Prime Agent daemon handshake. Socket: {}.",
+                            socket_path.display()
+                        ));
+                    }
                     if let Some(newline) = partial.iter().position(|byte| *byte == b'\n') {
+                        // The cap covers EVERY decoded line — the drained
+                        // line without its newline, spill included (the
+                        // base reader's accounting, verbatim).
+                        if max_frame_bytes.is_some_and(|cap| newline > cap) {
+                            return Err(anyhow!(
+                                "a frame exceeded the limit before the Prime Agent daemon handshake. Socket: {}.",
+                                socket_path.display()
+                            ));
+                        }
                         let line: Vec<u8> = partial.drain(..=newline).collect();
                         // The legacy teardown class: invalid UTF-8 before the
                         // handshake failed the connect, too.
                         let Ok(text) = std::str::from_utf8(&line) else {
                             return Err(anyhow!(
-                            "the daemon sent an invalid frame before the handshake. Socket: {}.",
-                            socket_path.display()
-                        ));
+                                "the daemon sent an invalid frame before the handshake. Socket: {}.",
+                                socket_path.display()
+                            ));
                         };
                         let Ok(value) = serde_json::from_str::<Value>(text.trim()) else {
                             continue;
@@ -669,12 +686,17 @@ impl DaemonClient {
                         continue;
                     } else if max_frame_bytes.is_some_and(|cap| partial.len() > cap) {
                         return Err(anyhow!(
-                        "a frame exceeded the limit before the Prime Agent daemon handshake. Socket: {}.",
-                        socket_path.display()
-                    ));
+                            "a frame exceeded the limit before the Prime Agent daemon handshake. Socket: {}.",
+                            socket_path.display()
+                        ));
                     }
                     let resolved = tokio::select! {
-                        // The socket closed before the hello: the teardown error.
+                        // The socket closed before the hello: the BASE's
+                        // last-line-at-EOF semantics — the residual
+                        // unterminated line dispatches ONCE; a VALID hello
+                        // resolves the handshake (the connect SUCCEEDS, and
+                        // the EOF becomes the ordinary first loss); anything
+                        // else takes the closed-before-handshake error.
                         resolved = reader.fill_buf() => resolved,
                         () = &mut deadline => {
                             return Err(anyhow!(
@@ -685,6 +707,29 @@ impl DaemonClient {
                     };
                     let buffer = match resolved {
                         Ok([]) | Err(_) => {
+                            if !partial.is_empty() {
+                                let line: Vec<u8> = std::mem::take(&mut partial);
+                                if max_frame_bytes.is_some_and(|cap| line.len() > cap) {
+                                    return Err(anyhow!(
+                                        "a frame exceeded the limit before the Prime Agent daemon handshake. Socket: {}.",
+                                        socket_path.display()
+                                    ));
+                                }
+                                if let Ok(text) = std::str::from_utf8(&line) {
+                                    if let Ok(value) =
+                                        serde_json::from_str::<Value>(text.trim())
+                                    {
+                                        if value.get("type").and_then(Value::as_str)
+                                            == Some("daemon_hello")
+                                        {
+                                            break Some(value);
+                                        }
+                                        if let Some(event) = client_event_from_value(&value) {
+                                            let _ = event_tx.send(event);
+                                        }
+                                    }
+                                }
+                            }
                             return Err(anyhow!(
                                 "the daemon connection closed before the handshake. Socket: {}.",
                                 socket_path.display()
@@ -699,6 +744,7 @@ impl DaemonClient {
             };
             (reader, partial, hello)
         };
+
         let Some(hello) = hello else {
             return Err(anyhow!(
                 "the daemon connection closed before the handshake. Socket: {}.",
@@ -780,16 +826,22 @@ impl DaemonClient {
             };
             // The handshake's coalesced read-ahead rides in `partial`: every
             // complete seeded line dispatches BEFORE the first socket fill —
-            // nothing buffered at handover is ever stranded.
+            // nothing buffered at handover is ever stranded. A failure class
+            // here (cap, invalid UTF-8) TERMINATES the whole task — the
+            // single exit runs the epilogue below, never the main loop.
+            let mut seed_fatal = false;
             while let Some(newline) = partial.iter().position(|byte| *byte == b'\n') {
                 if max_frame_bytes.is_some_and(|cap| newline > cap) {
+                    seed_fatal = true;
                     break;
                 }
                 let line: Vec<u8> = partial.drain(..=newline).collect();
                 if !dispatch(&line) {
+                    seed_fatal = true;
                     break;
                 }
             }
+            if !seed_fatal {
             loop {
                 let buffer = match reader.fill_buf().await {
                     // The socket closed: a trailing unterminated line still
@@ -834,6 +886,7 @@ impl DaemonClient {
                     let read = buffer.len();
                     reader.consume(read);
                 }
+            }
             }
             // The supervisor socket closed: pending requests fail now and the
             // death watch wakes the reconnect driver.
