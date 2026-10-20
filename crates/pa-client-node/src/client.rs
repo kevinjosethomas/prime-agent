@@ -143,6 +143,20 @@ impl Inner {
         }
     }
 
+    /// The teardown cause for in-flight operations: `None` while the
+    /// connection is live, `Some("overflow")` / `Some("closed")` after
+    /// the close chain marked the connection.
+    fn teardown_cause(&self) -> Option<&'static str> {
+        if !self.closed.load(Ordering::SeqCst) {
+            return None;
+        }
+        if self.overflow.load(Ordering::SeqCst) {
+            Some("overflow")
+        } else {
+            Some("closed")
+        }
+    }
+
     /// Track one binding-owned operation bridge for close's join phase.
     fn track_bridge(&self, handle: tokio::task::JoinHandle<()>) {
         self.bridges
@@ -321,16 +335,19 @@ impl PrimeDaemonClient {
     #[napi]
     pub async fn upgrade_direct(&self, active_session_id: String) -> Result<bool> {
         let client = self.inner.client_arc()?;
-        let work = bridge(async move { client.upgrade_direct(&active_session_id).await });
-        let tracker = bridge(async move {
-            let _ = work.await;
+        let (result_tx, result_rx) =
+            tokio::sync::oneshot::channel::<Result<bool, napi::Error>>();
+        let handle = bridge(async move {
+            let outcome = client
+                .upgrade_direct(&active_session_id)
+                .await
+                .map_err(|error| classify(error, None));
+            let _ = result_tx.send(outcome);
         });
-        self.inner.track_bridge(tracker);
-        work.await
-            .map_err(|join_error| {
-                transport(format!("the direct upgrade task failed: {join_error}"))
-            })?
-            .map_err(|error| classify(error, None))
+        self.inner.track_bridge(handle);
+        result_rx
+            .await
+            .map_err(|_| transport("the direct upgrade task failed".to_string()))?
     }
 
     #[napi]
@@ -421,8 +438,12 @@ impl PrimeDaemonClient {
                 "the default request timeout fits a u32",
             )),
         );
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel::<Result<Value, napi::Error>>();
         let inner = Arc::clone(&self.inner);
-        let work = bridge(async move {
+        // ONE tracked task carries the operation; the napi promise rides a
+        // oneshot so a cancelled JS promise never detaches the work — close
+        // still joins the real handle.
+        let handle = bridge(async move {
             let notified = inner.teardown.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
@@ -432,18 +453,21 @@ impl PrimeDaemonClient {
             // BEFORE the request's first poll, so the line was provably
             // never queued — NotSent with the cause, never Uncertain.
             if let Some(cause) = inner.teardown_cause() {
-                return Err(not_sent_cause(Some(cause)));
+                let _ = result_tx.send(Err(not_sent_cause(Some(cause))));
+                return;
             }
             // Biased with the core future FIRST: when a completed answer
             // and the teardown wake are both ready, the core's own class
             // (Success/Rejected/transport) must win — never downgraded to
             // Uncertain by the race.
-            tokio::select! {
+            let outcome = tokio::select! {
                 biased;
                 response = &mut fut => {
-                    let response = response.map_err(|error| classify(error, None))?;
-                    serde_json::to_value(response).map_err(|error| {
-                        transport(format!("serialize response: {error}"))
+                    let response = response.map_err(|error| classify(error, None));
+                    response.and_then(|response| {
+                        serde_json::to_value(response).map_err(|error| {
+                            transport(format!("serialize response: {error}"))
+                        })
                     })
                 }
                 _ = &mut notified => {
@@ -453,16 +477,13 @@ impl PrimeDaemonClient {
                         Some(cause),
                     ))
                 }
-            }
+            };
+            let _ = result_tx.send(outcome);
         });
-        let tracker = bridge(async move {
-            let _ = work.await;
-        });
-        self.inner.track_bridge(tracker);
-        work.await
-            .map_err(|join_error| {
-                transport(format!("the request task failed: {join_error}"))
-            })?
+        self.inner.track_bridge(handle);
+        result_rx
+            .await
+            .map_err(|_| transport("the request task failed".to_string()))?
     }
 
     #[napi]
@@ -472,8 +493,9 @@ impl PrimeDaemonClient {
             .map_err(|error| {
                 not_sent(format!("command deserialize failed: {error}"))
             })?;
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel::<Result<Value, napi::Error>>();
         let inner = Arc::clone(&self.inner);
-        let work = bridge(async move {
+        let handle = bridge(async move {
             let notified = inner.teardown.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
@@ -481,10 +503,11 @@ impl PrimeDaemonClient {
             tokio::pin!(fut);
             // Deterministic pre-poll barrier (see `request`).
             if let Some(cause) = inner.teardown_cause() {
-                return Err(not_sent_cause(Some(cause)));
+                let _ = result_tx.send(Err(not_sent_cause(Some(cause))));
+                return;
             }
             // Biased with the core future first (see `request`).
-            tokio::select! {
+            let outcome = tokio::select! {
                 biased;
                 data = &mut fut => data.map_err(|error| classify(error, None)),
                 _ = &mut notified => {
@@ -494,16 +517,13 @@ impl PrimeDaemonClient {
                         Some(cause),
                     ))
                 }
-            }
+            };
+            let _ = result_tx.send(outcome);
         });
-        let tracker = bridge(async move {
-            let _ = work.await;
-        });
-        self.inner.track_bridge(tracker);
-        work.await
-            .map_err(|join_error| {
-                transport(format!("the request task failed: {join_error}"))
-            })?
+        self.inner.track_bridge(handle);
+        result_rx
+            .await
+            .map_err(|_| transport("the request task failed".to_string()))?
     }
 
     #[napi]
