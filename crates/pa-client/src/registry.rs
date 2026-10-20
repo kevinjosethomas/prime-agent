@@ -46,7 +46,7 @@ pub(crate) struct AttachmentRegistry {
     /// Insertion order (restore visits entries in it).
     order: Vec<String>,
     attachments: HashMap<String, Attachment>,
-    /// (active_session_id, generation) -> the last delivered sequence.
+    /// `(active_session_id, generation)` -> the last delivered sequence.
     seen: HashMap<(String, String), u64>,
 }
 
@@ -120,8 +120,7 @@ impl AttachmentRegistry {
         if let Some(cursor) = snapshot.get("lastEventCursor").and_then(parse_cursor) {
             if current
                 .as_ref()
-                .map(|c| c.generation != cursor.generation)
-                .unwrap_or(true)
+                .map_or(true, |c| c.generation != cursor.generation)
                 || current.as_ref().and_then(|c| c.sequence).unwrap_or(0) < cursor.sequence.unwrap_or(0)
             {
                 entry.cursor = Some(cursor);
@@ -200,7 +199,7 @@ impl AttachmentRegistry {
             return FrameAction::Dedupe;
         }
         *last = sequence;
-        let entry = &mut self.attachments.get_mut(id).expect("registered above");
+        let entry = self.attachments.get_mut(id).expect("registered above");
         if !generation.is_empty() {
             entry.cursor = Some(DaemonResumeCursor {
                 active_session_id: Some(id.to_string()),
@@ -305,7 +304,7 @@ mod tests {
         registry.register("s1", vec!["attach_snapshot".to_string()]);
         let actions: Vec<FrameAction> = [("g1", 2), ("g1", 2), ("g1", 1), ("g2", 1)]
             .iter()
-            .map(|(generation, sequence)| registry.observe_frame(&event(generation, sequence)))
+            .map(|(generation, sequence)| registry.observe_frame(&event(generation, *sequence)))
             .collect();
         assert_eq!(
             actions,
