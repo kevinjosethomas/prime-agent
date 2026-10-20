@@ -435,6 +435,9 @@ fn a_descriptorless_leftover_dies_and_its_session_resumes() {
 }
 
 #[test]
+// Keep the freeze, durable-stop, process-death and reopen witnesses in
+// one end-to-end sequence so their causal ordering stays reviewable.
+#[allow(clippy::too_many_lines)]
 fn an_owned_stop_kills_a_worker_that_missed_the_shutdown() {
     let dir = tempfile::TempDir::new().expect("temp dir");
     let socket = dir.path().join("daemon.sock");
