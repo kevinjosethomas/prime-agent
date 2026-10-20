@@ -381,10 +381,12 @@ impl DaemonClientSession {
                             .to_string(),
                     );
                     let result = self.state.driver.lock().await.memo.take();
-                    return result
-                        .map(|_| ())
-                        .unwrap_or(())
-                        .map_err(anyhow::Error::new);
+                    return match result {
+                        Some(result) => Err(anyhow::Error::new(result)),
+                        // Never memoized and never started: the honest answer
+                        // for a session with no driver to fail.
+                        None => Ok(()),
+                    };
                 }
             }
         }

@@ -746,7 +746,7 @@ impl DaemonClient {
             // One decoded line: `false` only on invalid UTF-8, the teardown
             // `read_line` always produced. A malformed JSON line is skipped,
             // exactly like before.
-            let mut dispatch = |line: &[u8]| -> bool {
+            let dispatch = |line: &[u8]| -> bool {
                 let Ok(text) = std::str::from_utf8(line) else {
                     return false;
                 };
