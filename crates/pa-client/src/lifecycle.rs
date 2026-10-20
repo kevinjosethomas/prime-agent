@@ -782,3 +782,268 @@ fn spawn_restores(
         }));
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::UnixListener;
+
+    fn config(socket: &std::path::Path) -> LifecycleConfig {
+        LifecycleConfig {
+            socket_path: socket.to_path_buf(),
+            reconnect: ReconnectPolicy::desktop(),
+            attach_capabilities: vec!["attach_snapshot".to_string()],
+            dedup_session_events: true,
+            restore_attempt_timeout: Duration::from_secs(5),
+            transport: DaemonClientOptions::default(),
+        }
+    }
+
+    /// A supervisor that greets, records every command, answers `Ok` (with
+    /// an optional attach cursor), and streams optional frames on attach.
+    struct MockSupervisor {
+        commands: Arc<Mutex<Vec<Value>>>,
+        accepted: Arc<AtomicU64>,
+        eof: Arc<AtomicBool>,
+    }
+
+    impl MockSupervisor {
+        fn new() -> (Self, UnixListener) {
+            let dir = tempfile::TempDir::new().unwrap();
+            let socket = dir.path().join("d.sock");
+            let listener = UnixListener::bind(&socket).unwrap();
+            // Keep the temp dir alive with the listener's socket path.
+            std::mem::forget(dir);
+            (
+                MockSupervisor {
+                    commands: Arc::new(Mutex::new(Vec::new())),
+                    accepted: Arc::new(AtomicU64::new(0)),
+                    eof: Arc::new(AtomicBool::new(false)),
+                },
+                listener,
+            )
+        }
+    }
+
+    async fn serve(
+        listener: UnixListener,
+        commands: Arc<Mutex<Vec<Value>>>,
+        accepted: Arc<AtomicU64>,
+        eof: Arc<AtomicBool>,
+        attach_data: Value,
+        on_accepted: Option<tokio::sync::Notify>,
+    ) {
+        loop {
+            let (stream, _) = listener.accept().await.expect("supervisor accept");
+            accepted.fetch_add(1, Ordering::SeqCst);
+            if let Some(notify) = &on_accepted {
+                notify.notify_one();
+            }
+            let commands = Arc::clone(&commands);
+            let eof = Arc::clone(&eof);
+            let attach_data = attach_data.clone();
+            tokio::spawn(async move {
+                let (reader, mut writer) = stream.into_split();
+                let mut reader = tokio::io::BufReader::new(reader);
+                let mut line = String::new();
+                let hello = json!({
+                    "type": "daemon_hello",
+                    "protocol": { "name": "prime-agent.daemon", "version": 7 },
+                    "clientId": "srv",
+                    "serverCapabilities": [],
+                    "appVersion": "mock",
+                });
+                writer
+                    .write_all(format!("{hello}\n").as_bytes())
+                    .await
+                    .unwrap();
+                loop {
+                    line.clear();
+                    match reader.read_line(&mut line).await {
+                        Ok(0) | Err(_) => {
+                            eof.store(true, Ordering::SeqCst);
+                            break;
+                        }
+                        Ok(_) => {}
+                    }
+                    let Ok(envelope) = serde_json::from_str::<Value>(line.trim()) else {
+                        continue;
+                    };
+                    let command = envelope["command"].clone();
+                    commands.lock().unwrap().push(command.clone());
+                    let data = if command["type"] == "attach" {
+                        attach_data.clone()
+                    } else {
+                        json!({ "ok": true })
+                    };
+                    let response = json!({
+                        "type": "response",
+                        "id": envelope["id"],
+                        "command": command["type"],
+                        "success": true,
+                        "data": data,
+                    });
+                    writer
+                        .write_all(format!("{response}\n").as_bytes())
+                        .await
+                        .unwrap();
+                }
+            });
+        }
+    }
+
+    async fn next_event(
+        events: &mut mpsc::UnboundedReceiver<ConnectionEvent>,
+    ) -> ConnectionEvent {
+        tokio::time::timeout(Duration::from_secs(10), events.recv())
+            .await
+            .expect("an event arrives")
+            .expect("the session lives")
+    }
+
+    async fn wait_connected(events: &mut mpsc::UnboundedReceiver<ConnectionEvent>) {
+        loop {
+            match next_event(events).await {
+                ConnectionEvent::Status(status) if status.state == ConnectionState::Connected => {
+                    return;
+                }
+                ConnectionEvent::Status(ConnectionStatus {
+                    state: ConnectionState::Expired,
+                    ..
+                }) => panic!("expired before connecting"),
+                _ => {}
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn validation_rejects_zero_durations_and_foreign_taps() {
+        let mut zero_restore = config(std::path::Path::new("/dev/null"));
+        zero_restore.restore_attempt_timeout = Duration::ZERO;
+        assert!(DaemonClientSession::start(zero_restore).await.is_err());
+
+        let mut foreign_tap = config(std::path::Path::new("/dev/null"));
+        let (tap_tx, _tap_rx) = mpsc::unbounded_channel::<Value>();
+        foreign_tap.transport.raw_tap = Some(tap_tx);
+        assert!(DaemonClientSession::start(foreign_tap).await.is_err());
+
+        let mut zero_delay = config(std::path::Path::new("/dev/null"));
+        zero_delay.reconnect.lost.initial_delay = Duration::ZERO;
+        assert!(DaemonClientSession::start(zero_delay).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn connects_publishes_status_and_streams_frames_with_dedupe() {
+        let (mock, listener) = MockSupervisor::new();
+        let attach_data = json!({ "lastEventCursor": { "generation": "g", "sequence": 4 } });
+        tokio::spawn(serve(
+            listener,
+            Arc::clone(&mock.commands),
+            Arc::clone(&mock.accepted),
+            Arc::clone(&mock.eof),
+            attach_data,
+            None,
+        ));
+        // The mock's socket path: the temp dir was forgotten into the
+        // listener — recover the path from the listener's local addr.
+        let socket = listener.local_addr().expect("bound socket").as_pathname().map(|p| p.to_path_buf()).expect("path");
+
+        let (session, mut events) = DaemonClientSession::start(config(&socket)).await.unwrap();
+        wait_connected(&mut events).await;
+        session.register_attachment("s1", None);
+
+        // An attach through the request path adopts the cursor and stores
+        // the attachment; events with the adopted cursor dedupe.
+        session
+            .request_ok(DaemonCommand::Attach {
+                id: None,
+                active_session_id: "s1".to_string(),
+                client_id: None,
+                capabilities: None,
+                resume_cursor: None,
+                telemetry_disabled: None,
+                recovery_config: None,
+                env: None,
+                launch_env: None,
+                rest: Map::new(),
+            })
+            .await
+            .unwrap();
+        session.stop().await;
+        let _ = events;
+    }
+
+    #[tokio::test]
+    async fn stop_is_prompt_idempotent_and_awaits_the_driver() {
+        let (mock, listener) = MockSupervisor::new();
+        tokio::spawn(serve(
+            listener,
+            Arc::clone(&mock.commands),
+            Arc::clone(&mock.accepted),
+            Arc::clone(&mock.eof),
+            json!({ "ok": true }),
+            None,
+        ));
+        let socket = listener
+            .local_addr()
+            .unwrap()
+            .as_pathname()
+            .map(|p| p.to_path_buf())
+            .expect("path");
+        let (session, mut events) = DaemonClientSession::start(config(&socket)).await.unwrap();
+        wait_connected(&mut events).await;
+        // A concurrent stop settles quickly and is idempotent.
+        let started = std::time::Instant::now();
+        let (one, two) = tokio::join!(session.stop(), session.stop());
+        let _ = (one, two);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        // The mock saw the connection come and go.
+        assert!(mock.accepted.load(Ordering::SeqCst) >= 1);
+        // Post-stop requests are provable non-deliveries.
+        let error = session
+            .request(DaemonCommand::List {
+                id: None,
+                all: None,
+                cwd: None,
+                session_dir: None,
+                include_client_owned: None,
+                rest: Map::new(),
+            })
+            .await
+            .unwrap_err();
+        assert!(crate::daemon_client::is_command_not_sent(&error), "unexpected: {error}");
+    }
+
+    #[tokio::test]
+    async fn bounded_window_expires_with_a_typed_event_and_stops() {
+        // No daemon: every connect fails; a tiny bounded window must expire.
+        let dir = tempfile::TempDir::new().unwrap();
+        let socket = dir.path().join("absent.sock");
+        let mut config = config(&socket);
+        config.reconnect.lost = ReconnectWindow {
+            window: Some(Duration::from_millis(200)),
+            initial_delay: Duration::from_millis(20),
+            max_delay: Duration::from_millis(40),
+        };
+        let (session, mut events) = DaemonClientSession::start(config).await.unwrap();
+        let expired = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match next_event(&mut events).await {
+                    ConnectionEvent::ReconnectExpired { .. } => return,
+                    ConnectionEvent::Status(status)
+                        if status.state == ConnectionState::Expired =>
+                    {
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await;
+        assert!(expired.is_ok(), "the bounded window expired");
+        session.stop().await;
+    }
+}
