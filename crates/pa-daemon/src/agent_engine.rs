@@ -277,8 +277,7 @@ pub struct AgentSessionEngine {
     /// The session's live working directory, shared with the MCP user-servers
     /// closure so a [`SessionEngine::set_cwd`] rebind is visible to it.
     cwd: std::sync::Arc<std::sync::RwLock<std::path::PathBuf>>,
-    /// This session's RLM recursion depth (0 for top-level): gates the kernel `refine.*` host
-    /// requests.
+    /// This session's RLM recursion depth (0 for top-level).
     rlm_depth: std::sync::atomic::AtomicU32,
     /// The depth bound's source stamp (`default` | `env` | `global` |
     /// `inherited` | `chat`).

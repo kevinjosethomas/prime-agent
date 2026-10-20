@@ -35,8 +35,6 @@ mod tests {
         std::fs::write(agent_dir.join("agent-traces-outbox.json"), "{}").expect("outbox marker");
         std::fs::write(outbox_dir.join("hash.json"), "{}").expect("outbox entry");
         std::fs::write(agent_dir.join("cron-jobs.json"), "{}").expect("cron fallback");
-        std::fs::create_dir_all(agent_dir.join("harness")).expect("harness dir");
-        std::fs::write(agent_dir.join("harness/refinements.jsonl"), "{}").expect("history");
 
         assert_eq!(sweep_ts_era_leftovers(&agent_dir), 2);
 
@@ -47,7 +45,6 @@ mod tests {
             .exists());
         assert!(outbox_dir.join("hash.json").exists());
         assert!(agent_dir.join("cron-jobs.json").exists());
-        assert!(agent_dir.join("harness/refinements.jsonl").exists());
     }
 
     #[test]

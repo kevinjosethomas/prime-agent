@@ -1008,14 +1008,6 @@ impl TurnRunner {
                         "type": "goal_update",
                         "goal": goal,
                     })],
-                    EngineEvent::RefineComplete { result } => vec![json!({
-                        "type": "refine_complete",
-                        "result": result,
-                    })],
-                    EngineEvent::RefineFailed { error } => vec![json!({
-                        "type": "refine_failed",
-                        "error": error,
-                    })],
                     // The loop's run-boundary frames (TS `agent_start`/
                     // `agent_end`): the run's whole message set rides
                     // `agent_end` (one frame per agent run — retried and

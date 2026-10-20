@@ -346,15 +346,7 @@ async fn clear_pending_drops_scheduled_requests() {
     requests
         .schedule_compaction(Some("summarize".to_string()))
         .await;
-    requests
-        .schedule_refine(PendingRefine {
-            instructions: Some("x".to_string()),
-            global: false,
-        })
-        .await;
-    assert!(requests.refine_pending().await);
     requests.clear_pending().await;
-    assert!(requests.take_refine().await.is_none());
     assert!(requests.take_compaction().await.is_none());
 }
 

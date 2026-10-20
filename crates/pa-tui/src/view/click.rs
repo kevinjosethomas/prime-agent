@@ -270,7 +270,7 @@ impl AgentView {
     /// The click action for one transcript window row: a row inside a
     /// visible tool card, bash card, or TS `Clickable` custom row
     /// (agent message, shell completion, compaction summary,
-    /// refinement outcome, skill invocation, injected prompt) toggles
+    /// skill invocation, injected prompt) toggles
     /// that row's own expansion. Other rows (user, assistant, status,
     /// slash, panels) are not clickable.
     fn transcript_click_target(&self, window_row: usize) -> Option<ClickAction> {
@@ -287,7 +287,6 @@ impl AgentView {
                 | ChatEntry::AgentMessage(_)
                 | ChatEntry::ShellCompletion(_)
                 | ChatEntry::CompactionSummary { .. }
-                | ChatEntry::RefinementOutcome(_)
                 | ChatEntry::SkillInvocation(_)
                 | ChatEntry::InjectedPrompt(_)
         ))
@@ -365,15 +364,13 @@ mod tests {
         }
     }
 
-    /// The TS click-to-expand custom rows (compaction, refinement, skill,
+    /// The TS click-to-expand custom rows (compaction, skill,
     /// and injected prompt wrap their header in `Clickable`): a click
     /// targets the row, and the toggle opens its own body.
     #[test]
     fn a_click_expands_the_custom_message_rows() {
         use super::super::expansion::tests::transcript_text;
-        use crate::custom_message::{
-            InjectedPromptKind, InjectedPromptRow, RefinementOutcomeRow, SkillInvocationRow,
-        };
+        use crate::custom_message::{InjectedPromptKind, InjectedPromptRow, SkillInvocationRow};
         let rows = [
             (
                 ChatEntry::CompactionSummary {
@@ -382,15 +379,6 @@ mod tests {
                     custom_instructions: None,
                 },
                 "Compacted from",
-            ),
-            (
-                ChatEntry::RefinementOutcome(Box::new(RefinementOutcomeRow {
-                    header: "Harness refined".to_string(),
-                    summary: "added a memory".to_string(),
-                    meta: "refinement meta".to_string(),
-                    edits: Vec::new(),
-                })),
-                "refinement meta",
             ),
             (
                 ChatEntry::SkillInvocation(Box::new(SkillInvocationRow {

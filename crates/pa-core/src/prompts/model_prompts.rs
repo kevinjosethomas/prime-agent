@@ -253,6 +253,15 @@ pub fn load_model_prompts(selector: Option<&str>, agent_dir: &Path) -> ModelProm
     resolve_model_prompts(selector, MODEL_PROMPTS_TOML, MODEL_PROMPT_FILES, agent_dir)
 }
 
+/// Wall-clock milliseconds for one row's timestamp (a real clock, no
+/// replayable store).
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default()
+}
+
 #[must_use]
 pub fn model_prompt_error_message(errors: &[String]) -> CustomMessage {
     let list = errors
@@ -267,7 +276,7 @@ pub fn model_prompt_error_message(errors: &[String]) -> CustomMessage {
         )),
         display: true,
         details: None,
-        timestamp: crate::session_engine::refine::now_millis(),
+        timestamp: now_millis(),
         rest: serde_json::Map::default(),
     }
 }

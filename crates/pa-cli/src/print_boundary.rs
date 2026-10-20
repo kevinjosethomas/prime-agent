@@ -3,8 +3,6 @@
 //! boundary and before every admitted prompt (a pre-turn compaction never
 //! re-issues). Json mode streams the wire events, text mode stays quiet.
 
-use std::path::PathBuf;
-
 use pa_core::session_engine::compact_session::{CompactOutcome, CompactRun};
 use pa_core::session_engine::engine::SessionEngine;
 use pa_core::session_engine::messages::{CompactionOutcomeKind, CompactionOutcomeReason};
@@ -26,7 +24,6 @@ use compaction_arms::{OverflowBoundary, OverflowOutcome, OverflowRecovery};
 #[cfg(test)]
 use compaction_arms::OVERFLOW_RECOVERY_FAILED_MESSAGE;
 
-mod refine_surface;
 
 /// Where the boundary's json events go: stdout in the product, a captured
 /// buffer in tests.
@@ -102,7 +99,6 @@ impl TurnBoundary {
         engine: &SessionEngine,
         model: &Model,
         api_key: Option<String>,
-        global_harness_dir: PathBuf,
     ) -> Result<(), String> {
         let arm_finished = loop {
             let outcome = self
@@ -121,16 +117,6 @@ impl TurnBoundary {
             self.requested_and_threshold_arms(engine, model, api_key.clone())
                 .await?;
         }
-        // The requested refinement runs whenever the turn did not
-        // re-issue (a retried turn consumes it at its own boundary).
-        let entries_before = engine.session.entries().await.len();
-        if let Some(outcome) = engine
-            .consume_pending_refinement(model, api_key, global_harness_dir)
-            .await
-        {
-            self.stream_refinement_outcome(engine, &outcome, entries_before, true, "requested")
-                .await;
-        }
         Ok(())
     }
 
@@ -142,7 +128,6 @@ impl TurnBoundary {
         model: &Model,
         api_key: Option<String>,
         prompt: &str,
-        global_harness_dir: PathBuf,
     ) -> Result<(), String> {
         self.run_pre_turn(engine, model, api_key.clone()).await?;
         engine
@@ -158,8 +143,7 @@ impl TurnBoundary {
             .await
             .map_err(|error| format!("{error:#}"))?;
         engine.session.agent().wait_for_idle().await;
-        self.run_at_settled_turn(engine, model, api_key, global_harness_dir)
-            .await
+        self.run_at_settled_turn(engine, model, api_key).await
     }
 }
 

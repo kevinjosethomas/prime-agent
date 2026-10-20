@@ -164,12 +164,6 @@ pub enum EngineEvent {
         final_error: Option<String>,
         restored_model: Option<String>,
     },
-    RefineComplete {
-        result: Value,
-    },
-    RefineFailed {
-        error: String,
-    },
 }
 
 /// A streamed assistant message: already in wire form, or the loop's typed

@@ -216,7 +216,6 @@ impl AgentView {
             | ChatEntry::AgentMessage(_)
             | ChatEntry::ShellCompletion(_)
             | ChatEntry::InjectedPrompt(_)
-            | ChatEntry::RefinementOutcome(_)
             | ChatEntry::CustomPanel(_) => true,
             ChatEntry::Assistant(message) => !message.streaming,
             ChatEntry::Tool(card) => {
@@ -262,7 +261,6 @@ impl AgentView {
             ChatEntry::Assistant(_) => preceded_by_tool_activity,
             ChatEntry::Status { .. }
             | ChatEntry::InjectedPrompt(_)
-            | ChatEntry::RefinementOutcome(_)
             | ChatEntry::CustomPanel(_) => false,
         }
     }
