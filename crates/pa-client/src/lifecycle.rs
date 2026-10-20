@@ -1867,7 +1867,7 @@ mod tests {
         // Abort the REAL driver THROUGH its retained handle — the state
         // keeps ownership; the monitor will observe the genuine end.
         {
-            let mut driver = session.state.driver.lock().await;
+            let driver = session.state.driver.lock().await;
             if let Some(handle) = driver.handle.as_ref() {
                 handle.abort();
             }
@@ -1947,6 +1947,7 @@ mod tests {
         session.stop().await.expect("the settle completed honestly");
     }
 
+    #[allow(clippy::too_many_lines)]
     #[tokio::test]
     async fn a_queued_done_before_a_loss_never_reattaches_afterwards() {
         // P-1 (F-3's proof): a REAL old-epoch Done queued on the OLD
@@ -2080,7 +2081,6 @@ mod tests {
         // restore: EVERY surfaced Reattached must carry the "new" marker;
         // a stale old-epoch emission fails the proof.
         let verdict = tokio::time::timeout(Duration::from_secs(20), async {
-            let mut saw_new = false;
             loop {
                 match next_event(&mut events).await {
                     ConnectionEvent::Reattached { data, .. } => {
@@ -2088,8 +2088,7 @@ mod tests {
                             data["source"], "new",
                             "only the new-epoch restore may surface: {data}"
                         );
-                        saw_new = true;
-                        return saw_new;
+                        return true;
                     }
                     ConnectionEvent::ReattachFailed { error, .. } => {
                         panic!("no failure was scripted: {error}");
@@ -2178,8 +2177,8 @@ mod tests {
         // the shared slot retains the TaskSet Arc (nothing detaches); the
         // fresh stop asserts the INNER Ok with the real task Drop observed
         // BEFORE its return.
-        let (supervisor, socket, _release) =
-            Supervisor::spawn(&tempfile::TempDir::new().unwrap(), Vec::new(), false, false);
+        let dir = tempfile::TempDir::new().unwrap();
+        let (supervisor, socket, _release) = Supervisor::spawn(&dir, Vec::new(), false, false);
         let (session, mut events) = DaemonClientSession::start(config(&socket)).await.unwrap();
         wait_connected(&mut events).await;
         // The real client's TaskSet: register a hot-loop task through the
