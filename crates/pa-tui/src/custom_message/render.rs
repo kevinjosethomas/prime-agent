@@ -6,9 +6,8 @@ use super::{
 };
 use crate::chat::Detail;
 use crate::theme::{Theme, ThemeColor};
-use crate::width::{pad_line, str_width, truncate_line, wrap_line, wrap_text};
+use crate::width::{pad_line, truncate_line, wrap_line, wrap_text};
 use crate::{Line, Span};
-use ratatui::style::Style;
 
 pub(crate) fn spacer() -> Line {
     Vec::new()
@@ -204,6 +203,7 @@ mod tests {
     use crate::chat::Detail;
     use crate::theme::{ColorMode, Theme};
     use crate::Span;
+    use ratatui::style::Style;
 
     fn theme() -> Theme {
         Theme::builtin("prime", ColorMode::TrueColor)
