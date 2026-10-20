@@ -62,7 +62,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 assert name, 'No supported REPL offered'
                 delta = {'tool_calls': [{'index': 0, 'id': 'complete_goal', 'type': 'function',
                          'function': {'name': name, 'arguments': json.dumps({'code':
-                                      'import goal\nawait goal.complete()'})}}]}
+                                      self.server.complete_code})}}]}
                 finish = 'tool_calls'
             else:
                 delta, finish = {'content': SETTLED}, 'stop'
@@ -236,6 +236,8 @@ class Rpc:
 
 def goal_case(binary, label, root, observation):
     provider = Provider(True)
+    provider.complete_code = ('import goal\nawait goal.complete()' if label == 'ts'
+                              else 'await harness.goal.complete()')
     rpc = None
     try:
         env = setup(root, label, provider)
@@ -294,7 +296,7 @@ def main():
               'scope': {'new': 'Real PTY command, owned real daemon, persisted name and model initial prompt.',
                         'goal': 'Actual RPC image-bearing goal_context row and completed goal.',
                         'provider_images': 'Recorded independently; existing model-routing limitation is not normalized into context-row evidence.',
-                        'goal_updates': 'Recorded independently: Rust RPC publishes before continuation, not on goal.complete; final completion is verified by get_state after agent_end.'}}
+                        'goal_updates': 'Recorded independently: Rust RPC publishes before continuation, not on goal completion; final completion is verified by get_state after agent_end.'}}
     try:
         assert sys.platform == 'linux', 'requires Linux hosted CI'
         archive_hash = sha256(os.environ['PA_TS_ARCHIVE'])

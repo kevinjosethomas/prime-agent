@@ -175,7 +175,7 @@ EXPLICIT EXCEPTION: wire-protocol identifiers that must stay byte-compatible wit
 ## Surface contract (must not change)
 
 - Tools exposed to the model: `bash`, `edit`, `python_repl` (internal helpers: `rename`, `stdout`).
-- RLM kernel API in the persistent Python REPL: `rlm.spawn/find_models/collect/list_subagents/delete_subagent/create_session/progress_note`, `agent_message.send`, `agent_observe`, `compact`, `goal`, `attach_image`, skills (markdown + Python) per the skill contract in the base system prompt.
+- Python kernel API in the persistent Python REPL: `agents` (spawn/list/parent/siblings/broadcast/note/rename, `Agent.send/recent/wait/stop/rename`), `harness` (context/compact/models/goal), `heartbeat`, `mcp` (connections/tools/call), `factory`, `bash`, `edit`, `websearch`, `attach_image`, skills (markdown + Python) per the skill contract in the base system prompt.
 - System prompt structure: layered — cache-stable static layer files (core harness description with the full API surface, mandatory usage rules, opinionated guidelines, per-model additions from the model-prompts TOML rule map) followed by one dynamic tail (packages, project context, skills inventory, MCP servers, environment, session role). `prime-agent prompt` dumps the assembled prompt with its layer breakdown.
 - CLI shape: `prime-agent` with the same commands/flags as the TS product; headless modes (RPC/daemon/session-worker) with identical behavior.
 

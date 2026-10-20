@@ -1,6 +1,6 @@
 ---
 name: factory
-description: Run state-machine workflows of spawned child agents: author machines in the library (MACHINE.md files, validated by `prime-agent factory import`) and run, watch, stop, and resume them through rlm.factory. For the full authoring reference and API guide, call rlm.factory.help() in the kernel.
+description: Run state-machine workflows of spawned child agents: author machines in the library (MACHINE.md files, validated by `prime-agent factory import`) and run, watch, stop, and resume them through factory. For the full authoring reference and API guide, call factory.help() in the kernel.
 ---
 
 # Factory
@@ -12,7 +12,7 @@ library and nowhere else: a `MACHINE.md` file (frontmatter plus one
 `machine-spec` fence, machine form or `dag` sugar that compiles to one),
 imported with `prime-agent factory import <path>` — the import validates,
 so an invalid machine never persists.
-`await rlm.factory.run('<name>')` runs a library machine (which
+`await factory.run('<name>')` runs a library machine (which
 re-validates before starting) and spawns each state's subagent as an ordinary child, feeds
 captured outputs into the successors' prompts, and drives the run to
 quiescence in a background kernel task — the call returns immediately and
@@ -21,17 +21,17 @@ shape: fan-out, bounded loops (review/fix until a verdict approves), joins,
 or one child per list item.
 
 **For the full authoring reference and API guide — states, ports, guards,
-joins, foreach, residents, budgets and policies, and the `rlm.factory`
+joins, foreach, residents, budgets and policies, and the `factory`
 run/status/stop/resume/graph/watch calls with worked examples — call
-`rlm.factory.help()` in the kernel.** The guide lands with the factory-core
+`factory.help()` in the kernel.** The guide lands with the factory-core
 PR; on builds without it, the module docstring in
 `prime-agent-runtime/src/rlm/factory.py` is the source of truth.
 
 ## The opt-in gate
 
-The factory ships disabled. `rlm.factory.help()` answers while it is off
+The factory ships disabled. `factory.help()` answers while it is off
 (the authoring guide stays readable before opting in), but every other
-`rlm.factory` call refuses with one
+`factory` call refuses with one
 message: `the factory is disabled; run /factory on to enable it`. The
 user turns it on with `/factory on` in the client (`/factory off`
 disables it again — refused while the session still has live runs, and

@@ -6,8 +6,8 @@ your browser. The connection becomes available to the current session through
 the generic `mcp` Python API:
 
 ```python
-tools = await mcp.list_tools("slack")
-# Read the returned inputSchema before calling a tool.
+tools = await mcp.tools("slack")
+# Read a tool's input_schema with await mcp.tools("slack", tool="...") before calling it.
 ```
 
 Prime Agent connects to Slack's hosted Streamable HTTP server at

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Hosted actual TS/Rust RLM spawn, durable ledger and warm-list liveness comparison.
 
-A real parent kernel admits a child with rlm.spawn. The synthetic provider holds
+A real parent kernel admits a child with a real spawn call (rlm.spawn on
+TS, agents.spawn on Rust). The synthetic provider holds
 that child's turn while both daemons answer repeated list/roster reads. This is
 live-family baseline parity plus real disk relocation/deletion and catalog wake
 restore observations. Historical flat-path tombstone rows are explicit fixture
@@ -28,9 +29,12 @@ CHILD = 'LEDGER_LIVENESS_CHILD_HOLD'
 NAME = 'ledger-fixture-child'
 BILLING = 'LEDGER_CACHE_BILLING_TURN'
 MARKER = 'LEDGER_LIVENESS_ADMITTED='
-CODE = """import json
+TS_CODE = """import json
 ledger_handle = await rlm.spawn('LEDGER_LIVENESS_CHILD_HOLD', name='ledger-fixture-child')
 print('LEDGER_LIVENESS_ADMITTED=' + json.dumps({'child_id': ledger_handle.rlm_child_id}))"""
+RUST_CODE = """import json
+ledger_handle = await agents.spawn('LEDGER_LIVENESS_CHILD_HOLD', name='ledger-fixture-child')
+print('LEDGER_LIVENESS_ADMITTED=' + json.dumps({'child_id': ledger_handle.child_id}))"""
 
 
 def admitted_probe(body):
@@ -134,7 +138,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         self.send_error(422, 'No real REPL tool offered')
                         return
                     delta = {'tool_calls': [{'index': 0, 'id': 'ledger_spawn', 'type': 'function',
-                              'function': {'name': tool, 'arguments': json.dumps({'code': CODE})}}]}
+                              'function': {'name': tool, 'arguments': json.dumps({'code': self.server.code})}}]}
                     finish = 'tool_calls'
                 else:
                     self.server.probe = admitted_probe(body)
@@ -255,7 +259,7 @@ def cache_boundaries(client, config, root, created, child, ledger_path, provider
     usage = own.get('usage')
     assert usage and usage['inputTokens'] > 0 and usage['outputTokens'] > 0, own
     # Controlled, valid historic ledger input: unlike the initial admission this
-    # edge is seeded by the fixture, never claimed to be an actual rlm.spawn.
+    # edge is seeded by the fixture, never claimed to be an actual spawn.
     records = [
         {'v': 1, 'op': 'spawn', 'at': '2026-01-01T00:00:00Z', 'childId': 'fixture-flat-child',
          'parent': str(parent_file), 'child': str(billing_file), 'depth': 1, 'name': 'billing-child'},
@@ -310,6 +314,7 @@ def run_case(binary, kind, root, observed, require_current_sidecar=False):
     library = Path(os.environ['PI_PACKAGE_DIR']) / 'skills'
     env['PYTHONPATH'] = os.pathsep.join(sorted(str(path) for path in library.glob('*/src') if path.is_dir()))
     provider = Provider()
+    provider.code = TS_CODE if kind == 'ts' else RUST_CODE
     thread = threading.Thread(target=provider.serve_forever, daemon=True)
     thread.start()
     models = {'providers': {'parity-local': {'api': 'openai-completions', 'apiKey': 'fixture-only',
