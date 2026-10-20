@@ -484,22 +484,6 @@ compat: Some(RawCompat {
         compat: None,
     },
     RawModel {
-        provider: "minimax-cn",
-        id: "MiniMax-M2.7",
-        name: "MiniMax-M2.7",
-        api: "anthropic-messages",
-        base_url: "https://api.minimaxi.com/anthropic",
-        reasoning: true,
-        thinking_levels: &[],
-        input: &[crate::types::ModelInput::Text],
-        cost: (0.3, 1.2, 0.06, 0.375),
-        context_window: 204_800,
-        max_tokens: 131_072,
-        featured: None,
-        headers: &[],
-        compat: None,
-    },
-    RawModel {
         provider: "mistral",
         id: "codestral-latest",
         name: "Codestral (latest)",
@@ -4481,12 +4465,12 @@ mod tests {
     #[test]
     fn catalog_loads_at_the_ts_fallback_scale() {
         let providers = get_providers();
-        assert_eq!(providers.len(), 32, "the TS fallback provider list");
+        assert_eq!(providers.len(), 31, "the TS fallback provider list");
         let total: usize = providers
             .iter()
             .map(|provider| get_models(provider).len())
             .sum();
-        assert_eq!(total, 152, "the TS fallback model list");
+        assert_eq!(total, 151, "the TS fallback model list");
         assert_eq!(
             get_models("prime-inference").len(),
             110,
@@ -4509,8 +4493,8 @@ mod tests {
         }
         assert_eq!(
             tuples.len(),
-            43,
-            "42 public transport tuples + Prime Inference"
+            42,
+            "41 public transport tuples + Prime Inference"
         );
     }
 

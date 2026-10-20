@@ -24,7 +24,6 @@ pub fn get_api_key_env_vars(provider: &str) -> Option<Vec<&'static str>> {
                 "zai" => "ZAI_API_KEY",
                 "mistral" => "MISTRAL_API_KEY",
                 "minimax" => "MINIMAX_API_KEY",
-                "minimax-cn" => "MINIMAX_CN_API_KEY",
                 "moonshotai" | "moonshotai-cn" => "MOONSHOT_API_KEY",
                 "huggingface" => "HF_TOKEN",
                 "fireworks" => "FIREWORKS_API_KEY",

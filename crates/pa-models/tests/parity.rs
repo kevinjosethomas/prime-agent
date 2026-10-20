@@ -20,8 +20,8 @@ fn parses_the_real_payload_with_zero_failures() {
         parse_model_catalog(&fixture(), InvalidEntries::Reject).expect("real payload parses");
     let providers: std::collections::BTreeSet<&str> =
         parsed.models.iter().map(|m| m.provider.as_str()).collect();
-    assert_eq!(parsed.models.len(), 1197, "the full catalog aggregate");
-    assert_eq!(providers.len(), 31, "31 providers");
+    assert_eq!(parsed.models.len(), 1195, "the full catalog aggregate");
+    assert_eq!(providers.len(), 30, "30 providers");
     // No entry ever carries headers from catalog data.
     assert!(parsed.models.iter().all(|model| model.headers.is_none()));
 }
@@ -32,7 +32,7 @@ fn every_real_entry_survives_transport_pinning() {
         .expect("pinned");
     assert_eq!(
         pinned.len(),
-        1197,
+        1195,
         "real catalog data selects only compiled transports"
     );
     let headers = pinned
@@ -51,7 +51,7 @@ fn passes_the_packer_gates() {
         .iter()
         .map(|m| (m.provider.as_str(), m.api.as_str(), m.base_url.as_str()))
         .collect();
-    assert!(tuples.len() >= 42, "packer gate: >=42 transport tuples");
+    assert!(tuples.len() >= 41, "packer gate: >=41 transport tuples");
     let compiled: std::collections::HashSet<(String, String, String)> =
         transports::compiled_models()
             .iter()
@@ -70,5 +70,5 @@ fn passes_the_packer_gates() {
 #[test]
 fn skip_invalid_keeps_the_real_payload_whole() {
     let parsed = parse_model_catalog(&fixture(), InvalidEntries::SkipInvalid).expect("skip mode");
-    assert_eq!(parsed.models.len(), 1197, "no real entry is skipped");
+    assert_eq!(parsed.models.len(), 1195, "no real entry is skipped");
 }
