@@ -52,12 +52,14 @@ export function loadAddon(): Record<string, unknown> {
   if (entry.sha256 !== digest) {
     throw new Error(`addon provenance mismatch for "${artifact}": sha256 ${digest}`);
   }
-  const addon = require(pathToFileURL(addonPath).href) as Record<string, unknown>;
-  const metadata = addon.clientMetadata() as {
-    schemaId: string;
-    harnessCommit: string;
-    targetTriple: string;
+  const addon = require(pathToFileURL(addonPath).href) as {
+    clientMetadata: () => {
+      schemaId: string;
+      harnessCommit: string;
+      targetTriple: string;
+    };
   };
+  const metadata = addon.clientMetadata();
   if (metadata.schemaId !== entry.schemaId) {
     throw new Error(
       `addon schema id mismatch: ${JSON.stringify(metadata.schemaId)} vs manifest ${entry.schemaId}`,

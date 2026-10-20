@@ -6,10 +6,12 @@
  * loads here without a rebuild.
  */
 const { app } = require('electron');
+const { join } = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 async function main() {
-  const { DaemonConnection } = await import(new URL('../dist/index.js', import.meta.url).href);
-  const { startMock, tmpSocket } = await import(new URL('../tests/helpers.mjs', import.meta.url).href);
+  const { DaemonConnection } = await import(pathToFileURL(join(__dirname, '..', 'dist', 'index.js')).href);
+  const { startMock, tmpSocket } = await import(pathToFileURL(join(__dirname, '..', 'tests', 'helpers.mjs')).href);
   const socketPath = tmpSocket('electron');
   const stop = await startMock(socketPath, 'echo');
   const connection = await DaemonConnection.connect(socketPath);

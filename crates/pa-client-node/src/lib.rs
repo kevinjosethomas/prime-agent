@@ -42,4 +42,5 @@ mod errors;
 mod meta;
 mod runtime;
 
+pub use client::{connect, Caps, ConnectOptions, PrimeDaemonClient};
 pub use meta::client_metadata;

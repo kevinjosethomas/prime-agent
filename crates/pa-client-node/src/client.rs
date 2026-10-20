@@ -423,14 +423,11 @@ pub async fn connect(
         return Err(transport("maxPending must be at least 1".to_string()));
     }
     let (tap_tx, tap_rx) = mpsc::unbounded_channel::<Value>();
-    let mut core_options = DaemonClientOptions::default();
-    core_options.raw_tap = Some(tap_tx);
-    if let Some(max_frame_bytes) = options.max_frame_bytes {
-        core_options.max_frame_bytes = usize::try_from(max_frame_bytes).ok();
-    }
-    if let Some(max_pending) = options.max_pending {
-        core_options.max_pending = usize::try_from(max_pending).ok();
-    }
+    let core_options = DaemonClientOptions {
+        raw_tap: Some(tap_tx),
+        max_frame_bytes: options.max_frame_bytes.and_then(|cap| usize::try_from(cap).ok()),
+        max_pending: options.max_pending.and_then(|cap| usize::try_from(cap).ok()),
+    };
     let caps = Caps {
         frame_buffer,
         max_frame_bytes: options.max_frame_bytes,

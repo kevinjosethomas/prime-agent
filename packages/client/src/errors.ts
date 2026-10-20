@@ -22,8 +22,8 @@ interface ClientErrorShape {
 
 class ClientError extends Error implements ClientErrorShape {
   readonly kind: string;
-  readonly cause?: TeardownCause;
-  readonly errorInfo?: unknown;
+  readonly cause: TeardownCause | undefined;
+  readonly errorInfo: unknown | undefined;
   constructor(kind: string, message: string, cause?: TeardownCause, errorInfo?: unknown) {
     super(message);
     this.name = kind;
