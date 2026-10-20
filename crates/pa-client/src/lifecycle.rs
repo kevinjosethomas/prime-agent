@@ -942,7 +942,7 @@ mod tests {
             .local_addr()
             .expect("bound socket")
             .as_pathname()
-            .map(|p| p.to_path_buf())
+            .map(std::path::Path::to_path_buf)
             .expect("path");
         let attach_data = json!({ "lastEventCursor": { "generation": "g", "sequence": 4 } });
         tokio::spawn(serve(
@@ -985,7 +985,7 @@ mod tests {
             .local_addr()
             .expect("bound socket")
             .as_pathname()
-            .map(|p| p.to_path_buf())
+            .map(std::path::Path::to_path_buf)
             .expect("path");
         tokio::spawn(serve(
             listener,
