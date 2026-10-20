@@ -655,7 +655,6 @@ impl DaemonClient {
                     let Ok(value) = serde_json::from_str::<Value>(text.trim()) else {
                         continue;
                     };
-                    eprintln!("DBG inline: line type {:?}", value.get("type"));
                     if value.get("type").and_then(Value::as_str) == Some("daemon_hello") {
                         break Some(value);
                     }
@@ -665,6 +664,9 @@ impl DaemonClient {
                     if let Some(event) = client_event_from_value(&value) {
                         let _ = event_tx.send(event);
                     }
+                    // More buffered lines may hold the hello: re-scan the
+                    // remaining partial BEFORE refilling from the socket.
+                    continue;
                 } else if max_frame_bytes.is_some_and(|cap| partial.len() > cap) {
                     return Err(anyhow!(
                         "a frame exceeded the limit before the Prime Agent daemon handshake. Socket: {}.",
@@ -691,7 +693,6 @@ impl DaemonClient {
                     Ok(buffer) => buffer,
                 };
                 let read = buffer.len();
-                eprintln!("DBG inline: got {read} bytes");
                 partial.extend_from_slice(buffer);
                 reader.consume(read);
             }

@@ -498,11 +498,8 @@ impl DaemonClientSession {
                 // deletes only on a resolved request); a successful one
                 // drops it — and the pending attach was invalidated at SEND
                 // time, so nothing can resurrect afterwards.
-                if response.success {
-                    let mut registry = self.state.registry.lock().unwrap();
-                    if registry.current_epoch() == *epoch {
-                        registry.forget(id);
-                    }
+                if response.success && registry_epoch(self, *epoch) {
+                    self.state.registry.lock().unwrap().forget(id);
                 }
             }
             None => {}
@@ -554,6 +551,11 @@ enum Bookkeeping {
         id: String,
         epoch: u64,
     },
+}
+
+/// The epoch check under the registry lock (read-only).
+fn registry_epoch(session: &DaemonClientSession, expected: u64) -> bool {
+    session.state.registry.lock().unwrap().current_epoch() == expected
 }
 
 /// The wire `type` tag of a command (the typed refusal's command name).
