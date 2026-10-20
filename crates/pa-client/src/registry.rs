@@ -113,8 +113,11 @@ impl AttachmentRegistry {
         let snapshot = data.get("snapshot").unwrap_or(data);
         let current = entry.cursor.clone();
         if let Some(cursor) = snapshot.get("lastEventCursor").and_then(parse_cursor) {
-            if current.as_ref().map(|c| c.generation != cursor.generation).unwrap_or(true)
-                || current.as_ref().and_then(|c| c.sequence).unwrap_or(0) < cursor.sequence
+            if current
+                .as_ref()
+                .map(|c| c.generation != cursor.generation)
+                .unwrap_or(true)
+                || current.as_ref().and_then(|c| c.sequence).unwrap_or(0) < cursor.sequence.unwrap_or(0)
             {
                 entry.cursor = Some(cursor);
             }
@@ -303,7 +306,8 @@ mod tests {
                 _ => assert_eq!(action, FrameAction::Deliver),
             }
         }
-        let cursor = registry.restore_entries()[0].1.cursor.unwrap();
+        let (_, entry) = registry.restore_entries().remove(0);
+        let cursor = entry.cursor.unwrap();
         assert_eq!(cursor.generation.as_deref(), Some("g2"));
         assert_eq!(cursor.sequence, Some(1));
     }
@@ -326,16 +330,16 @@ mod tests {
             &json!({ "lastEventCursor": { "generation": "g", "sequence": 2 } }),
             None
         ));
-        let entry = &registry.restore_entries()[0].1;
+        let entry = registry.restore_entries()[0].1.clone();
         assert_eq!(entry.cursor.as_ref().unwrap().sequence, Some(4));
         // The legacy shape.
         assert!(registry.record_attach(
             "s1",
             &[],
             &json!({ "lastEventSequence": 7 }),
-            None
+            None,
         ));
-        let entry = &registry.restore_entries()[0].1;
+        let entry = registry.restore_entries()[0].1.clone();
         assert_eq!(entry.cursor.as_ref().unwrap().event_sequence, Some(7));
         // The seen marker rode along: a replayed sequence dedupes.
         let replay = json!({
