@@ -60,6 +60,20 @@ class ComparatorTests(unittest.TestCase):
         client.call.side_effect = None
         self.assertTrue(verifier.pause_released(client, 'session', 'lease'))
 
+    def test_existing_prompt_receipt_difference_is_strictly_bounded(self):
+        verifier.validate_prompt_admission('ts', None)
+        accepted = {'accepted': True, 'inputId': 'qi_12345678-1234-4234-8234-123456789abc'}
+        verifier.validate_prompt_admission('rust', accepted)
+        for changed in ({}, accepted):
+            with self.assertRaises(AssertionError):
+                verifier.validate_prompt_admission('ts', changed)
+        for changed in (None, {}, {**accepted, 'unexpected': True},
+                        {**accepted, 'accepted': False}, {**accepted, 'accepted': 1},
+                        {**accepted, 'inputId': ''}, {**accepted, 'inputId': 'qi_invalid'},
+                        {**accepted, 'inputId': 42}):
+            with self.assertRaises(AssertionError):
+                verifier.validate_prompt_admission('rust', changed)
+
     def test_raw_read_keeps_json_spacing_and_line_ending(self):
         payload = b'{ "response": true }\n'
         wire = []
