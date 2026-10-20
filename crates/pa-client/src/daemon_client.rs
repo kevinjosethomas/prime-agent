@@ -781,10 +781,7 @@ impl DaemonClient {
             // The handshake's coalesced read-ahead rides in `partial`: every
             // complete seeded line dispatches BEFORE the first socket fill —
             // nothing buffered at handover is ever stranded.
-            loop {
-                let Some(newline) = partial.iter().position(|byte| *byte == b'\n') else {
-                    break;
-                };
+            while let Some(newline) = partial.iter().position(|byte| *byte == b'\n') {
                 if max_frame_bytes.is_some_and(|cap| newline > cap) {
                     break;
                 }

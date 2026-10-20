@@ -2345,7 +2345,9 @@ async fn a_cancelled_connect_aborts_its_spawned_tasks() {
             .is_err(),
         "the never-greeting daemon keeps the connect pending"
     );
-    // The future is dropped here (the elapsed timeout discards it).
+    // Drop the owned connect future NOW (a select arm drops it in the
+    // driver; a binding would keep the socket halves alive here).
+    drop(connect);
     tokio::time::timeout(Duration::from_secs(5), async {
         while !(read_ended.load(std::sync::atomic::Ordering::SeqCst)
             && write_failed.load(std::sync::atomic::Ordering::SeqCst))
