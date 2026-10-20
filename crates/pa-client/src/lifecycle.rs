@@ -5,7 +5,7 @@
 //! behind the driver loop or a restore.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
@@ -321,7 +321,7 @@ impl DaemonClientSession {
     /// pending request — no live pending is awaited), cancel the driver
     /// (which true-cancels its restore tasks and joins them), then the
     /// driver's final core join; stop awaits the driver's end. Idempotent.
-    pub async fn stop(&self) -> std::result::Result<(), tokio::task::JoinError> {
+    pub async fn stop(&self) -> Result<()> {
         // The synchronous request signal, all before the first await: refuse
         // new requests, invalidate every in-flight epoch (under the registry
         // lock), cancel the driver.
@@ -380,14 +380,11 @@ impl DaemonClientSession {
                         "the session driver failed before completing its settle"
                             .to_string(),
                     );
-                    return self
-                        .state
-                        .driver
-                        .lock()
-                        .await
-                        .memo
-                        .take()
-                        .unwrap_or_else(|| Err(tokio::task::JoinError::cancelled()));
+                    let result = self.state.driver.lock().await.memo.take();
+                    return result
+                        .map(|_| ())
+                        .unwrap_or(Ok(()))
+                        .map_err(anyhow::Error::new);
                 }
             }
         }
@@ -753,7 +750,7 @@ async fn driver_run(
     if let Some(state) = session.upgrade() {
         state.stopping.store(true, Ordering::SeqCst);
         state.registry.lock().unwrap().bump_epoch();
-        let mut handles = std::mem::take(&mut restore_handles);
+        let handles = std::mem::take(&mut restore_handles);
         for handle in &handles {
             handle.abort();
         }
@@ -853,11 +850,11 @@ async fn service(
                     // The loss's restore tasks are cancelled and joined now:
                     // they held old-connection clones and cannot emit stale
                     // outcomes afterwards.
-                    let mut stale = std::mem::take(restore_handles);
-                    for handle in &stale {
+                    let cancelled = std::mem::take(restore_handles);
+                    for handle in &cancelled {
                         handle.abort();
                     }
-                    for handle in stale {
+                    for handle in cancelled {
                         let _ = handle.await;
                     }
                     // The prior connection's registered tasks are joined

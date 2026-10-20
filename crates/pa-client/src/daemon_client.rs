@@ -640,6 +640,7 @@ impl DaemonClient {
             let mut partial: Vec<u8> = Vec::new();
             let deadline = tokio::time::sleep(Duration::from_millis(HELLO_TIMEOUT_MS));
             tokio::pin!(deadline);
+            let hello = {
             loop {
                 if let Some(newline) = partial.iter().position(|byte| *byte == b'\n') {
                     let line: Vec<u8> = partial.drain(..=newline).collect();
@@ -692,6 +693,8 @@ impl DaemonClient {
                 partial.extend_from_slice(buffer);
                 reader.consume(read);
             }
+            };
+            (reader, partial, hello)
         };
         let Some(hello) = hello else {
             return Err(anyhow!(

@@ -1,6 +1,6 @@
 use super::*;
 use serde_json::json;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 
 /// Minimal scripted supervisor used by client tests: hello on connect,
