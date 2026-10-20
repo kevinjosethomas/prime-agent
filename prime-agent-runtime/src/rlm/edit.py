@@ -1,30 +1,15 @@
-"""Exact single-occurrence string replacement for existing files."""
+"""Replace one exact, unique string in an existing file."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
+# Keep in sync with DIFF_DISPLAY_MIME in src/core/kernel/index.ts.
+_DIFF_DISPLAY_MIME = "application/vnd.prime-agent.diff+json"
 
-async def run(path: str, old_str: str, new_str: str) -> str:
-    """Replace a unique string in a file.
 
-    ``old_str`` must appear exactly once in the file at ``path``; that match is
-    replaced with ``new_str`` and the file is written back in place. Prefer this
-    over rewriting a whole file for targeted edits.
-
-    Args:
-        path: File to edit, relative to the working directory, absolute, or
-            `~`-prefixed (the leading `~`/`~user` is expanded to the home dir).
-        old_str: Exact text to find. Must occur exactly once in the file.
-        new_str: Replacement text.
-
-    Returns:
-        A short confirmation message.
-
-    Raises:
-        FileNotFoundError: If ``path`` does not exist.
-        ValueError: If ``old_str`` is absent or matches more than once.
-    """
+async def edit(path: str, old_str: str, new_str: str) -> str:
+    """Replace one unique occurrence of ``old_str`` with ``new_str`` in ``path``."""
     filepath = Path(path).expanduser()
     if not filepath.exists():
         raise FileNotFoundError(f"{path} not found")
@@ -45,14 +30,9 @@ async def run(path: str, old_str: str, new_str: str) -> str:
     return f"Edited {resolved_path}"
 
 
-# Keep in sync with DIFF_DISPLAY_MIME in src/core/kernel/index.ts.
-_DIFF_DISPLAY_MIME = "application/vnd.prime-agent.diff+json"
-
-
 def _emit_diff(path: str, old_str: str, new_str: str, start_line: int) -> None:
-    """Stream a diff to the host as a display event; best-effort outside the kernel."""
     try:
-        from rlm import emit
+        from . import emit
 
         emit(
             {

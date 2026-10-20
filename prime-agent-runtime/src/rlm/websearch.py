@@ -1,4 +1,4 @@
-"""Websearch skill implementation."""
+"""Search the web via the Serper Google Search API."""
 
 from __future__ import annotations
 
@@ -7,18 +7,17 @@ import json
 import os
 from pathlib import Path
 
-# httpx is imported inside `_fetch_serper` on first call: importing it at
-# module level would put its full import cost on every kernel bootstrap, in
-# every session, even when no search is ever run. `find_spec` keeps the
-# import-time contract — importing this module still fails with the same
-# "No module named 'httpx'" when httpx is absent, so a kernel without httpx
-# reports the same unavailable-skill error as before.
+# Imported lazily so only a kernel that actually searches pays httpx's import cost;
+# the find_spec guard keeps the familiar missing-dependency error when it is absent.
 if importlib.util.find_spec("httpx") is None:
     raise ModuleNotFoundError("No module named 'httpx'")
 
+_MAX_OUTPUT = 8192
+_DEFAULT_TIMEOUT = 45
+_DEFAULT_NUM_RESULTS = 5
+
 
 def _env_int(name: str, default: int) -> int:
-    """Read an int from the environment, falling back to default on bad values."""
     try:
         return int(os.environ[name])
     except (KeyError, ValueError):
@@ -26,7 +25,6 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _agent_dir() -> Path:
-    """Resolve the Prime Agent config dir the same way the runtime does."""
     raw = (
         os.environ.get("PRIME_AGENT_CODING_AGENT_DIR")
         or os.environ.get("PI_CODING_AGENT_DIR")
@@ -61,8 +59,7 @@ def _resolve_config_value(value: str) -> str:
     return (os.environ.get(value) or value).strip()
 
 
-def _format_serper_results(data: dict, query: str, num_results: int = 5) -> str:
-    """Format a Serper API response into readable text."""
+def _format_serper_results(data: dict, query: str, num_results: int) -> str:
     sections: list[str] = []
 
     kg = data.get("knowledgeGraph")
@@ -114,8 +111,7 @@ def _format_serper_results(data: dict, query: str, num_results: int = 5) -> str:
     return "\n\n---\n\n".join(sections)
 
 
-async def _fetch_serper(query: str, api_key: str, timeout: int = 45, num_results: int = 5) -> str:
-    """Execute a single Serper API search."""
+async def _fetch_serper(query: str, api_key: str, timeout: int, num_results: int) -> str:
     import httpx
 
     try:
@@ -137,24 +133,10 @@ async def _fetch_serper(query: str, api_key: str, timeout: int = 45, num_results
     return _format_serper_results(data, query, num_results=num_results)
 
 
-async def run(
-    query: str,
-    *,
-    max_output: int = 8192,
-    timeout: int | None = None,
-    num_results: int | None = None,
-) -> str:
-    """Run a Google search via Serper and return formatted results.
-
-    Args:
-        query: Google search query.
-        max_output: Truncate output to this many chars.
-        timeout: HTTP timeout in seconds.
-        num_results: Organic results to return.
-
-    Returns:
-        Formatted search results.
-    """
+async def websearch(query: str, *, num_results: int | None = None) -> str:
+    """Run one Google search via Serper and return formatted results."""
+    if not isinstance(query, str):
+        raise TypeError(f"query must be str, got {type(query).__name__}")
     api_key = _resolve_api_key()
     if not api_key:
         return (
@@ -165,10 +147,9 @@ async def run(
             "Do not ask the user to set environment variables. Once the key is saved, web search works automatically."
         )
 
-    if timeout is None:
-        timeout = _env_int("PRIME_AGENT_WEBSEARCH_TIMEOUT", 45)
+    timeout = _env_int("PRIME_AGENT_WEBSEARCH_TIMEOUT", _DEFAULT_TIMEOUT)
     if num_results is None:
-        num_results = _env_int("PRIME_AGENT_WEBSEARCH_NUM_RESULTS", 5)
+        num_results = _env_int("PRIME_AGENT_WEBSEARCH_NUM_RESULTS", _DEFAULT_NUM_RESULTS)
 
     try:
         result = await _fetch_serper(query, api_key, timeout=timeout, num_results=num_results)
@@ -176,13 +157,13 @@ async def run(
         result = f"Error searching for '{query}': {e}"
     output = f'Results for query "{query}":\n\n{result}'
 
-    if len(output) > max_output:
+    if len(output) > _MAX_OUTPUT:
         total = len(output)
         marker = f"\n... [output truncated, {total} chars total] ...\n"
-        # Reserve room for the marker so the result stays within max_output.
-        half = max(0, (max_output - len(marker)) // 2)
+        # Reserve room for the marker so the result stays within the cap.
+        half = max(0, (_MAX_OUTPUT - len(marker)) // 2)
         output = output[:half] + marker + output[len(output) - half:]
-        if len(output) > max_output:  # marker alone exceeds the budget
-            output = output[:max_output]
+        if len(output) > _MAX_OUTPUT:  # marker alone exceeds the budget
+            output = output[:_MAX_OUTPUT]
 
     return output
