@@ -224,6 +224,30 @@ export class DaemonConnection {
 }
 
 /**
+ * The napi boundary accepts omitted fields but not JS null for optional
+ * object slots: normalize the contract's `Window|null` reconnect slots
+ * (and a null windowMs) by omission before crossing.
+ */
+function normalizeWindow(window: ReconnectWindow): ReconnectWindow {
+  return window.windowMs == null
+    ? { initialDelayMs: window.initialDelayMs, maxDelayMs: window.maxDelayMs }
+    : window;
+}
+
+function normalizeOptions(options: ManagedSessionOptions): ManagedSessionOptions {
+  const { reconnect } = options;
+  if (reconnect == null) return options;
+  return {
+    ...options,
+    reconnect: {
+      lost: normalizeWindow(reconnect.lost),
+      ...(reconnect.update ? { update: normalizeWindow(reconnect.update) } : {}),
+      ...(reconnect.shutdown ? { shutdown: normalizeWindow(reconnect.shutdown) } : {}),
+    },
+  };
+}
+
+/**
  * The managed daemon session: reconnect, restore-attach, and dedupe are
  * owned by the shared Rust lifecycle; this wrapper only decodes errors.
  * Pull events in a single-consumer loop, send requests, and stop
@@ -234,7 +258,7 @@ export class ManagedDaemonSession {
 
   /** Start the managed lifecycle (connect/reconnect owned by Rust). */
   static async start(options: ManagedSessionOptions): Promise<ManagedDaemonSession> {
-    const native = await decode(nativeAddon().startSession(options));
+    const native = await decode(nativeAddon().startSession(normalizeOptions(options)));
     return new ManagedDaemonSession(native);
   }
 
