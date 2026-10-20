@@ -16,8 +16,8 @@ interface ErrorPayload {
 interface ClientErrorShape {
   readonly kind: string;
   readonly message: string;
-  readonly cause?: TeardownCause;
-  readonly errorInfo?: unknown;
+  readonly cause: TeardownCause | undefined;
+  readonly errorInfo: unknown | undefined;
 }
 
 class ClientError extends Error implements ClientErrorShape {
