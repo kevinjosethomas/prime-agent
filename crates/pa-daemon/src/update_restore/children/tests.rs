@@ -109,7 +109,7 @@ fn restore_child_busy_or_queued_completion_never_discards_work() {
     let expected = queued.clone();
     assert!(prepare_roster(&mut queued).is_empty());
     assert_eq!(queued, expected);
-    let mut roster = original.clone();
+    let mut roster = original;
     roster.sessions[0].should_resume = true;
     let before = roster.clone();
     assert!(prepare_roster(&mut roster).is_empty());
