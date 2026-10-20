@@ -40,7 +40,15 @@ test('close resolves after pending request, upgrade, and pull are all torn down'
       requestError.cause === 'closed',
     `unexpected class: ${requestError?.kind}:${requestError?.cause}`,
   );
-  assert.equal(await pendingUpgrade, false);
+  // The upgrade line rides the same structural race: resolved false when
+  // the teardown answered it, NotSent-cause-closed when the close marked
+  // before the upgrade command was ever queued.
+  const upgradeOutcome = await pendingUpgrade;
+  assert.ok(
+    upgradeOutcome === false ||
+      (upgradeOutcome instanceof NotSentError && upgradeOutcome.cause === 'closed'),
+    `unexpected upgrade outcome: ${upgradeOutcome?.kind ?? upgradeOutcome}:${upgradeOutcome?.cause}`,
+  );
   assert.equal(await pendingFrame, null);
   assert.equal((await pendingStatus).type, 'closed');
   await stop();

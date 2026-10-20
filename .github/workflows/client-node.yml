@@ -82,7 +82,9 @@ jobs:
         run: npm run build
         working-directory: packages/client
       - name: Node 22 battery against the real addon
-        run: node --test tests/*.test.mjs
+        # Per-test cap: a hung test fails in minutes with real output
+        # instead of burning the 60-minute job timeout silently.
+        run: node --test --test-timeout=120000 tests/*.test.mjs
         working-directory: packages/client
       - name: Electron 44 main-process proof
         run: |
@@ -154,7 +156,9 @@ jobs:
         run: npm run build
         working-directory: packages/client
       - name: Node 22 battery against the real addon
-        run: node --test tests/*.test.mjs
+        # Per-test cap: a hung test fails in minutes with real output
+        # instead of burning the 60-minute job timeout silently.
+        run: node --test --test-timeout=120000 tests/*.test.mjs
         working-directory: packages/client
       - name: Electron 44 main-process load proof
         run: |

@@ -34,6 +34,17 @@ async function main() {
   const { startMock, startMockReporting, tmpSocket } = await import(helpers);
   mark('imports-done');
 
+  // The managed start returns at CONNECTING: every request leg must first
+  // drain the status stream to connected, or the pre-poll barrier
+  // truthfully refuses the send as NotSent (not connected).
+  const untilManagedConnected = async (managed) => {
+    for (;;) {
+      const event = await managed.nextEvent();
+      if (event === null) throw new Error('the stream ended before connect');
+      if (event.type === 'status' && event.status.state === 'connected') return;
+    }
+  };
+
   if (SECTION !== 'children') {
     // 1. Connect + request round-trip; the close is AWAITED and the mock's
     // client-EOF observed BEFORE the mock stops.
@@ -156,7 +167,8 @@ async function main() {
     });
     mark('managed-started');
     const firstEvent = await session.nextEvent();
-    assert.ok(firstEvent.type === 'status' && firstEvent.status.state === 'connected', `unexpected first event: ${JSON.stringify(firstEvent)}`);
+    assert.ok(firstEvent.type === 'status' && firstEvent.status.state === 'connecting', `unexpected first event: ${JSON.stringify(firstEvent)}`);
+    await untilManagedConnected(session);
     mark('managed-status-streamed');
     const managedResponse = await session.request({
       type: 'get_connection_state',
@@ -183,6 +195,7 @@ async function main() {
       restoreAttemptTimeoutMs: 30_000,
     });
     mark('managed-flood-started');
+    await untilManagedConnected(floodedSession);
     const managedPreMark = floodedSession
       .request({
         type: 'get_connection_state',
@@ -244,6 +257,11 @@ async function main() {
         socketPath: managedGcPath,
         restoreAttemptTimeoutMs: 30_000,
       });
+      for (;;) {
+        const event = await scoped.nextEvent();
+        if (event === null) throw new Error('the stream ended before connect');
+        if (event.type === 'status' && event.status.state === 'connected') break;
+      }
       await scoped.request({ type: 'get_connection_state', activeSessionId: 'wire' });
     })();
     mark('managed-gc-scope-exited');
@@ -292,6 +310,11 @@ async function main() {
                    socketPath,
                    restoreAttemptTimeoutMs: 30_000,
                  });
+                 for (;;) {
+                   const event = await session.nextEvent();
+                   if (event === null) throw new Error('the stream ended before connect');
+                   if (event.type === 'status' && event.status.state === 'connected') break;
+                 }
                  await session.request({ type: 'get_connection_state', activeSessionId: 'wire' });
                  await session.stop();`
               : `await (async () => {
@@ -299,6 +322,11 @@ async function main() {
                      socketPath,
                      restoreAttemptTimeoutMs: 30_000,
                    });
+                   for (;;) {
+                     const event = await scoped.nextEvent();
+                     if (event === null) throw new Error('the stream ended before connect');
+                     if (event.type === 'status' && event.status.state === 'connected') break;
+                   }
                    await scoped.request({ type: 'get_connection_state', activeSessionId: 'wire' });
                  })();
                  globalThis.gc();`

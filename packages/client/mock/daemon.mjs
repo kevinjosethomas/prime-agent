@@ -29,6 +29,14 @@ import fs from 'node:fs';
 const [socketPath, mode = 'echo', arg = ''] = process.argv.slice(2);
 fs.rmSync(socketPath, { force: true });
 
+// Orphan watchdog: if the owning test process dies without stop() (a
+// failing assertion skipped it), exit — an inherited stdio pipe from a
+// leaked mock would otherwise hold the test runner open forever.
+const ownerPid = process.ppid;
+setInterval(() => {
+  if (process.ppid !== ownerPid) process.exit(0);
+}, 500).unref();
+
 const server = net.createServer((socket) => {
   socket.setEncoding('utf8');
   let buffer = '';

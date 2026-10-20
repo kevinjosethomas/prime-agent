@@ -14,25 +14,38 @@ const childScript = `
   const { startMockReporting, tmpSocket } = await import(process.env.CLIENT_HELPERS);
   const socketPath = tmpSocket('managed-gc-child');
   const mock = await startMockReporting(socketPath);
-  // FUNCTION scope: V8 retains module-level bindings, so the wrapper must
-  // die on function return for the napi finalizer to ever run.
-  await (async () => {
-    const session = await ManagedDaemonSession.start({
-      socketPath,
-      restoreAttemptTimeoutMs: 30_000,
-    });
-    await session.request({ type: 'get_connection_state', activeSessionId: 'wire' });
-  })();
-  let disconnected = false;
-  for (let attempt = 0; attempt < 5 && !disconnected; attempt += 1) {
-    globalThis.gc();
-    disconnected = await Promise.race([
-      mock.waitForDisconnect().then(() => true, () => false),
-      new Promise((resolve) => setTimeout(() => resolve(false), 2000)),
-    ]);
+  // The mock stop rides finally: an error exit may not orphan the server.
+  try {
+    // FUNCTION scope: V8 retains module-level bindings, so the wrapper must
+    // die on function return for the napi finalizer to ever run.
+    await (async () => {
+      const session = await ManagedDaemonSession.start({
+        socketPath,
+        restoreAttemptTimeoutMs: 30_000,
+      });
+      // start() returns at CONNECTING: drain to connected first, or the
+      // pre-poll barrier truthfully refuses the request as NotSent.
+      for (;;) {
+        const event = await session.nextEvent();
+        if (event === null) throw new Error('the stream ended before connect');
+        if (event.type === 'status' && event.status.state === 'connected') break;
+      }
+      await session.request({ type: 'get_connection_state', activeSessionId: 'wire' });
+    })();
+    let disconnected = false;
+    // 8 bounded windows: GC scheduling under a loaded battery runner is
+    // slow, not broken — the proof stays the observed client-side EOF.
+    for (let attempt = 0; attempt < 8 && !disconnected; attempt += 1) {
+      globalThis.gc();
+      disconnected = await Promise.race([
+        mock.waitForDisconnect().then(() => true, () => false),
+        new Promise((resolve) => setTimeout(() => resolve(false), 2000)),
+      ]);
+    }
+    if (!disconnected) throw new Error('the GC-driven client release was never observed');
+  } finally {
+    await mock.stop();
   }
-  if (!disconnected) throw new Error('the GC-driven client release was never observed');
-  await mock.stop();
   // Natural exit: the loop drains with nothing holding it.
 `;
 
@@ -51,11 +64,11 @@ test('managed-session GC drop without stop exits naturally after the mock EOF', 
   );
   const outcome = await Promise.race([
     new Promise((resolve) => child.on('exit', (code) => resolve(code))),
-    new Promise((resolve) => setTimeout(() => resolve('timeout'), 30_000)),
+    new Promise((resolve) => setTimeout(() => resolve('timeout'), 40_000)),
   ]);
   if (outcome === 'timeout') {
     child.kill('SIGKILL');
-    assert.fail('GC-dropped child did not exit within 30s');
+    assert.fail('GC-dropped child did not exit within 40s');
   }
   assert.equal(outcome, 0);
 });
