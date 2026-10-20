@@ -67,6 +67,11 @@ await item.associate(actual_session_id, name="drop-files-worker", role="implemen
 `task.subtask(id, title, **fields)` is `create(id, title, parent_id=task.id, **fields)`.
 `list(parent_id=task.id)` lists its visible subtasks.
 
+Only top-level tasks have threads. Subtasks track status, details, links and agent
+associations, not separate conversations. Clicking a subtask focuses its parent's
+thread and shows its details in the side panel. Creating or backfilling a subtask
+must not assign messages to it.
+
 `associate` stores an actual existing session ID; it does not independently verify
 daemon availability or agent ownership. Discover the ID through supported RLM/roster
 APIs, not by guessing from a chat title. `context()` returns the metadata snapshot,
@@ -226,16 +231,20 @@ work into subtasks and give each its own status.
 
 Clef places messages automatically. A message moves only by Kevin's choice: a
 focused-thread send in Primer, or a move he explicitly asks for. To record such a
-move, pass whole message IDs (from `context()`) and the task, or `None` for no task:
+move, pass whole message IDs (from `context()`) and the top-level task, or `None`
+for no task. Clef, focused sends and right-click attachment all use top-level tasks:
 
 ```python
-await tasks.assign_messages([actual_message_id], "primer-drop-files")
+await tasks.assign_messages([actual_message_id], "prime-root-orchestrator")
 await tasks.assign_messages([greeting_id], None)
 ```
 
 `assign_messages(message_ids, task_id)` takes 1–200 message IDs and records a manual
 placement that Clef never overrides. Do not use it to classify messages yourself,
-and do not guess IDs.
+and do not guess IDs. A subtask ID is not a thread destination. In the desktop
+data model, `message_tasks.task_id` points only at a top-level task (or is NULL).
+Existing subtask placements roll up to their top-level parent in a one-time
+migration, keeping their original source.
 
 Each report gets a unique UUID event ID. If delivery fails or times out, its commit
 may be uncertain. Retry the exact event, not a newly generated equivalent update:
