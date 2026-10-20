@@ -296,7 +296,7 @@ impl Inner {
     /// closed and refuse new operations, shut the core transport down, drain
     /// the binding-owned operation registry one handle at a time behind the
     /// re-insertion guard, then join the core's registered task set.
-    async fn close_chain(self: Arc<Self>, reason: &'static str) {
+    async fn close_chain(self: Arc<Self>) {
         let client = self
             .client
             .lock()
