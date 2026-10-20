@@ -91,6 +91,9 @@ jobs:
           rm -rf /tmp/electron-dist && unzip -q /tmp/electron.zip -d /tmp/electron-dist
           xvfb-run -a /tmp/electron-dist/electron --no-sandbox --disable-gpu --js-flags=--expose-gc e2e/electron-main.cjs
         working-directory: packages/client
+      - name: "Stage the built JS dist (npm pack omits the gitignored dist/; the desktop's file: dependency needs it as a release asset)"
+        run: tar -czf client-dist.tgz dist
+        working-directory: packages/client
       - name: Upload the addon artifact with provenance
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         with:
@@ -98,6 +101,7 @@ jobs:
           path: |
             packages/client/native/linux-x64.node
             packages/client/provenance.json
+            packages/client/client-dist.tgz
           if-no-files-found: error
 
   darwin-arm64:
