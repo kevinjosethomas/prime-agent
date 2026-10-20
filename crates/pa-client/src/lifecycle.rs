@@ -1677,9 +1677,10 @@ mod tests {
         let mut stop = Box::pin(session.stop());
         // Prove the stop future is still Pending (the settle is blocked on
         // the held restore), then drop it mid-flight.
-        let mut context = std::task::Context::from_waker(futures_noop_waker());
+        let waker = futures_noop_waker();
+        let mut context = std::task::Context::from_waker(&waker);
         assert!(
-            stop.as_mut().poll(&mut context).is_pending(),
+            std::future::Future::poll(stop.as_mut(), &mut context).is_pending(),
             "the stop is genuinely pending on the blocked settle"
         );
         drop(stop);
