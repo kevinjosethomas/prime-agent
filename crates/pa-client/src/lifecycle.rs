@@ -1810,7 +1810,6 @@ mod tests {
         );
         let _ = session.stop().await;
     }
-}
 
     #[tokio::test]
     async fn a_driver_ending_without_the_mark_fails_every_stop_honestly() {
