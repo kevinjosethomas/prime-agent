@@ -2,10 +2,11 @@
 //!
 //! Proves, on the real target toolchain: (1) the isolated workspace resolves
 //! the pa-client/pa-types path dependencies and their workspace-inherited
-//! deps from the root Cargo.toml; (2) the pinned napi-rs major builds;
+//! deps from the root Cargo.toml; (2) the pinned napi-rs 3.x line builds;
 //! (3) async fns ride the tokio_rt runtime; (4) ThreadsafeFunctions deliver
-//! non-blocking and release cleanly so Node exits naturally after teardown;
-//! (5) the `unsafe_code = "forbid"` lint question for macro output.
+//! non-blocking and release cleanly (drop-release, no abort) so Node exits
+//! naturally after teardown; (5) the `unsafe_code = "forbid"` lint question
+//! for macro output.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -13,7 +14,7 @@ use std::time::Duration;
 
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
-use napi::Env;
+use napi_derive::napi;
 use pa_client::daemon_client::{DaemonClientOptions, DEFAULT_REQUEST_TIMEOUT_MS};
 
 #[napi(object)]
@@ -43,52 +44,46 @@ pub async fn spike_delay(ms: u32) -> u32 {
 
 /// A periodic ThreadsafeFunction ticker whose handle stops it again. The
 /// Node test asserts ticks arrive, and that after `stop()` the process ends
-/// naturally (no un-released TSFN keeping the event loop alive).
+/// naturally: napi-rs 3 releases a ThreadsafeFunction when the last Rust
+/// reference drops, so teardown is "drop every reference", not "abort".
 #[napi]
 pub struct SpikeTicker {
     stop: Arc<AtomicBool>,
-    task: Option<tokio::task::JoinHandle<()>>,
-    tsfn: ThreadsafeFunction<u32>,
+    tsfn: Option<ThreadsafeFunction<u32>>,
 }
 
 #[napi]
 impl SpikeTicker {
     #[napi(constructor)]
-    pub fn new(env: Env, callback: JsFunction) -> Result<Self> {
+    pub fn new(callback: Function) -> Result<Self> {
         let tsfn: ThreadsafeFunction<u32> =
-            callback.create_threadsafe_function(0, |ctx| {
-                ctx.env
-                    .create_int32(i32::try_from(ctx.value).unwrap_or(0))
-                    .map(|v| vec![v])
-            })?;
+            callback.create_threadsafe_function(|ctx| Ok(vec![ctx.value]))?;
         let stop = Arc::new(AtomicBool::new(false));
         let task_stop = Arc::clone(&stop);
         let task_tsfn = tsfn.clone();
         // Runs on the napi-rs tokio_rt runtime; the loop exits on the stop
-        // flag and drops the TSFN clone, so a stopped ticker leaves nothing
+        // flag and drops its TSFN clone, so a stopped ticker leaves nothing
         // holding the Node event loop.
-        let task = tokio::spawn(async move {
+        tokio::spawn(async move {
             let mut tick = 0_u32;
             while !task_stop.load(Ordering::SeqCst) {
                 task_tsfn.call(tick, ThreadsafeFunctionCallMode::NonBlocking);
-                tick += 1;
+                tick = tick.saturating_add(1);
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         });
         Ok(Self {
             stop,
-            task: Some(task),
-            tsfn,
+            tsfn: Some(tsfn),
         })
     }
 
     #[napi]
-    pub fn stop(&mut self, env: Env) -> Result<()> {
+    pub fn stop(&mut self) -> Result<()> {
         self.stop.store(true, Ordering::SeqCst);
-        // Abort the JS-side queue too: releasing the remaining reference is
-        // what lets the Node event loop drain.
-        let _ = env;
-        self.tsfn.abort();
+        // Drop the binding's reference: with the task's clone gone one loop
+        // iteration later, the TSFN releases and the event loop can drain.
+        self.tsfn = None;
         Ok(())
     }
 }
