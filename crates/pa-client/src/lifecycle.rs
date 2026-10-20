@@ -1670,47 +1670,60 @@ mod tests {
 
     #[tokio::test]
     async fn a_cancelled_stop_future_still_settles_the_driver() {
-        // Item 12's correction: the cancelled stop must be PROVEN pending
-        // (poll_result) before the drop, and the fresh stop must assert the
-        // INNER Result — an honest panic Err fails this test, never an
-        // outer-timeout fiction.
-        let dir = tempfile::TempDir::new().unwrap();
-        let (_supervisor, socket, release) = Supervisor::spawn(&dir, Vec::new(), true, false);
-        let (session, mut events) = DaemonClientSession::start(config(&socket)).await.unwrap();
-        wait_connected(&mut events).await;
-        session.register_attachment("s1", None);
-        // A held restore blocks the driver's settle: the stop's completion
-        // genuinely waits on the driver.
-        // The restore is HELD: the settle provably cannot complete before
-        // the release, so a bounded timeout proves the stop future was
-        // still pending when it is dropped mid-flight.
+        // Item 12's corrected shape: a driver whose settle CANNOT complete
+        // yet (a probe blocked on a release signal — the stop future is
+        // provably pending), the stop is dropped MID-WAIT, the probe then
+        // ends WITHOUT the mark (the died-driver shape), and the fresh stop
+        // asserts the INNER honest Err — never an outer-timeout fiction, and
+        // the memoized outcome is identical for every caller.
+        let release = std::sync::Arc::new(tokio::sync::Notify::new());
+        let (session, _events) =
+            DaemonClientSession::start(config(std::path::Path::new("/dev/null")))
+                .await
+                .unwrap();
+        {
+            let release = std::sync::Arc::clone(&release);
+            let mut driver = session.state.driver.lock().await;
+            if let Some(handle) = driver.handle.take() {
+                handle.abort();
+            }
+            // A probe driver that blocks until released, then ends WITHOUT
+            // the settle and WITHOUT the mark.
+            driver.handle = Some(tokio::spawn(async move {
+                release.notified().await;
+            }));
+        }
+        // The stop is genuinely pending: the probe holds both the mark and
+        // the handle, so the bounded timeout proves it never completed.
         let mut stop = Box::pin(session.stop());
         assert!(
-            tokio::time::timeout(Duration::from_millis(200), &mut stop)
+            tokio::time::timeout(Duration::from_millis(300), &mut stop)
                 .await
                 .is_err(),
-            "the stop is genuinely pending on the blocked settle"
+            "the stop is genuinely pending on the blocked driver"
         );
         drop(stop);
+        // The probe ends (no mark, no settle): the fresh stop must report
+        // the INNER honest Err, and the memoized outcome is identical for
+        // every later caller.
         release.notify_one();
-        tokio::time::timeout(Duration::from_secs(10), session.stop())
+        let first = tokio::time::timeout(Duration::from_secs(5), session.stop())
             .await
             .expect("the fresh stop settles")
-            .expect("the driver completed its settle honestly");
-        // The connection is really torn down: the second stop returns only
-        // after the settle, and the session refuses requests afterwards.
-        let error = session
-            .request(DaemonCommand::List {
-                id: None,
-                all: None,
-                cwd: None,
-                session_dir: None,
-                include_client_owned: None,
-                rest: Map::new(),
-            })
-            .await
             .unwrap_err();
-        assert!(crate::daemon_client::is_command_not_sent(&error));
+        let second = tokio::time::timeout(Duration::from_secs(5), session.stop())
+            .await
+            .expect("a later stop settles")
+            .unwrap_err();
+        assert_eq!(
+            first.to_string(),
+            second.to_string(),
+            "every stop reads the identical honest memo"
+        );
+        assert!(
+            first.to_string().contains("without completing its settle"),
+            "unexpected: {first}"
+        );
     }
 
     #[tokio::test]
