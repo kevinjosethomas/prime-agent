@@ -49,15 +49,24 @@ mod tests {
     use super::*;
 
     /// The forwarded configuration wins over a stale process env value; an
-    /// empty process value never surfaces as configured.
+    /// empty process value never surfaces as configured. The slot is reset
+    /// after the test so it never leaks into other tests' kernel envs.
     #[test]
     fn forwarded_value_wins_over_the_process_env() {
-        // A unit test process may or may not carry the env var; the forwarded
-        // slot must win whenever it is set, and must not leak between reads.
+        let prior = current();
         store_forwarded(r#"{"command":["x"],"env":{},"timeout":15}"#);
         assert_eq!(
             current().as_deref(),
             Some(r#"{"command":["x"],"env":{},"timeout":15}"#)
         );
+        match prior {
+            Some(value) => store_forwarded(&value),
+            None => reset_forwarded_for_tests(),
+        }
+    }
+
+    /// Test-only: drop a forwarded configuration again.
+    pub(crate) fn reset_forwarded_for_tests() {
+        *FORWARDED.lock().expect("tasks reporter forward lock") = None;
     }
 }
