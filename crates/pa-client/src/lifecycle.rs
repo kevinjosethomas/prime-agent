@@ -473,10 +473,8 @@ async fn driver_run(
     let mut client: Option<DaemonClient> = None;
     loop {
         let Some(state) = session.upgrade() else {
-            eprintln!("DBG driver: weak gone, break");
             break; // Handles and consumer gone: nothing to serve.
         };
-        eprintln!("DBG driver: loop top, client={}", client.is_some());
         // A pending backoff sleeps FIRST — cancellation and consumer death
         // are select arms — then the window check and the next attempt's
         // delay happen before the connect below.
@@ -561,7 +559,6 @@ async fn driver_run(
                     .await
                     {
                         ServiceEnd::Loss(armed) => {
-                            eprintln!("DBG driver: loss {armed:?}");
                             // The prior connection is dead and its tasks
                             // joined in the service loop: clear the driver's
                             // clone so the loop reconnects.
@@ -573,10 +570,7 @@ async fn driver_run(
                                 .map(|window| tokio::time::Instant::now() + window);
                             delay = window.initial_delay;
                         }
-                        ServiceEnd::Stop => {
-                            eprintln!("DBG driver: service stop");
-                            break;
-                        }
+                        ServiceEnd::Stop => break,
                     }
                 }
                 Err(error) => {
@@ -1147,49 +1141,52 @@ mod tests {
             let release_second = Arc::clone(&release_second);
             let event = event.clone();
             tokio::spawn(async move {
-                // Connection 1: adopt, then drop on signal.
-                let (stream, _) = listener.accept().await.expect("accept one");
-                let (reader, mut writer) = stream.into_split();
-                let mut reader = tokio::io::BufReader::new(reader);
-                let mut line = String::new();
-                let hello = json!({
-                    "type": "daemon_hello",
-                    "protocol": { "name": "prime-agent.daemon", "version": 7 },
-                    "serverCapabilities": [],
-                });
-                writer
-                    .write_all(format!("{hello}\n").as_bytes())
-                    .await
-                    .unwrap();
-                loop {
-                    line.clear();
-                    // The scripted death of the first connection.
-                    tokio::select! {
-                        read = reader.read_line(&mut line) => {
-                            if read.unwrap_or(0) == 0 {
-                                break;
-                            }
-                        }
-                        () = drop_first.notified() => break,
-                    }
-                    let envelope: Value = serde_json::from_str(line.trim()).unwrap();
-                    let command = envelope["command"]["type"].as_str().unwrap_or_default();
-                    let data = if command == "attach" {
-                        json!({ "lastEventCursor": { "generation": "g", "sequence": 4 } })
-                    } else {
-                        json!({ "ok": true })
-                    };
-                    let response = json!({
-                        "type": "response",
-                        "id": envelope["id"],
-                        "command": command,
-                        "success": true,
-                        "data": data,
+                // Connection 1: adopt, then drop on signal — the halves are SCOPED so
+                // the drop is the EOF the driver observes.
+                {
+                    let (stream, _) = listener.accept().await.expect("accept one");
+                    let (reader, mut writer) = stream.into_split();
+                    let mut reader = tokio::io::BufReader::new(reader);
+                    let mut line = String::new();
+                    let hello = json!({
+                        "type": "daemon_hello",
+                        "protocol": { "name": "prime-agent.daemon", "version": 7 },
+                        "serverCapabilities": [],
                     });
                     writer
-                        .write_all(format!("{response}\n").as_bytes())
+                        .write_all(format!("{hello}\n").as_bytes())
                         .await
                         .unwrap();
+                    loop {
+                        line.clear();
+                        // The scripted death of the first connection.
+                        tokio::select! {
+                            read = reader.read_line(&mut line) => {
+                                if read.unwrap_or(0) == 0 {
+                                    break;
+                                }
+                            }
+                            () = drop_first.notified() => break,
+                        }
+                        let envelope: Value = serde_json::from_str(line.trim()).unwrap();
+                        let command = envelope["command"]["type"].as_str().unwrap_or_default();
+                        let data = if command == "attach" {
+                            json!({ "lastEventCursor": { "generation": "g", "sequence": 4 } })
+                        } else {
+                            json!({ "ok": true })
+                        };
+                        let response = json!({
+                            "type": "response",
+                            "id": envelope["id"],
+                            "command": command,
+                            "success": true,
+                            "data": data,
+                        });
+                        writer
+                            .write_all(format!("{response}\n").as_bytes())
+                            .await
+                            .unwrap();
+                    }
                 }
                 // Connection 2: the held restore and the streamed frame.
                 let (stream, _) = listener.accept().await.expect("accept two");
@@ -1255,24 +1252,19 @@ mod tests {
             .await
             .unwrap();
         drop_first.notify_one();
-        eprintln!("DEBUG notified conn1 drop");
         // The reconnect's restore is HELD; the frame streams meanwhile.
         let mut saw_begin = false;
         let saw_frame = tokio::time::timeout(Duration::from_secs(20), async {
             loop {
                 match next_event(&mut events).await {
                     ConnectionEvent::ReattachBegin { .. } => {
-                        eprintln!("DEBUG begin");
                         saw_begin = true;
                     }
                     ConnectionEvent::Frame(frame) if frame == event => {
-                        eprintln!("DEBUG frame");
                         assert!(saw_begin, "the begin precedes the streamed frame");
                         return;
                     }
-                    other => {
-                        eprintln!("DEBUG other {other:?}");
-                    }
+                    _ => {}
                 }
             }
         })
