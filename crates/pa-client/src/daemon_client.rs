@@ -110,6 +110,8 @@ pub enum DaemonClientEvent {
 
 /// One non-response frame, parsed from a supervisor JSONL line or a direct
 /// worker frame payload (both carry the same `DaemonOutbound` shapes).
+// A flat frame-type match; splitting would add indirection without changing the flow.
+#[allow(clippy::too_many_lines)]
 pub(crate) fn client_event_from_value(value: &Value) -> Option<DaemonClientEvent> {
     let frame_type = value
         .get("type")
@@ -329,6 +331,9 @@ impl DaemonClient {
     /// # Errors
     ///
     /// Returns `Err` on a connect or hello failure, timeout, or unknown protocol.
+    // One linear handshake/reader-setup sequence; splitting would add
+    // indirection without changing the flow.
+    #[allow(clippy::too_many_lines)]
     pub async fn connect(
         socket_path: &Path,
     ) -> Result<(Self, mpsc::UnboundedReceiver<DaemonClientEvent>)> {

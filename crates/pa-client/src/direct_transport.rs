@@ -176,6 +176,9 @@ pub(crate) fn supervisor_supports_direct(hello: &Value) -> bool {
 /// Connect to the worker socket, complete the hello + `peer_auth`
 /// handshake, and spawn the link's writer and reader pumps; the reader
 /// resolves responses through `shared` and forwards events to `event_tx`.
+// One linear hello/peer-auth sequence with its reader and writer pumps;
+// splitting would add indirection without changing the flow.
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn connect_direct(
     ticket: &DaemonPeerTransportTicket,
     shared: Arc<Shared>,
@@ -355,6 +358,9 @@ async fn read_peer_auth_response<R: tokio::io::AsyncRead + Unpin>(
     }
 }
 
+// A cast that narrows a structurally bounded timestamp (epoch millis fits);
+// a guarded conversion would add a panic path the bound guarantees away.
+#[allow(clippy::cast_possible_truncation)]
 fn unix_now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -364,6 +370,9 @@ fn unix_now_ms() -> u64 {
 /// ISO-8601 UTC timestamp to epoch milliseconds (the ticket `expiresAt`
 /// check). Accepts the `new Date().toISOString()` shape with optional
 /// fraction.
+// Casts narrow structurally bounded timestamp arithmetic (validated calendar
+// fields); guarded conversions would add panic paths the bounds guarantee away.
+#[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
 fn iso_to_unix_ms(iso: &str) -> Option<u64> {
     let bytes = iso.as_bytes();
     if bytes.len() < 19 || bytes[4] != b'-' || bytes[7] != b'-' || bytes[10] != b'T' {
