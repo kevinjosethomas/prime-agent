@@ -227,11 +227,11 @@ class ValidateFactorySpecTest(unittest.TestCase):
         for good in ("a", "node-1", "1st-node", "a" * 64):
             self.assertEqual(validate_factory_spec({"nodes": [node(good)]}), [], good)
         for bad in ("-abc", "ABC", "a_b", "a.b", "a" * 65):
-            errors = validate_factory_spec({"nodes": [{"id": bad, "subagent": "w"}]})
+            errors = validate_factory_spec({"nodes": [{"id": bad, "subagent": {"prompt": "p"}}]})
             self.assertEqual(len(errors), 1, bad)
             self.assertIn("id must match", errors[0])
         for bad in ("", None, 5):
-            errors = validate_factory_spec({"nodes": [{"id": bad, "subagent": "w"}]})
+            errors = validate_factory_spec({"nodes": [{"id": bad, "subagent": {"prompt": "p"}}]})
             self.assertEqual(errors, ["nodes[0] requires a non-empty id"], repr(bad))
 
     def test_duplicate_node_ids(self) -> None:
@@ -240,8 +240,14 @@ class ValidateFactorySpecTest(unittest.TestCase):
         self.assertIn("duplicates node id 'dup'", errors[0])
 
     def test_subagent_forms(self) -> None:
+        # A string reference named a harness subagent entry once; with no
+        # saved subagent specs the only valid form is the inline object, so
+        # the string form is rejected outright.
         by_ref = {"nodes": [node("a", subagent="reviewer")]}
-        self.assertEqual(validate_factory_spec(by_ref), [])
+        self.assertEqual(
+            validate_factory_spec(by_ref),
+            ["node a requires a subagent: an inline object with a prompt"],
+        )
         inline = {"nodes": [node("a", subagent={"prompt": "Do work."})]}
         self.assertEqual(validate_factory_spec(inline), [])
         inline_full = {
@@ -471,7 +477,7 @@ class ValidateFactorySpecTest(unittest.TestCase):
                 {
                     "id": "a",
                     "entry": True,
-                    "subagent": "w",
+                    "subagent": {"prompt": "p"},
                     "max_entries": None,
                     "retries": None,
                 }
@@ -486,7 +492,7 @@ class ValidateFactorySpecTest(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            validate_factory_machine({"states": [{"id": "a", "entry": None, "subagent": "w"}], "transitions": []}),
+            validate_factory_machine({"states": [{"id": "a", "entry": None, "subagent": {"prompt": "p"}}], "transitions": []}),
             [
                 "state a entry must be a boolean",
                 "factory machine requires at least one entry state",
@@ -893,7 +899,7 @@ class CanonicalizeFactorySpecTest(unittest.TestCase):
     def test_state_failure_policy_defaults_to_run_policy(self) -> None:
         dag = {
             "run": {"failure_policy": "continue"},
-            "nodes": [{"id": "a", "subagent": "w"}, {"id": "b", "subagent": "w", "failure_policy": "escalate"}],
+            "nodes": [{"id": "a", "subagent": {"prompt": "p"}}, {"id": "b", "subagent": {"prompt": "p"}, "failure_policy": "escalate"}],
         }
         result = canonicalize_factory_spec(dag)
         self.assertEqual(result["states"][0]["failure_policy"], "continue")
@@ -908,8 +914,8 @@ class CanonicalizeFactorySpecTest(unittest.TestCase):
     def test_deduplicates_depends_on_into_one_transition(self) -> None:
         dag = {
             "nodes": [
-                {"id": "a", "subagent": "w"},
-                {"id": "b", "subagent": "w", "depends_on": ["a", "a", "a"]},
+                {"id": "a", "subagent": {"prompt": "p"}},
+                {"id": "b", "subagent": {"prompt": "p"}, "depends_on": ["a", "a", "a"]},
             ]
         }
         result = canonicalize_factory_spec(dag)
@@ -1062,15 +1068,15 @@ class ValidateFactoryMachineTest(unittest.TestCase):
 
     def test_state_ids(self) -> None:
         for good in ("a", "state-1", "1st-state", "a" * 64):
-            machine = {"states": [{"id": good, "entry": True, "subagent": "w"}], "transitions": []}
+            machine = {"states": [{"id": good, "entry": True, "subagent": {"prompt": "p"}}], "transitions": []}
             self.assertEqual(validate_factory_machine(machine), [], good)
         for bad in ("-abc", "ABC", "a_b", "a.b", "a" * 65):
-            machine = {"states": [{"id": bad, "entry": True, "subagent": "w"}], "transitions": []}
+            machine = {"states": [{"id": bad, "entry": True, "subagent": {"prompt": "p"}}], "transitions": []}
             errors = validate_factory_machine(machine)
             self.assertEqual(len(errors), 1, bad)
             self.assertIn("id must match", errors[0])
         for bad in ("", None, 5):
-            machine = {"states": [{"id": bad, "subagent": "w"}], "transitions": []}
+            machine = {"states": [{"id": bad, "subagent": {"prompt": "p"}}], "transitions": []}
             self.assertEqual(
                 validate_factory_machine(machine),
                 ["states[0] requires a non-empty id"],
@@ -1104,10 +1110,10 @@ class ValidateFactoryMachineTest(unittest.TestCase):
     def test_optional_input_flag(self) -> None:
         ok = {
             "states": [
-                {"id": "seed", "entry": True, "subagent": "w", "outputs": [{"name": "o", "type": "json"}]},
+                {"id": "seed", "entry": True, "subagent": {"prompt": "p"}, "outputs": [{"name": "o", "type": "json"}]},
                 {
                     "id": "loop",
-                    "subagent": "w",
+                    "subagent": {"prompt": "p"},
                     "inputs": [{"name": "o", "type": "json", "from": "seed.o", "optional": True}],
                 },
             ],
@@ -1120,7 +1126,7 @@ class ValidateFactoryMachineTest(unittest.TestCase):
                     state("seed", entry=True, outputs=[{"name": "o", "type": "json"}]),
                     {
                         "id": "loop",
-                        "subagent": "w",
+                        "subagent": {"prompt": "p"},
                         "inputs": [{"name": "o", "type": "json", "from": "seed.o", "optional": bad}],
                     },
                 ],
@@ -1147,10 +1153,10 @@ class ValidateFactoryMachineTest(unittest.TestCase):
                 loop_inputs[0]["optional"] = optional
             return {
                 "states": [
-                    {"id": "seed", "entry": True, "subagent": "w", "outputs": [{"name": "go", "type": "text"}]},
+                    {"id": "seed", "entry": True, "subagent": {"prompt": "p"}, "outputs": [{"name": "go", "type": "text"}]},
                     {
                         "id": "loop",
-                        "subagent": "w",
+                        "subagent": {"prompt": "p"},
                         "inputs": loop_inputs,
                         "outputs": [{"name": "last", "type": "text"}],
                         "max_entries": 3,
@@ -1350,7 +1356,7 @@ class ValidateFactoryMachineTest(unittest.TestCase):
         # blocks are rejected outright (machine form and dag form alike).
         machine = {
             "states": [
-                {"id": "watch", "entry": True, "subagent": "w", "wait": {"kind": "path", "target": "/tmp/x", "timeout_ms": 5}},
+                {"id": "watch", "entry": True, "subagent": {"prompt": "p"}, "wait": {"kind": "path", "target": "/tmp/x", "timeout_ms": 5}},
                 state("act"),
             ],
             "transitions": [{"from": "watch", "to": "act"}],
@@ -1378,8 +1384,8 @@ class ValidateFactoryMachineTest(unittest.TestCase):
     def test_resident_states(self) -> None:
         resident_ok = {
             "states": [
-                {"id": "entry", "entry": True, "subagent": "w", "outputs": [{"name": "o", "type": "text"}]},
-                {"id": "watcher", "subagent": "w", "lifecycle": "resident"},
+                {"id": "entry", "entry": True, "subagent": {"prompt": "p"}, "outputs": [{"name": "o", "type": "text"}]},
+                {"id": "watcher", "subagent": {"prompt": "p"}, "lifecycle": "resident"},
             ],
             "transitions": [{"from": "entry", "to": "watcher"}],
         }
@@ -1398,7 +1404,7 @@ class ValidateFactoryMachineTest(unittest.TestCase):
                 state("src", entry=True, outputs=[{"name": "items", "type": "json"}]),
                 {
                     "id": "watcher",
-                    "subagent": "w",
+                    "subagent": {"prompt": "p"},
                     "lifecycle": "resident",
                     "inputs": [{"name": "items", "type": "json", "from": "src.items"}],
                     "foreach": {"over": "items", "max": 4},
@@ -1417,8 +1423,8 @@ class ValidateFactoryMachineTest(unittest.TestCase):
         )
         leaves_resident = {
             "states": [
-                {"id": "entry", "entry": True, "subagent": "w"},
-                {"id": "watcher", "subagent": "w", "lifecycle": "resident"},
+                {"id": "entry", "entry": True, "subagent": {"prompt": "p"}},
+                {"id": "watcher", "subagent": {"prompt": "p"}, "lifecycle": "resident"},
             ],
             "transitions": [{"from": "watcher", "to": "entry"}],
         }
@@ -1676,7 +1682,7 @@ class ValidateFactoryMachineTest(unittest.TestCase):
         resident_source = {
             "states": [
                 state("a", entry=True),
-                {"id": "watcher", "subagent": "w", "lifecycle": "resident"},
+                {"id": "watcher", "subagent": {"prompt": "p"}, "lifecycle": "resident"},
                 state("d"),
             ],
             "transitions": [{"from": ["a", "watcher"], "to": "d"}],
@@ -1960,8 +1966,8 @@ class ValidateFactoryMachineTest(unittest.TestCase):
         machine = {
             "run": {"max_parallel": 99, "failure_policy": "nope"},
             "states": [
-                {"id": "a", "entry": True, "subagent": "w", "retries": 99},
-                {"id": "b", "subagent": "w", "max_entries": 0},
+                {"id": "a", "entry": True, "subagent": {"prompt": "p"}, "retries": 99},
+                {"id": "b", "subagent": {"prompt": "p"}, "max_entries": 0},
             ],
             "transitions": [{"from": "a", "to": "ghost"}],
         }
@@ -2211,23 +2217,23 @@ class ValidateFactorySpecFormTest(unittest.TestCase):
             None,
             {"nodes": "nope"},
             {"nodes": [None, 5, "str"]},
-            {"nodes": [{"id": {}, "subagent": "w"}]},
-            {"nodes": [{"id": ["x"], "subagent": "w"}]},
+            {"nodes": [{"id": {}, "subagent": {"prompt": "p"}}]},
+            {"nodes": [{"id": ["x"], "subagent": {"prompt": "p"}}]},
             {"nodes": [{"id": "a", "subagent": {"prompt": 1}}]},
-            {"nodes": [{"id": "a", "subagent": "w", "depends_on": "a"}]},
-            {"nodes": [{"id": "a", "subagent": "w", "depends_on": [{}]}]},
-            {"nodes": [{"id": "a", "subagent": "w", "inputs": "nope"}]},
-            {"nodes": [{"id": "a", "subagent": "w", "inputs": [{"from": 5}]}]},
-            {"nodes": [{"id": "a", "subagent": "w", "outputs": [{"name": {}, "type": "text"}]}]},
-            {"nodes": [{"id": "a", "subagent": "w", "foreach": {"over": 5, "max": "x"}}]},
-            {"states": [{"id": "a", "entry": True, "subagent": "w"}], "transitions": [{"from": {}, "to": "a"}]},
-            {"states": [{"id": "a", "entry": True, "subagent": "w"}], "transitions": [{"from": [{}], "to": "a"}]},
-            {"states": [{"id": "a", "entry": True, "subagent": "w"}], "transitions": [{"from": ["a", {}], "to": "a"}]},
-            {"states": [{"id": "a", "entry": True, "subagent": "w"}], "transitions": [{"from": ["a"], "to": {}}]},
-            {"states": [{"id": "a", "entry": True, "subagent": "w"}], "transitions": [{"from": "a", "to": "a", "when": {"op": "eq", "value": [1]}}]},
-            {"states": [{"id": "a", "entry": True, "subagent": "w", "max_entries": {}}]},
-            {"states": [{"id": "a", "entry": True, "subagent": "w"}], "transitions": {"from": "a"}},
-            {"nodes": [{"id": "a", "subagent": "w"}], "states": [{"id": "b", "entry": True, "subagent": "w"}]},
+            {"nodes": [{"id": "a", "subagent": {"prompt": "p"}, "depends_on": "a"}]},
+            {"nodes": [{"id": "a", "subagent": {"prompt": "p"}, "depends_on": [{}]}]},
+            {"nodes": [{"id": "a", "subagent": {"prompt": "p"}, "inputs": "nope"}]},
+            {"nodes": [{"id": "a", "subagent": {"prompt": "p"}, "inputs": [{"from": 5}]}]},
+            {"nodes": [{"id": "a", "subagent": {"prompt": "p"}, "outputs": [{"name": {}, "type": "text"}]}]},
+            {"nodes": [{"id": "a", "subagent": {"prompt": "p"}, "foreach": {"over": 5, "max": "x"}}]},
+            {"states": [{"id": "a", "entry": True, "subagent": {"prompt": "p"}}], "transitions": [{"from": {}, "to": "a"}]},
+            {"states": [{"id": "a", "entry": True, "subagent": {"prompt": "p"}}], "transitions": [{"from": [{}], "to": "a"}]},
+            {"states": [{"id": "a", "entry": True, "subagent": {"prompt": "p"}}], "transitions": [{"from": ["a", {}], "to": "a"}]},
+            {"states": [{"id": "a", "entry": True, "subagent": {"prompt": "p"}}], "transitions": [{"from": ["a"], "to": {}}]},
+            {"states": [{"id": "a", "entry": True, "subagent": {"prompt": "p"}}], "transitions": [{"from": "a", "to": "a", "when": {"op": "eq", "value": [1]}}]},
+            {"states": [{"id": "a", "entry": True, "subagent": {"prompt": "p"}, "max_entries": {}}]},
+            {"states": [{"id": "a", "entry": True, "subagent": {"prompt": "p"}}], "transitions": {"from": "a"}},
+            {"nodes": [{"id": "a", "subagent": {"prompt": "p"}}], "states": [{"id": "b", "entry": True, "subagent": {"prompt": "p"}}]},
         ]
         for index, spec in enumerate(hostile):
             result = validate_factory_spec(spec)
@@ -2283,7 +2289,7 @@ class TopologicalOrderTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             topological_order(["not an object"])  # type: ignore[list-item]
         with self.assertRaises(ValueError):
-            topological_order([{"subagent": "w"}])
+            topological_order([{"subagent": {"prompt": "p"}}])
         with self.assertRaises(ValueError):
             topological_order([node("a", depends_on="b")])  # type: ignore[arg-type]
         with self.assertRaises(ValueError):
@@ -3030,19 +3036,18 @@ class _LibraryMachinesMixin:
         )
         return path
 
-    def store_factory(self, dag: dict[str, Any], spec_id: str = "sw") -> None:
+    def seed_factory(self, dag: dict[str, Any], spec_id: str = "sw") -> None:
+        """Author one dag-form machine in the library."""
         self.write_machine_file(spec_id, dag)
 
-    def store_machine(self, machine: dict[str, Any], spec_id: str = "sw") -> None:
+    def seed_machine(self, machine: dict[str, Any], spec_id: str = "sw") -> None:
+        """Author one machine-form machine in the library."""
         self.write_machine_file(spec_id, machine)
 
-    def corrupt_stored_spec(self, spec_id: str, spec: Any, *, key: str = "dag") -> None:
+    def corrupt_machine_file(self, spec_id: str, spec: Any, *, key: str = "dag") -> None:
         """Bypass import-time validation the way a hand-edited library
         file would: rewrite the machine's fence with the corrupt spec."""
         self.write_machine_file(spec_id, spec)
-
-    def corrupt_spec(self, spec_id: str, spec: Any) -> None:
-        self.corrupt_stored_spec(spec_id, spec)
 
 
 # ---------------------------------------------------------------------------
@@ -3252,9 +3257,9 @@ class FactoryExecutorTest(_ExecutorTestCase):
         # machine file (a hand-edited library) to prove run()
         # re-validates on its own and starts nothing on any failure.
         self.seed_factory({"nodes": [{"id": "a", "subagent": {"prompt": "Do the work carefully."}}]}, spec_id="empty")
-        self.corrupt_stored_spec("empty", {"nodes": []})
+        self.corrupt_machine_file("empty", {"nodes": []})
         self.seed_factory({"nodes": [{"id": "a", "subagent": {"prompt": "Do the work carefully."}}]}, spec_id="cyclic")
-        self.corrupt_stored_spec(
+        self.corrupt_machine_file(
             "cyclic",
             {
                 "nodes": [
@@ -3866,7 +3871,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
 
     # -- foreach ----------------------------------------------------------------
 
-    def store_fan_factory(self, *, policy: str) -> None:
+    def seed_fan_machine(self, *, policy: str) -> None:
         self.host.outcomes["src"] = {"status": "done", "answer": '{"items": ["a", "b", "c", "d", "e"]}'}
         self.seed_factory(
             {
@@ -3943,7 +3948,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
 
     @async_test
     async def test_foreach_mixed_instances_escalate_pauses(self) -> None:
-        self.store_fan_factory(policy="escalate")
+        self.seed_fan_machine(policy="escalate")
         result = await self.start()
         # src is child-1; the five fan instances are child-2..child-6.
         # Instances 0-1 fail permanently; 2-4 succeed in the same collect
@@ -3960,7 +3965,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
 
     @async_test
     async def test_foreach_mixed_instances_fail_fast_cancels_siblings(self) -> None:
-        self.store_fan_factory(policy="fail_fast")
+        self.seed_fan_machine(policy="fail_fast")
         result = await self.start()
         # instance 0 (child-2) fails first while its siblings are still in
         # flight: fail_fast must cancel those siblings now, not after they
@@ -3981,7 +3986,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
 
     @async_test
     async def test_foreach_mixed_instances_continue_finishes_with_node_error(self) -> None:
-        self.store_fan_factory(policy="continue")
+        self.seed_fan_machine(policy="continue")
         result = await self.start()
         self.host.child_outcomes["child-2"] = {"status": "error", "error": "boom-1"}
         self.host.child_outcomes["child-3"] = {"status": "error", "error": "boom-2"}
@@ -6972,7 +6977,7 @@ class FactoryGraphWatchTest(_ExecutorTestCase):
         # unknown refs fail loudly; a broken machine file names its errors
         with self.assertRaisesRegex(ValueError, "unknown factory run or machine 'missing'"):
             await rlm_module.rlm.factory.graph("missing")
-        self.corrupt_spec("sw", {"nodes": []})
+        self.corrupt_machine_file("sw", {"nodes": []})
         with self.assertRaisesRegex(ValueError, "exists but is broken"):
             await rlm_module.rlm.factory.graph("sw")
 
@@ -7199,7 +7204,7 @@ class FactoryGraphWatchTest(_ExecutorTestCase):
         # exceed the transport bound — the cap's fallback names the wire
         # cap (the mutation check: an uncapped error frame would carry
         # the multi-hundred-kilobyte reason raw).
-        self.corrupt_stored_spec(
+        self.corrupt_machine_file(
             "big-spec",
             {
                 "run": {"failure_policy": "continue"},
@@ -8588,7 +8593,7 @@ class FactoryRunFromLibraryTest(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
 
-    def store_machine_file(self, name: str, spec: dict[str, Any]) -> Path:
+    def write_machine_file(self, name: str, spec: dict[str, Any]) -> Path:
         directory = self.library / name
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / "MACHINE.md"
@@ -8600,7 +8605,7 @@ class FactoryRunFromLibraryTest(unittest.TestCase):
 
     @async_test
     async def test_run_resolves_machine_names_from_the_library(self) -> None:
-        path = self.store_machine_file(
+        path = self.write_machine_file(
             "sweep",
             {
                 "run": {"failure_policy": "continue", "max_parallel": 2},
@@ -8670,7 +8675,7 @@ class FactoryRunFromLibraryTest(unittest.TestCase):
         # refuses with the exact validator sentences naming the file,
         # never a late canonicalize error after resolution, and nothing
         # spawns.
-        path = self.store_machine_file("sweep", {"states": []})
+        path = self.write_machine_file("sweep", {"states": []})
         with self.assertRaises(ValueError) as raised:
             await rlm_module.rlm.factory.run("sweep")
         message = str(raised.exception)
@@ -8689,7 +8694,7 @@ class FactoryRunFromLibraryTest(unittest.TestCase):
         # and export share the listing's verdict, so the run serves the
         # user machine the listing advertises; the invalid repo file never
         # shadows it and never masquerades as usable.
-        self.store_machine_file("sweep", {"states": []})
+        self.write_machine_file("sweep", {"states": []})
         agent_home = Path(os.environ["PRIME_AGENT_CODING_AGENT_DIR"])
         user_file = agent_home / "machines" / "sweep" / "MACHINE.md"
         user_file.parent.mkdir(parents=True)
@@ -8753,7 +8758,7 @@ class FactoryRunFromLibraryTest(unittest.TestCase):
         # setting is off, a stored library machine name is refused with the
         # one disabled message -- never an unknown-spec error, never a run
         # -- and nothing spawns.
-        self.store_machine_file("sweep", {"nodes": [{"id": "a", "subagent": {"prompt": "Do the work carefully."}}]})
+        self.write_machine_file("sweep", {"nodes": [{"id": "a", "subagent": {"prompt": "Do the work carefully."}}]})
         agent_home = Path(os.environ["PRIME_AGENT_CODING_AGENT_DIR"])
         (agent_home / "settings.json").write_text(
             json.dumps({"factory": {"enabled": False}}), encoding="utf-8"
@@ -8771,7 +8776,7 @@ class FactoryRunFromLibraryTest(unittest.TestCase):
 
     @async_test
     async def test_run_from_library_compiles_dag_sugar(self) -> None:
-        self.store_machine_file(
+        self.write_machine_file(
             "pipeline",
             {
                 "nodes": [
