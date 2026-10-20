@@ -2306,6 +2306,8 @@ mod tests {
         // on the mark.
         drop(guard);
         eprintln!("DBG test: post-drop");
+        let probe = session.state.client.try_read().is_ok();
+        eprintln!("DBG test: try_read after drop ok = {probe}");
         tokio::time::timeout(Duration::from_secs(10), stop_task)
             .await
             .expect("the stop settles after the guard release")
