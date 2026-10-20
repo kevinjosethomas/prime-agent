@@ -1,4 +1,4 @@
-"""Factory harness entry kind: spec validation, dag compilation, and executor.
+"""Factory machines: spec validation, dag compilation, and executor.
 
 Consolidated port of TS-era PRs #2397 (factory entry kind, validator, dag
 compiler) and #2401 (the executor: run/status/stop/resume, guarded
@@ -102,7 +102,6 @@ from rlm.factory import (
     validate_factory_machine,
     validate_factory_spec,
 )
-from rlm._harness_entries import SavedHarnessEntries
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +115,7 @@ HOST_ANSWER_PREVIEW_CHARS = 160
 
 
 def state(state_id: str, **overrides: Any) -> dict[str, Any]:
-    base: dict[str, Any] = {"id": state_id, "subagent": "worker"}
+    base: dict[str, Any] = {"id": state_id, "subagent": {"prompt": "Do the work carefully."}}
     base.update(overrides)
     return base
 
@@ -131,7 +130,7 @@ def valid_machine() -> dict[str, Any]:
             {
                 "id": "collect",
                 "entry": True,
-                "subagent": "researcher",
+                "subagent": {"prompt": "Collect the findings."},
                 "outputs": [{"name": "findings", "type": "text"}],
             },
             {
@@ -158,7 +157,7 @@ def valid_machine() -> dict[str, Any]:
 
 
 def node(node_id: str, **overrides: Any) -> dict[str, Any]:
-    base: dict[str, Any] = {"id": node_id, "subagent": "worker"}
+    base: dict[str, Any] = {"id": node_id, "subagent": {"prompt": "Do the work carefully."}}
     base.update(overrides)
     return base
 
@@ -169,7 +168,7 @@ def valid_dag() -> dict[str, Any]:
         "nodes": [
             {
                 "id": "collect",
-                "subagent": "researcher",
+                "subagent": {"prompt": "Collect the findings."},
                 "outputs": [{"name": "findings", "type": "text"}],
             },
             {
@@ -817,7 +816,7 @@ class ValidateFactorySpecTest(unittest.TestCase):
 
 class CanonicalizeFactorySpecTest(unittest.TestCase):
     def test_applies_defaults(self) -> None:
-        dag = {"nodes": [{"id": "a", "subagent": "worker"}]}
+        dag = {"nodes": [{"id": "a", "subagent": {"prompt": "Do the work carefully."}}]}
         self.assertEqual(
             canonicalize_factory_spec(dag),
             {
@@ -832,7 +831,7 @@ class CanonicalizeFactorySpecTest(unittest.TestCase):
                         "id": "a",
                         "entry": True,
                         "max_entries": 1,
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "lifecycle": "task",
                         "retries": 0,
                         "failure_policy": "escalate",
@@ -1287,7 +1286,7 @@ class ValidateFactoryMachineTest(unittest.TestCase):
             "states": [
                 {"id": "a", "entry": True, "subagent": {"prompt": "p", "name": "reviewer"}},
                 {"id": "b", "subagent": {"prompt": "p", "name": "fixer"}},
-                {"id": "c", "subagent": "worker"},
+                {"id": "c", "subagent": {"prompt": "Do the work carefully."}},
             ],
             "transitions": [{"from": "a", "to": "b"}, {"from": "b", "to": "c"}],
         }
@@ -1998,9 +1997,9 @@ class CompileFactoryDagTest(unittest.TestCase):
             machine,
             {
                 "states": [
-                    {"id": "a", "entry": True, "max_entries": 1, "subagent": "worker", "outputs": [{"name": "o", "type": "text"}]},
-                    {"id": "b", "entry": False, "max_entries": 1, "subagent": "worker"},
-                    {"id": "c", "entry": False, "max_entries": 1, "subagent": "worker"},
+                    {"id": "a", "entry": True, "max_entries": 1, "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "o", "type": "text"}]},
+                    {"id": "b", "entry": False, "max_entries": 1, "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "c", "entry": False, "max_entries": 1, "subagent": {"prompt": "Do the work carefully."}},
                 ],
                 "transitions": [
                     {"from": "a", "to": "b"},
@@ -2037,14 +2036,14 @@ class CompileFactoryDagTest(unittest.TestCase):
             {
                 "run": {"failure_policy": "continue", "max_parallel": 3, "budget_ms": 5000},
                 "states": [
-                    {"id": "a", "entry": True, "max_entries": 1, "subagent": "worker", "outputs": [{"name": "o", "type": "text"}]},
-                    {"id": "b", "entry": False, "max_entries": 1, "subagent": "worker", "outputs": [{"name": "o", "type": "text"}]},
-                    {"id": "c", "entry": False, "max_entries": 1, "subagent": "worker", "outputs": [{"name": "o", "type": "text"}]},
+                    {"id": "a", "entry": True, "max_entries": 1, "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "o", "type": "text"}]},
+                    {"id": "b", "entry": False, "max_entries": 1, "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "o", "type": "text"}]},
+                    {"id": "c", "entry": False, "max_entries": 1, "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "o", "type": "text"}]},
                     {
                         "id": "d",
                         "entry": False,
                         "max_entries": 1,
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "budget_ms": 4000,
                         "inputs": [
                             {"name": "left", "type": "text", "from": "b.o"},
@@ -2147,8 +2146,8 @@ class CompileFactoryDagTest(unittest.TestCase):
         machine = {
             "run": {"failure_policy": "continue", "max_parallel": 2},
             "states": [
-                {"id": "a", "entry": True, "subagent": "worker", "outputs": [{"name": "o", "type": "text"}]},
-                {"id": "b", "subagent": "worker", "max_entries": 1, "budget_ms": 1000},
+                {"id": "a", "entry": True, "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "o", "type": "text"}]},
+                {"id": "b", "subagent": {"prompt": "Do the work carefully."}, "max_entries": 1, "budget_ms": 1000},
             ],
             "transitions": [{"from": "a", "to": "b"}],
         }
@@ -2165,10 +2164,10 @@ class CompileFactoryDagTest(unittest.TestCase):
         }
         diamond_machine = {
             "states": [
-                {"id": "a", "entry": True, "subagent": "worker", "outputs": [{"name": "o", "type": "text"}]},
-                {"id": "b", "subagent": "worker", "max_entries": 1},
-                {"id": "c", "subagent": "worker", "max_entries": 1},
-                {"id": "d", "subagent": "worker", "max_entries": 1},
+                {"id": "a", "entry": True, "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "o", "type": "text"}]},
+                {"id": "b", "subagent": {"prompt": "Do the work carefully."}, "max_entries": 1},
+                {"id": "c", "subagent": {"prompt": "Do the work carefully."}, "max_entries": 1},
+                {"id": "d", "subagent": {"prompt": "Do the work carefully."}, "max_entries": 1},
             ],
             "transitions": [
                 {"from": "a", "to": "b"},
@@ -2444,10 +2443,10 @@ class FactoryHelpTest(unittest.TestCase):
         # help() returns the embedded constant, never a filesystem read.
         self.assertEqual(doc, factory_module.FACTORY_HELP)
 
-        # The shipped section structure: store, author, dag sugar, run, safety.
+        # The shipped section structure: author, dag sugar, run, safety.
         for heading in (
             "# Factory",
-            "## Author and store the spec",
+            "## Author the spec",
             "## Authoring reference",
             "## Dag form",
             "## Run and steer",
@@ -2464,11 +2463,11 @@ class FactoryHelpTest(unittest.TestCase):
         self.assertIn("`/factory on` (`/factory off` disables it again, `/factory status` reports it;", flat)
         self.assertIn("the persisted setting is `factory.enabled` in the agent dir's settings.json", flat)
         self.assertIn("every `rlm.factory` call except `help()`", flat)
-        # The store/authoring contract: the host writes the shared store,
-        # the kernel reads it, and machines are authored in the library.
-        self.assertIn("which host refinement runs write and this kernel only reads", flat)
-        self.assertIn("The authoring path is the machine library", flat)
-        self.assertIn("an invalid machine never persists", flat)
+        # The authoring contract: the machine library is the only spec
+        # source, imports validate, and runs re-validate.
+        self.assertIn("A factory spec is a machine in the library", flat)
+        self.assertIn("the import validates, so an invalid machine never persists", flat)
+        self.assertIn("which re-validates before starting", flat)
         self.assertIn(factory_module.FACTORY_DISABLED_MESSAGE, flat)
         self.assertIn("`help()` answers while disabled", flat)
         # Guards: the op set evaluated over the from-state's latest settle.
@@ -2534,8 +2533,8 @@ class FactoryHelpTest(unittest.TestCase):
             flat,
         )
         self.assertIn(
-            "`rlm.factory.run('<name>')` runs a library machine directly without "
-            "creating a harness entry; a machine that exists but is broken names "
+            "`rlm.factory.run('<name>')` runs a library machine directly; "
+            "a machine that exists but is broken names "
             "its errors instead of pretending the name is unknown",
             flat,
         )
@@ -2994,83 +2993,53 @@ class DeadNoticeHost(FakeHost):
 
 
 # ---------------------------------------------------------------------------
-# Saved-store fixtures (the shared store's document, seeded as direct
-# fixture JSON and read back through the real narrow reader)
+# Machine-library fixtures (a MACHINE.md per spec, resolved through the
+# same library the runtime resolves)
 # ---------------------------------------------------------------------------
 
 
-def subagent_entry(title: str, content: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
-    """One saved subagent entry in the store's document shape."""
-    return {"title": title, "content": content, "metadata": metadata or {}}
+class _LibraryMachinesMixin:
+    """Write fixture machines as real MACHINE.md files.
 
-
-def factory_entry(
-    *,
-    machine: dict[str, Any] | None = None,
-    dag: dict[str, Any] | None = None,
-    title: str = "Factory",
-    content: str = "Factory content",
-) -> dict[str, Any]:
-    """One saved factory entry in the store's document shape."""
-    arguments: dict[str, Any] = {}
-    if machine is not None:
-        arguments["machine"] = machine
-    if dag is not None:
-        arguments["dag"] = dag
-    return {"title": title, "content": content, "arguments": arguments}
-
-
-class _SavedStoreMixin:
-    """Seed the saved harness store as fixture JSON the host owns.
-
-    The shared store is a document the host writes; tests seed it the same
-    way (direct JSON in the real saved shape) and read it back through the
-    narrow reader the executor resolves specs and subagent references
-    from. The reader reads fresh per call, so every rewrite below is
-    visible to the next lookup without rebuilding anything.
+    The library is the only spec source: tests author machines the same
+    way (a frontmatter file with one machine-spec fence) and the runtime
+    resolves them through the same parse/validate/run path production
+    rides. ``PRIME_AGENT_MACHINES_DIR`` points the repo level at the
+    test's directory, so a machine written below is immediately runnable
+    by name.
     """
 
-    def seed_store(self) -> None:
+    def seed_machine_library(self) -> None:
         temp = TemporaryDirectory()
         self.addCleanup(temp.cleanup)
-        root = Path(temp.name).resolve()
-        self.state_dir = root / "harness"
-        self.global_state_dir = root / "global-harness"
-        self.saved_entries: dict[str, dict[str, dict[str, Any]]] = {"subagent": {}, "factory": {}}
-        self.harness = SavedHarnessEntries(state_dir=self.state_dir, global_state_dir=self.global_state_dir)
-        self.flush_saved_store()
+        self.machines_dir = Path(temp.name).resolve() / "machines"
+        self.machines_dir.mkdir(parents=True)
+        env = patch.dict(os.environ, {"PRIME_AGENT_MACHINES_DIR": str(self.machines_dir)})
+        env.start()
+        self.addCleanup(env.stop)
 
-    def flush_saved_store(self) -> None:
-        """Rewrite the local store file from the fixture records."""
-        self.state_dir.mkdir(parents=True, exist_ok=True)
-        (self.state_dir / "harness_state.json").write_text(
-            json.dumps({"schema": 1, "entries": self.saved_entries, "refinements": []}, indent=2),
+    def write_machine_file(self, name: str, spec: dict[str, Any]) -> Path:
+        directory = self.machines_dir / name
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / MACHINE_FILE_NAME
+        path.write_text(
+            machine_file_text(
+                name=name, description="A machine that sweeps.", spec_json=json.dumps(spec)
+            ),
             encoding="utf-8",
         )
+        return path
 
-    def seed_entry(
-        self, kind: str, id: str, record: dict[str, Any]
-    ) -> None:
-        """Insert one raw fixture record into the saved store document."""
-        self.saved_entries[kind][id] = record
-        self.flush_saved_store()
+    def store_factory(self, dag: dict[str, Any], spec_id: str = "sw") -> None:
+        self.write_machine_file(spec_id, dag)
 
-    def seed_subagent(
-        self, title: str, content: str, id: str, metadata: dict[str, Any] | None = None
-    ) -> None:
-        self.seed_entry("subagent", id, subagent_entry(title, content, metadata=metadata))
-
-    def seed_factory(self, dag: dict[str, Any], spec_id: str = "sw") -> None:
-        self.seed_entry("factory", spec_id, factory_entry(dag=dag))
-
-    def seed_machine(self, machine: dict[str, Any], spec_id: str = "sw") -> None:
-        self.seed_entry("factory", spec_id, factory_entry(machine=machine))
+    def store_machine(self, machine: dict[str, Any], spec_id: str = "sw") -> None:
+        self.write_machine_file(spec_id, machine)
 
     def corrupt_stored_spec(self, spec_id: str, spec: Any, *, key: str = "dag") -> None:
-        """Bypass store-time validation the way a hand-edited or foreign
-        store would: rewrite the saved spec in the fixture JSON."""
-        self.saved_entries["factory"][spec_id]["arguments"] = {key: spec}
-        self.flush_saved_store()
+        """Bypass import-time validation the way a hand-edited library
+        file would: rewrite the machine's fence with the corrupt spec."""
+        self.write_machine_file(spec_id, spec)
 
     def corrupt_spec(self, spec_id: str, spec: Any) -> None:
         self.corrupt_stored_spec(spec_id, spec)
@@ -3081,11 +3050,11 @@ class _SavedStoreMixin:
 # ---------------------------------------------------------------------------
 
 
-class _ExecutorTestCase(_SavedStoreMixin, unittest.TestCase):
+class _ExecutorTestCase(_LibraryMachinesMixin, unittest.TestCase):
     """The scripted in-memory kernel every executor test runs against.
 
-    A seeded saved store (fixture JSON behind the real narrow reader) with
-    a real subagent entry, an injected clock and
+    A seeded machine library (fixture MACHINE.md files behind the same
+    resolution production rides), an injected clock and
     sleeps, a ``FakeHost`` behind the ``host_request`` patch seam, and the
     per-test default executor. The factory opt-in gate reads the
     ``factory.enabled`` setting from the agent dir's settings file, so the
@@ -3096,12 +3065,11 @@ class _ExecutorTestCase(_SavedStoreMixin, unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        self.seed_store()
-        self.seed_subagent("Worker", "Do the work carefully.", id="worker")
+        self.seed_machine_library()
         self.clock = FakeClock()
         self.host = FakeHost(clock=self.clock)
         self.sleeps = ClockSleep(self.clock)
-        self.executor = FactoryExecutor(now=self.clock, sleep=self.sleeps, harness=self.harness)
+        self.executor = FactoryExecutor(now=self.clock, sleep=self.sleeps)
         previous_executor = factory_module._DEFAULT_EXECUTOR
         factory_module._DEFAULT_EXECUTOR = self.executor
         self.addCleanup(lambda: setattr(factory_module, "_DEFAULT_EXECUTOR", previous_executor))
@@ -3139,7 +3107,7 @@ class _ExecutorTestCase(_SavedStoreMixin, unittest.TestCase):
     # -- helpers shared with the opt-in gate tests ----------------------------
 
     def node(self, node_id: str, **overrides: Any) -> dict[str, Any]:
-        base: dict[str, Any] = {"id": node_id, "subagent": "worker"}
+        base: dict[str, Any] = {"id": node_id, "subagent": {"prompt": "Do the work carefully."}}
         base.update(overrides)
         return base
 
@@ -3280,18 +3248,18 @@ class FactoryExecutorTest(_ExecutorTestCase):
 
     @async_test
     async def test_run_rejects_invalid_dag_and_starts_nothing(self) -> None:
-        # Store-time validation is the host's, so corrupt the stored spec
-        # in the fixture JSON (a hand-edited or foreign store) to prove run()
+        # Import-time validation blocks library writes, so corrupt the
+        # machine file (a hand-edited library) to prove run()
         # re-validates on its own and starts nothing on any failure.
-        self.seed_factory({"nodes": [{"id": "a", "subagent": "worker"}]}, spec_id="empty")
+        self.seed_factory({"nodes": [{"id": "a", "subagent": {"prompt": "Do the work carefully."}}]}, spec_id="empty")
         self.corrupt_stored_spec("empty", {"nodes": []})
-        self.seed_factory({"nodes": [{"id": "a", "subagent": "worker"}]}, spec_id="cyclic")
+        self.seed_factory({"nodes": [{"id": "a", "subagent": {"prompt": "Do the work carefully."}}]}, spec_id="cyclic")
         self.corrupt_stored_spec(
             "cyclic",
             {
                 "nodes": [
-                    {"id": "a", "subagent": "worker", "depends_on": ["b"]},
-                    {"id": "b", "subagent": "worker", "depends_on": ["a"]},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}, "depends_on": ["b"]},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}, "depends_on": ["a"]},
                 ]
             },
         )
@@ -3301,53 +3269,9 @@ class FactoryExecutorTest(_ExecutorTestCase):
         self.assertEqual(self.host.calls, [])
 
     @async_test
-    async def test_run_lists_all_missing_subagent_references(self) -> None:
-        self.seed_factory(
-            {
-                "run": {"failure_policy": "continue"},
-                "nodes": [
-                    {"id": "a", "subagent": "ghost-a"},
-                    {"id": "b", "subagent": "ghost-b"},
-                ],
-            }
-        )
-        with self.assertRaises(ValueError) as ctx:
-            await self.start()
-        self.assertIn("ghost-a", str(ctx.exception))
-        self.assertIn("ghost-b", str(ctx.exception))
-        self.assertEqual(self.host.calls, [])
-
-    @async_test
-    async def test_run_rejects_unknown_spec(self) -> None:
-        with self.assertRaisesRegex(ValueError, "unknown factory spec"):
+    async def test_run_rejects_unknown_machine(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unknown factory machine"):
             await self.start("missing-spec")
-
-    @async_test
-    async def test_resolves_subagent_by_id_and_title_with_model_settings(self) -> None:
-        self.seed_subagent(
-            "The Worker",
-            "Template by title.",
-            id="worker-md",
-            metadata={"model": "pi/test-model", "thinking": "low"},
-        )
-        self.seed_factory(
-            {
-                "run": {"max_parallel": 2},
-                "nodes": [
-                    {"id": "x", "subagent": "The Worker"},
-                    {"id": "y", "subagent": "worker-md"},
-                ],
-            }
-        )
-        result = await self.start()
-        status = await self.settle(result)
-        self.assertEqual(status["state"], "done")
-        for node_id in ("x", "y"):
-            spawn = self.host.spawn_calls(node_id)
-            self.assertEqual(len(spawn), 1, node_id)
-            self.assertEqual(spawn[0]["prompt"], "Template by title.")
-            self.assertEqual(spawn[0]["kwargs"]["model"], "pi/test-model")
-            self.assertEqual(spawn[0]["kwargs"]["thinking"], "low")
 
     @async_test
     async def test_inline_subagent_name_labels_the_spawned_child(self) -> None:
@@ -3402,7 +3326,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
                     },
                     {
                         "id": "check",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "inputs": [{"name": "built", "type": "text", "from": "impl.built"}],
                     },
                 ],
@@ -3470,7 +3394,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue", "max_parallel": 8},
                 "nodes": [
-                    {"id": "src", "subagent": "worker", "outputs": [{"name": "items", "type": "json"}]},
+                    {"id": "src", "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "items", "type": "json"}]},
                     {
                         "id": "fan",
                         "subagent": {"prompt": "Expand item {items}.", "name": "expander"},
@@ -3503,10 +3427,10 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"max_parallel": 2},
                 "nodes": [
-                    {"id": "a", "subagent": "worker"},
-                    {"id": "b", "subagent": "worker", "depends_on": ["a"]},
-                    {"id": "c", "subagent": "worker", "depends_on": ["b"]},
-                    {"id": "d", "subagent": "worker"},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}, "depends_on": ["a"]},
+                    {"id": "c", "subagent": {"prompt": "Do the work carefully."}, "depends_on": ["b"]},
+                    {"id": "d", "subagent": {"prompt": "Do the work carefully."}},
                 ],
             }
         )
@@ -3534,7 +3458,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue"},
                 "nodes": [
-                    {"id": "a", "subagent": "worker", "outputs": [{"name": "out", "type": "text"}]},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "out", "type": "text"}]},
                     {
                         "id": "b",
                         "subagent": {"prompt": "Summarize: {draft}"},
@@ -3562,7 +3486,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue"},
                 "nodes": [
-                    {"id": "a", "subagent": "worker", "outputs": [{"name": "result", "type": "json"}]},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "result", "type": "json"}]},
                     {
                         "id": "b",
                         "subagent": {"prompt": "Process {data}."},
@@ -3585,7 +3509,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue"},
                 "nodes": [
-                    {"id": "a", "subagent": "worker", "outputs": [{"name": "result", "type": "json"}]},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "result", "type": "json"}]},
                     {
                         "id": "b",
                         "subagent": {"prompt": "Process {data}."},
@@ -3612,14 +3536,14 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue"},
                 "nodes": [
-                    {"id": "a", "subagent": "worker", "outputs": [{"name": "result", "type": "json"}]},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "result", "type": "json"}]},
                     {
                         "id": "b",
                         "subagent": {"prompt": "Process {data}."},
                         "depends_on": ["a"],
                         "inputs": [{"name": "data", "type": "json", "from": "a.result"}],
                     },
-                    {"id": "c", "subagent": "worker"},
+                    {"id": "c", "subagent": {"prompt": "Do the work carefully."}},
                 ],
             }
         )
@@ -3642,7 +3566,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue"},
                 "nodes": [
-                    {"id": "a", "subagent": "worker", "outputs": [{"name": "out", "type": "text"}]},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "out", "type": "text"}]},
                     {
                         "id": "b",
                         "subagent": {"prompt": "No placeholders here."},
@@ -3671,8 +3595,8 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue"},
                 "nodes": [
-                    {"id": "a", "subagent": "worker", "outputs": [{"name": "out", "type": "text"}]},
-                    {"id": "b", "subagent": "worker", "outputs": [{"name": "out", "type": "text"}]},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "out", "type": "text"}]},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "out", "type": "text"}]},
                     {
                         "id": "c",
                         "subagent": {"prompt": "Combine {left} and {right}."},
@@ -3711,14 +3635,14 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue"},
                 "nodes": [
-                    {"id": "a", "subagent": "worker"},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}},
                     {
                         "id": "b",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "depends_on": ["a"],
                         "outputs": [{"name": "out", "type": "text"}],
                     },
-                    {"id": "c", "subagent": "worker", "depends_on": ["a"]},
+                    {"id": "c", "subagent": {"prompt": "Do the work carefully."}, "depends_on": ["a"]},
                     {
                         "id": "d",
                         "subagent": {"prompt": "Combine {left}."},
@@ -3756,7 +3680,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
         self.host.outcomes["a"] = {"status": "done", "answer": long_answer}
         self.seed_factory(
             {
-                "nodes": [{"id": "a", "subagent": "worker"}],
+                "nodes": [{"id": "a", "subagent": {"prompt": "Do the work carefully."}}],
             }
         )
         result = await self.start()
@@ -3787,12 +3711,12 @@ class FactoryExecutorTest(_ExecutorTestCase):
                     {
                         "id": "setup",
                         "entry": True,
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "outputs": [{"name": "worktree", "type": "json"}],
                     },
                     {
                         "id": "impl",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "inputs": [{"name": "worktree", "type": "json", "from": "setup.worktree"}],
                     },
                 ],
@@ -3828,7 +3752,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
                     {
                         "id": "src",
                         "entry": True,
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "outputs": [{"name": "data", "type": "json"}],
                     },
                     {
@@ -3865,13 +3789,13 @@ class FactoryExecutorTest(_ExecutorTestCase):
                     {
                         "id": "setup",
                         "entry": True,
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "outputs": [{"name": "config", "type": "json"}],
                         "retries": 1,
                     },
                     {
                         "id": "build",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "inputs": [{"name": "config", "type": "json", "from": "setup.config"}],
                         "max_entries": 4,
                     },
@@ -3918,7 +3842,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
                     {
                         "id": "src",
                         "entry": True,
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "outputs": [{"name": "blob", "type": "json"}],
                     },
                     {
@@ -3948,10 +3872,10 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": policy, "max_parallel": 8},
                 "nodes": [
-                    {"id": "src", "subagent": "worker", "outputs": [{"name": "items", "type": "json"}]},
+                    {"id": "src", "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "items", "type": "json"}]},
                     {
                         "id": "fan",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "depends_on": ["src"],
                         "inputs": [{"name": "items", "type": "json", "from": "src.items"}],
                         "foreach": {"over": "items", "max": 5},
@@ -3970,7 +3894,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue", "max_parallel": 8},
                 "nodes": [
-                    {"id": "src", "subagent": "worker", "outputs": [{"name": "items", "type": "json"}]},
+                    {"id": "src", "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "items", "type": "json"}]},
                     {
                         "id": "fan",
                         "subagent": {"prompt": "Expand item {items}."},
@@ -4000,10 +3924,10 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue"},
                 "nodes": [
-                    {"id": "src", "subagent": "worker", "outputs": [{"name": "items", "type": "json"}]},
+                    {"id": "src", "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "items", "type": "json"}]},
                     {
                         "id": "fan",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "depends_on": ["src"],
                         "inputs": [{"name": "items", "type": "json", "from": "src.items"}],
                         "foreach": {"over": "items", "max": 4},
@@ -4084,10 +4008,10 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue", "max_parallel": 2},
                 "nodes": [
-                    {"id": "src", "subagent": "worker", "outputs": [{"name": "items", "type": "json"}]},
+                    {"id": "src", "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "items", "type": "json"}]},
                     {
                         "id": "fan",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "depends_on": ["src"],
                         "inputs": [{"name": "items", "type": "json", "from": "src.items"}],
                         "foreach": {"over": "items", "max": 5},
@@ -4141,10 +4065,10 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue", "max_parallel": 8},
                 "nodes": [
-                    {"id": "src", "subagent": "worker", "outputs": [{"name": "items", "type": "json"}]},
+                    {"id": "src", "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "items", "type": "json"}]},
                     {
                         "id": "fan",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "depends_on": ["src"],
                         "inputs": [{"name": "items", "type": "json", "from": "src.items"}],
                         "foreach": {"over": "items", "max": 2},
@@ -4191,9 +4115,9 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue", "max_parallel": 8},
                 "nodes": [
-                    {"id": "a", "subagent": "worker", "failure_policy": "fail_fast"},
-                    {"id": "b", "subagent": "worker"},
-                    {"id": "c", "subagent": "worker"},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}, "failure_policy": "fail_fast"},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "c", "subagent": {"prompt": "Do the work carefully."}},
                 ],
             }
         )
@@ -4214,9 +4138,9 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue"},
                 "nodes": [
-                    {"id": "a", "subagent": "worker"},
-                    {"id": "b", "subagent": "worker", "depends_on": ["a"]},
-                    {"id": "c", "subagent": "worker"},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}, "depends_on": ["a"]},
+                    {"id": "c", "subagent": {"prompt": "Do the work carefully."}},
                 ],
             }
         )
@@ -4247,12 +4171,12 @@ class FactoryExecutorTest(_ExecutorTestCase):
                     {
                         "id": "implement",
                         "entry": True,
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "outputs": [{"name": "result", "type": "text"}],
                     },
                     {
                         "id": "review",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "inputs": [{"name": "result", "type": "text", "from": "implement.result"}],
                         "max_entries": 4,
                     },
@@ -4299,12 +4223,12 @@ class FactoryExecutorTest(_ExecutorTestCase):
                     {
                         "id": "implement",
                         "entry": True,
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "outputs": [{"name": "result", "type": "text"}],
                     },
                     {
                         "id": "review",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "inputs": [{"name": "result", "type": "text", "from": "implement.result"}],
                         "max_entries": 4,
                     },
@@ -4331,8 +4255,8 @@ class FactoryExecutorTest(_ExecutorTestCase):
         self.seed_factory(
             {
                 "nodes": [
-                    {"id": "a", "subagent": "worker"},
-                    {"id": "b", "subagent": "worker", "depends_on": ["a"]},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}, "depends_on": ["a"]},
                 ],
             }
         )
@@ -4372,8 +4296,8 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "escalate"},
                 "states": [
-                    {"id": "a", "entry": True, "subagent": "worker"},
-                    {"id": "b", "subagent": "worker"},
+                    {"id": "a", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}},
                 ],
                 "transitions": [{"from": "a", "to": "b"}],
             }
@@ -4405,7 +4329,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
         self.seed_factory(
             {
                 "run": {"failure_policy": "continue"},
-                "nodes": [{"id": "a", "subagent": "worker", "retries": 2}],
+                "nodes": [{"id": "a", "subagent": {"prompt": "Do the work carefully."}, "retries": 2}],
             }
         )
         result = await self.start()
@@ -4432,7 +4356,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
             "error": "Child worker unreachable",
             "answer": "partial work",
         }
-        self.seed_factory({"nodes": [{"id": "work", "subagent": "worker"}]})
+        self.seed_factory({"nodes": [{"id": "work", "subagent": {"prompt": "Do the work carefully."}}]})
         result = await self.start()
         status = await self.settle(result)
         self.assertEqual(status["state"], "done")
@@ -4457,7 +4381,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
         self.seed_factory(
             {
                 "run": {"failure_policy": "continue"},
-                "nodes": [{"id": "work", "subagent": "worker", "retries": 1}],
+                "nodes": [{"id": "work", "subagent": {"prompt": "Do the work carefully."}, "retries": 1}],
             }
         )
         result = await self.start()
@@ -4478,8 +4402,8 @@ class FactoryExecutorTest(_ExecutorTestCase):
             "status": "error", "error": "Child worker unreachable"
         }
         self.seed_factory({"nodes": [
-            {"id": "a", "subagent": "worker"},
-            {"id": "b", "subagent": "worker"},
+            {"id": "a", "subagent": {"prompt": "Do the work carefully."}},
+            {"id": "b", "subagent": {"prompt": "Do the work carefully."}},
         ]})
         result = await self.start()
         run = self.executor._runs[result["run_id"]]
@@ -4503,7 +4427,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
         capture_gate = self.host.gate("rlm.collect", 2)
         capture_entered = self.host.gate_entered("rlm.collect", 2)
         self.seed_factory({"nodes": [{
-            "id": "work", "subagent": "worker",
+            "id": "work", "subagent": {"prompt": "Do the work carefully."},
             "outputs": [{"name": "data", "type": "json"}],
         }]})
         result = await self.start()
@@ -4539,7 +4463,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
                 host.child_outcomes["child-1"] = {"status": "done", "answer": "late done"}
 
         self.executor._sleep_fn = ReviveSleep(self.clock)
-        self.seed_factory({"nodes": [{"id": "work", "subagent": "worker"}]})
+        self.seed_factory({"nodes": [{"id": "work", "subagent": {"prompt": "Do the work carefully."}}]})
         result = await self.start()
         status = await self.settle(result)
         self.assertEqual(status["state"], "done")
@@ -4557,7 +4481,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
         self.host.child_outcomes["child-2"] = {"status": "error", "error": "boom"}
         self.host.child_outcomes["child-3"] = {"status": "error", "error": "boom"}
         self.host.child_outcomes["child-4"] = {"status": "error", "error": "Child worker unreachable"}
-        self.seed_factory({"nodes": [{"id": "work", "subagent": "worker", "retries": 1}]})
+        self.seed_factory({"nodes": [{"id": "work", "subagent": {"prompt": "Do the work carefully."}, "retries": 1}]})
         result = await self.start()
         paused = await self.settle(result)
         # infra death -> free respawn; the respawn's own task failure spent
@@ -4589,8 +4513,8 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue"},
                 "nodes": [
-                    {"id": "a", "subagent": "worker", "budget_ms": 1000},
-                    {"id": "b", "subagent": "worker", "depends_on": ["a"]},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}, "budget_ms": 1000},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}, "depends_on": ["a"]},
                 ],
             }
         )
@@ -4612,8 +4536,8 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue", "budget_ms": 1500},
                 "nodes": [
-                    {"id": "a", "subagent": "worker"},
-                    {"id": "b", "subagent": "worker", "depends_on": ["a"]},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}, "depends_on": ["a"]},
                 ],
             }
         )
@@ -4648,9 +4572,9 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue", "budget_ms": 3000, "max_parallel": 8},
                 "nodes": [
-                    {"id": "a", "subagent": "worker"},
-                    {"id": "b", "subagent": "worker"},
-                    {"id": "c", "subagent": "worker"},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "c", "subagent": {"prompt": "Do the work carefully."}},
                 ],
             }
         )
@@ -4688,9 +4612,9 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue", "max_children": 2},
                 "nodes": [
-                    {"id": "a", "subagent": "worker"},
-                    {"id": "b", "subagent": "worker"},
-                    {"id": "c", "subagent": "worker"},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "c", "subagent": {"prompt": "Do the work carefully."}},
                 ],
             }
         )
@@ -4741,7 +4665,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue", "max_children": 2, "max_parallel": 8},
                 "nodes": [
-                    {"id": "src", "subagent": "worker", "outputs": [{"name": "items", "type": "json"}]},
+                    {"id": "src", "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "items", "type": "json"}]},
                     {
                         "id": "fan",
                         "subagent": {"prompt": "Expand item {items}."},
@@ -4787,8 +4711,8 @@ class FactoryExecutorTest(_ExecutorTestCase):
         self.seed_factory(
             {
                 "nodes": [
-                    {"id": "a", "subagent": "worker"},
-                    {"id": "b", "subagent": "worker", "depends_on": ["a"]},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}, "depends_on": ["a"]},
                 ],
             }
         )
@@ -4823,8 +4747,8 @@ class FactoryExecutorTest(_ExecutorTestCase):
         self.seed_factory(
             {
                 "nodes": [
-                    {"id": "a", "subagent": "worker"},
-                    {"id": "b", "subagent": "worker"},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}},
                 ],
             }
         )
@@ -4857,8 +4781,8 @@ class FactoryExecutorTest(_ExecutorTestCase):
         self.seed_factory(
             {
                 "nodes": [
-                    {"id": "a", "subagent": "worker"},
-                    {"id": "b", "subagent": "worker"},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}},
                 ],
             }
         )
@@ -4893,9 +4817,9 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"max_parallel": 2},
                 "nodes": [
-                    {"id": "a", "subagent": "worker"},
-                    {"id": "b", "subagent": "worker"},
-                    {"id": "c", "subagent": "worker"},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "c", "subagent": {"prompt": "Do the work carefully."}},
                 ],
             }
         )
@@ -4931,7 +4855,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
         self.host.rate_limit_first["a"] = 1
         spawn_gate = self.host.gate("rlm.run", 2)
         gate_entered = self.host.gate_entered("rlm.run", 2)
-        self.seed_factory({"nodes": [{"id": "a", "subagent": "worker"}]})
+        self.seed_factory({"nodes": [{"id": "a", "subagent": {"prompt": "Do the work carefully."}}]})
         result = await self.start()
         self.assertEqual(result["started"], [])
         await gate_entered.wait()  # the loop is suspended mid-spawn
@@ -4959,10 +4883,10 @@ class FactoryExecutorTest(_ExecutorTestCase):
         # deadline: waking must not retry the spawn; the instance is
         # cancelled instead.
         self.sleeps = GatedSleep()
-        self.executor = FactoryExecutor(now=self.clock, sleep=self.sleeps, harness=self.harness)
+        self.executor = FactoryExecutor(now=self.clock, sleep=self.sleeps)
         factory_module._DEFAULT_EXECUTOR = self.executor
         self.host.rate_limit_first["a"] = 2
-        self.seed_factory({"nodes": [{"id": "a", "subagent": "worker"}]})
+        self.seed_factory({"nodes": [{"id": "a", "subagent": {"prompt": "Do the work carefully."}}]})
         result = await self.start()
         self.assertEqual(result["started"], [])
         await self.sleeps.entered.wait()  # the loop waits out the backoff slice
@@ -4990,9 +4914,9 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"max_parallel": 4},
                 "states": [
-                    {"id": "a", "entry": True, "subagent": "worker"},
-                    {"id": "b", "entry": True, "subagent": "worker"},
-                    {"id": "x", "subagent": "worker", "max_entries": 2},
+                    {"id": "a", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "x", "subagent": {"prompt": "Do the work carefully."}, "max_entries": 2},
                 ],
                 "transitions": [{"from": "a", "to": "x"}, {"from": "b", "to": "x"}],
             }
@@ -5025,9 +4949,9 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "fail_fast"},
                 "nodes": [
-                    {"id": "a", "subagent": "worker"},
-                    {"id": "b", "subagent": "worker"},
-                    {"id": "c", "subagent": "worker"},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "c", "subagent": {"prompt": "Do the work carefully."}},
                 ],
             }
         )
@@ -5065,7 +4989,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         failing.outcomes["a"] = {"status": "running"}
-        self.seed_factory({"nodes": [{"id": "a", "subagent": "worker"}]})
+        self.seed_factory({"nodes": [{"id": "a", "subagent": {"prompt": "Do the work carefully."}}]})
         result = await self.start()
         await self.wait_until(lambda: failing.collects >= 1)
         stopped = await rlm_module.rlm.factory.stop(result["run_id"])
@@ -5087,7 +5011,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
         # (records the backoff deadline), then the loop waits out the
         # deadline in bounded slices and the retry succeeds.
         self.host.rate_limit_first["a"] = 2
-        self.seed_factory({"nodes": [{"id": "a", "subagent": "worker"}]})
+        self.seed_factory({"nodes": [{"id": "a", "subagent": {"prompt": "Do the work carefully."}}]})
         result = await self.start()
         self.assertEqual(result["started"], [])
         # run() itself never slept: the deferral is nonblocking.
@@ -5107,8 +5031,8 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue"},
                 "nodes": [
-                    {"id": "a", "subagent": "worker"},
-                    {"id": "b", "subagent": "worker", "depends_on": ["a"]},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}, "depends_on": ["a"]},
                 ],
             }
         )
@@ -5146,8 +5070,8 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue"},
                 "nodes": [
-                    {"id": "a", "subagent": "worker"},
-                    {"id": "b", "subagent": "worker"},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}},
                 ],
             }
         )
@@ -5206,7 +5130,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
 
     @async_test
     async def test_status_marks_events_delivered_and_unknown_run_raises(self) -> None:
-        self.seed_factory({"nodes": [{"id": "a", "subagent": "worker"}]})
+        self.seed_factory({"nodes": [{"id": "a", "subagent": {"prompt": "Do the work carefully."}}]})
         result = await self.start()
         run = self.executor._runs[result["run_id"]]
         await self.wait_until(lambda: run.state != "running")
@@ -5242,8 +5166,8 @@ class FactoryExecutorTest(_ExecutorTestCase):
         self.seed_factory(
             {
                 "nodes": [
-                    {"id": "a", "subagent": "worker"},
-                    {"id": "b", "subagent": "worker", "depends_on": ["a"]},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}, "depends_on": ["a"]},
                 ],
             }
         )
@@ -5281,8 +5205,8 @@ class FactoryExecutorTest(_ExecutorTestCase):
         self.seed_factory(
             {
                 "nodes": [
-                    {"id": "a", "subagent": "worker"},
-                    {"id": "b", "subagent": "worker", "depends_on": ["a"]},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}, "depends_on": ["a"]},
                 ],
             }
         )
@@ -5340,17 +5264,17 @@ class FactoryExecutorTest(_ExecutorTestCase):
                     {
                         "id": "draft",
                         "entry": True,
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "outputs": [{"name": "draft", "type": "text"}],
                     },
                     {
                         "id": "reviewing",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "inputs": [{"name": "draft", "type": "text", "from": "draft.draft"}],
                         "outputs": [{"name": "verdict", "type": "json"}],
                         "max_entries": 4,
                     },
-                    {"id": "fixing", "subagent": "worker", "max_entries": 3},
+                    {"id": "fixing", "subagent": {"prompt": "Do the work carefully."}, "max_entries": 3},
                 ],
                 "transitions": [
                     {"from": "draft", "to": "reviewing"},
@@ -5396,11 +5320,11 @@ class FactoryExecutorTest(_ExecutorTestCase):
                     {
                         "id": "pick",
                         "entry": True,
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "outputs": [{"name": "pick", "type": "json"}],
                     },
-                    {"id": "left", "subagent": "worker"},
-                    {"id": "right", "subagent": "worker"},
+                    {"id": "left", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "right", "subagent": {"prompt": "Do the work carefully."}},
                 ],
                 "transitions": [
                     {"from": "pick", "to": "left", "when": {"output": "pick", "path": "choice", "op": "eq", "value": "left"}},
@@ -5443,9 +5367,9 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue"},
                 "states": [
-                    {"id": "fan", "entry": True, "subagent": "worker", "outputs": [{"name": "go", "type": "text"}]},
-                    {"id": "left", "subagent": "worker"},
-                    {"id": "right", "subagent": "worker"},
+                    {"id": "fan", "entry": True, "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "go", "type": "text"}]},
+                    {"id": "left", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "right", "subagent": {"prompt": "Do the work carefully."}},
                 ],
                 "transitions": [
                     {"from": "fan", "to": "left"},
@@ -5467,8 +5391,8 @@ class FactoryExecutorTest(_ExecutorTestCase):
         self.seed_machine(
             {
                 "states": [
-                    {"id": "once", "entry": True, "subagent": "worker", "max_entries": 1},
-                    {"id": "sink", "subagent": "worker", "max_entries": 1},
+                    {"id": "once", "entry": True, "subagent": {"prompt": "Do the work carefully."}, "max_entries": 1},
+                    {"id": "sink", "subagent": {"prompt": "Do the work carefully."}, "max_entries": 1},
                 ],
                 "transitions": [
                     {"from": "once", "to": "sink"},
@@ -5512,7 +5436,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
                     {
                         "id": "tick",
                         "entry": True,
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "max_entries": 4,
                         "outputs": [{"name": "count", "type": "json"}],
                     }
@@ -5536,9 +5460,9 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"max_transitions": 1, "failure_policy": "continue"},
                 "states": [
-                    {"id": "a", "entry": True, "subagent": "worker"},
-                    {"id": "b", "subagent": "worker"},
-                    {"id": "c", "subagent": "worker"},
+                    {"id": "a", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "c", "subagent": {"prompt": "Do the work carefully."}},
                 ],
                 "transitions": [
                     {"from": "a", "to": "b"},
@@ -5574,9 +5498,9 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"max_transitions": 1, "failure_policy": "continue"},
                 "states": [
-                    {"id": "a", "entry": True, "subagent": "worker"},
-                    {"id": "b", "subagent": "worker"},
-                    {"id": "c", "subagent": "worker"},
+                    {"id": "a", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "c", "subagent": {"prompt": "Do the work carefully."}},
                 ],
                 "transitions": [
                     {"from": "a", "to": "b"},
@@ -5611,9 +5535,9 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"max_transitions": 1, "failure_policy": "continue"},
                 "states": [
-                    {"id": "a", "entry": True, "subagent": "worker"},
-                    {"id": "b", "entry": True, "subagent": "worker"},
-                    {"id": "c", "subagent": "worker", "max_entries": 2},
+                    {"id": "a", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "c", "subagent": {"prompt": "Do the work carefully."}, "max_entries": 2},
                 ],
                 "transitions": [
                     {"from": "a", "to": "c"},
@@ -5650,10 +5574,10 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue"},
                 "states": [
-                    {"id": "pick", "entry": True, "subagent": "worker", "outputs": [{"name": "pick", "type": "json"}]},
-                    {"id": "boolish", "subagent": "worker"},
-                    {"id": "numish", "subagent": "worker"},
-                    {"id": "strish", "subagent": "worker"},
+                    {"id": "pick", "entry": True, "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "pick", "type": "json"}]},
+                    {"id": "boolish", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "numish", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "strish", "subagent": {"prompt": "Do the work carefully."}},
                 ],
                 "transitions": [
                     {"from": "pick", "to": "boolish", "when": {"output": "pick", "path": "approved", "op": "eq", "value": True}},
@@ -5677,8 +5601,8 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue"},
                 "states": [
-                    {"id": "num", "entry": True, "subagent": "worker", "outputs": [{"name": "num", "type": "json"}]},
-                    {"id": "floats", "subagent": "worker"},
+                    {"id": "num", "entry": True, "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "num", "type": "json"}]},
+                    {"id": "floats", "subagent": {"prompt": "Do the work carefully."}},
                 ],
                 "transitions": [
                     {"from": "num", "to": "floats", "when": {"output": "num", "path": "value", "op": "eq", "value": 1}},
@@ -5700,8 +5624,8 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue"},
                 "states": [
-                    {"id": "flag", "entry": True, "subagent": "worker", "outputs": [{"name": "flag", "type": "json"}]},
-                    {"id": "notone", "subagent": "worker"},
+                    {"id": "flag", "entry": True, "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "flag", "type": "json"}]},
+                    {"id": "notone", "subagent": {"prompt": "Do the work carefully."}},
                 ],
                 "transitions": [
                     {"from": "flag", "to": "notone", "when": {"output": "flag", "path": "on", "op": "ne", "value": 1}},
@@ -5763,9 +5687,9 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue"},
                 "states": [
-                    {"id": "a", "entry": True, "subagent": "worker", "outputs": [{"name": "o", "type": "text"}]},
-                    {"id": "b", "subagent": "worker", "inputs": [{"name": "i", "type": "text", "from": "c.o"}]},
-                    {"id": "c", "subagent": "worker", "outputs": [{"name": "o", "type": "text"}]},
+                    {"id": "a", "entry": True, "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "o", "type": "text"}]},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}, "inputs": [{"name": "i", "type": "text", "from": "c.o"}]},
+                    {"id": "c", "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "o", "type": "text"}]},
                 ],
                 "transitions": [{"from": "a", "to": "b"}],
             }
@@ -5803,10 +5727,10 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue", "max_parallel": 4},
                 "states": [
-                    {"id": "seed", "entry": True, "subagent": "worker", "outputs": [{"name": "go", "type": "text"}]},
+                    {"id": "seed", "entry": True, "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "go", "type": "text"}]},
                     {
                         "id": "rev",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "inputs": [
                             {"name": "go", "type": "text", "from": "seed.go"},
                             {"name": "fix", "type": "json", "from": "fixer.fix", "optional": True},
@@ -5816,7 +5740,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
                     },
                     {
                         "id": "fixer",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "inputs": [{"name": "verdict", "type": "json", "from": "rev.verdict"}],
                         "outputs": [{"name": "fix", "type": "json"}],
                         "max_entries": 2,
@@ -5860,7 +5784,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue", "max_parallel": 4},
                 "states": [
-                    {"id": "seed", "entry": True, "subagent": "worker"},
+                    {"id": "seed", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
                     {
                         "id": "fan",
                         "subagent": {"prompt": "Process item {items}."},
@@ -5870,7 +5794,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
                     },
                     {
                         "id": "src",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "outputs": [{"name": "items", "type": "json"}],
                         "max_entries": 1,
                     },
@@ -5933,10 +5857,10 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue", "max_parallel": 4},
                 "states": [
-                    {"id": "seed", "entry": True, "subagent": "worker", "outputs": [{"name": "go", "type": "text"}]},
+                    {"id": "seed", "entry": True, "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "go", "type": "text"}]},
                     {
                         "id": "rev",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "inputs": [
                             {"name": "go", "type": "text", "from": "seed.go"},
                             {"name": "fix", "type": "json", "from": "fixer.fix", "optional": True},
@@ -5946,7 +5870,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
                     },
                     {
                         "id": "fixer",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "inputs": [{"name": "verdict", "type": "json", "from": "rev.verdict"}],
                         "outputs": [{"name": "fix", "type": "json"}],
                         "max_entries": 2,
@@ -5991,7 +5915,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue", "max_parallel": 4},
                 "states": [
-                    {"id": "seed", "entry": True, "subagent": "worker"},
+                    {"id": "seed", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
                     {
                         "id": "fan",
                         "subagent": {"prompt": "Process item {items}."},
@@ -6001,7 +5925,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
                     },
                     {
                         "id": "src",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "outputs": [{"name": "items", "type": "json"}],
                         "max_entries": 1,
                     },
@@ -6047,10 +5971,10 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue", "max_parallel": 4},
                 "states": [
-                    {"id": "seed", "entry": True, "subagent": "worker"},
+                    {"id": "seed", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
                     {
                         "id": "impl",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "outputs": [{"name": "result", "type": "text"}],
                     },
                     {
@@ -6102,10 +6026,10 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "escalate", "max_parallel": 4},
                 "states": [
-                    {"id": "seed", "entry": True, "subagent": "worker"},
+                    {"id": "seed", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
                     {
                         "id": "build",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "outputs": [{"name": "built", "type": "json"}],
                     },
                     {
@@ -6135,7 +6059,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
     @async_test
     async def test_missing_answer_capture_has_a_bounded_poll_window(self) -> None:
         self.host.outcomes["work"] = {"status": "done"}
-        self.seed_factory({"nodes": [{"id": "work", "subagent": "worker",
+        self.seed_factory({"nodes": [{"id": "work", "subagent": {"prompt": "Do the work carefully."},
                                       "outputs": [{"name": "data", "type": "json"}]}]})
         before = self.clock()
         result = await self.start()
@@ -6152,7 +6076,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
         self.host.outcomes["work"] = {"status": "done"}
         sleeps = GatedSleep()
         self.executor._sleep_fn = sleeps
-        self.seed_factory({"nodes": [{"id": "work", "subagent": "worker",
+        self.seed_factory({"nodes": [{"id": "work", "subagent": {"prompt": "Do the work carefully."},
                                       "outputs": [{"name": "data", "type": "json"}]}]})
         result = await self.start()
         run = self.executor._runs[result["run_id"]]
@@ -6204,7 +6128,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
             answer_ready.set()
 
         handoff = asyncio.create_task(finish_handoff())
-        self.seed_factory({"nodes": [{"id": "work", "subagent": "worker",
+        self.seed_factory({"nodes": [{"id": "work", "subagent": {"prompt": "Do the work carefully."},
                                       "outputs": [{"name": "data", "type": "json"}]}]})
         result = await self.start()
         status = await self.settle(result)
@@ -6231,7 +6155,7 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue", "max_parallel": 4},
                 "states": [
-                    {"id": "work", "entry": True, "subagent": "worker"},
+                    {"id": "work", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
                 ],
                 "transitions": [],
             }
@@ -6270,10 +6194,10 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue", "max_parallel": 8},
                 "nodes": [
-                    {"id": "src", "subagent": "worker", "outputs": [{"name": "items", "type": "json"}]},
+                    {"id": "src", "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "items", "type": "json"}]},
                     {
                         "id": "fan",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "depends_on": ["src"],
                         "inputs": [{"name": "items", "type": "json", "from": "src.items"}],
                         "foreach": {"over": "items", "max": 2},
@@ -6331,12 +6255,12 @@ class FactoryExecutorTest(_ExecutorTestCase):
                     {
                         "id": "src",
                         "entry": True,
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "outputs": [{"name": "data", "type": "json"}],
                     },
                     {
                         "id": "dep",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "inputs": [{"name": "data", "type": "json", "from": "src.data"}],
                     },
                 ],
@@ -6367,16 +6291,16 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue", "max_parallel": 4},
                 "states": [
-                    {"id": "seed", "entry": True, "subagent": "worker"},
+                    {"id": "seed", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
                     {
                         "id": "src",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "outputs": [{"name": "items", "type": "json"}],
                         "max_entries": 1,
                     },
                     {
                         "id": "dep",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "inputs": [{"name": "items", "type": "json", "from": "src.items"}],
                         "max_entries": 1,
                     },
@@ -6411,10 +6335,10 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue", "max_parallel": 4},
                 "states": [
-                    {"id": "seed", "entry": True, "subagent": "worker"},
+                    {"id": "seed", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
                     {
                         "id": "src",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "outputs": [{"name": "go", "type": "text"}],
                         "max_entries": 1,
                     },
@@ -6472,10 +6396,10 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue", "max_parallel": 4},
                 "states": [
-                    {"id": "seed", "entry": True, "subagent": "worker"},
+                    {"id": "seed", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
                     {
                         "id": "src",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "outputs": [{"name": "data", "type": "json"}],
                         "max_entries": 1,
                     },
@@ -6528,8 +6452,8 @@ class FactoryExecutorTest(_ExecutorTestCase):
         self.seed_factory(
             {
                 "nodes": [
-                    {"id": "t", "subagent": "worker"},
-                    {"id": "watcher", "subagent": "worker", "lifecycle": "resident"},
+                    {"id": "t", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "watcher", "subagent": {"prompt": "Do the work carefully."}, "lifecycle": "resident"},
                 ],
             }
         )
@@ -6565,8 +6489,8 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"max_parallel": 1},
                 "states": [
-                    {"id": "go", "entry": True, "subagent": "worker"},
-                    {"id": "watcher", "entry": True, "subagent": "worker", "lifecycle": "resident"},
+                    {"id": "go", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "watcher", "entry": True, "subagent": {"prompt": "Do the work carefully."}, "lifecycle": "resident"},
                 ],
                 "transitions": [],
             }
@@ -6607,8 +6531,8 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"max_parallel": 1},
                 "states": [
-                    {"id": "r1", "entry": True, "subagent": "worker", "lifecycle": "resident"},
-                    {"id": "r2", "entry": True, "subagent": "worker", "lifecycle": "resident"},
+                    {"id": "r1", "entry": True, "subagent": {"prompt": "Do the work carefully."}, "lifecycle": "resident"},
+                    {"id": "r2", "entry": True, "subagent": {"prompt": "Do the work carefully."}, "lifecycle": "resident"},
                 ],
                 "transitions": [],
             }
@@ -6647,10 +6571,10 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue"},
                 "states": [
-                    {"id": "watcher", "entry": True, "subagent": "worker", "lifecycle": "resident"},
-                    {"id": "a", "entry": True, "subagent": "worker", "outputs": [{"name": "o", "type": "text"}]},
-                    {"id": "b", "subagent": "worker", "inputs": [{"name": "i", "type": "text", "from": "c.o"}]},
-                    {"id": "c", "subagent": "worker", "outputs": [{"name": "o", "type": "text"}]},
+                    {"id": "watcher", "entry": True, "subagent": {"prompt": "Do the work carefully."}, "lifecycle": "resident"},
+                    {"id": "a", "entry": True, "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "o", "type": "text"}]},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}, "inputs": [{"name": "i", "type": "text", "from": "c.o"}]},
+                    {"id": "c", "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "o", "type": "text"}]},
                 ],
                 "transitions": [{"from": "a", "to": "b"}],
             }
@@ -6686,8 +6610,8 @@ class FactoryExecutorTest(_ExecutorTestCase):
         self.seed_factory(
             {
                 "nodes": [
-                    {"id": "a", "subagent": "worker"},
-                    {"id": "b", "subagent": "worker", "depends_on": ["a"]},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}, "depends_on": ["a"]},
                 ],
             }
         )
@@ -6744,8 +6668,8 @@ class FactoryExecutorTest(_ExecutorTestCase):
             {
                 "run": {"max_parallel": 8},
                 "states": [
-                    {"id": "collect-findings-pass-one", "entry": True, "subagent": "worker"},
-                    {"id": "collect-findings-pass-two", "entry": True, "subagent": "worker"},
+                    {"id": "collect-findings-pass-one", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "collect-findings-pass-two", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
                 ],
                 "transitions": [],
             }
@@ -6776,7 +6700,6 @@ class FactoryGraphWatchTest(_ExecutorTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.seed_subagent("Researcher", "Collect the findings.", id="researcher")
         self.seed_machine(valid_machine(), spec_id="sw")
 
     # -- helpers -------------------------------------------------------------
@@ -6840,8 +6763,8 @@ class FactoryGraphWatchTest(_ExecutorTestCase):
             {
                 "run": {"max_children": 2},
                 "states": [
-                    {"id": "a", "entry": True, "subagent": "worker"},
-                    {"id": "b", "subagent": "worker"},
+                    {"id": "a", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}},
                 ],
                 "transitions": [{"from": "a", "to": "b"}],
             },
@@ -6886,8 +6809,8 @@ class FactoryGraphWatchTest(_ExecutorTestCase):
             {
                 "run": {"max_parallel": 1},
                 "states": [
-                    {"id": "a", "entry": True, "subagent": "worker"},
-                    {"id": "b", "entry": True, "subagent": "worker"},
+                    {"id": "a", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
                 ],
             },
             spec_id="sat",
@@ -6922,9 +6845,9 @@ class FactoryGraphWatchTest(_ExecutorTestCase):
             {
                 "run": {"failure_policy": "continue"},
                 "states": [
-                    {"id": "a", "entry": True, "subagent": "worker"},
-                    {"id": "b", "entry": True, "subagent": "worker"},
-                    {"id": "c", "subagent": "worker"},
+                    {"id": "a", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "b", "entry": True, "subagent": {"prompt": "Do the work carefully."}},
+                    {"id": "c", "subagent": {"prompt": "Do the work carefully."}},
                 ],
                 "transitions": [{"from": ["a", "b"], "to": "c"}],
             },
@@ -6995,12 +6918,12 @@ class FactoryGraphWatchTest(_ExecutorTestCase):
                     {
                         "id": "src",
                         "entry": True,
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "outputs": [{"name": "items", "type": "json"}],
                     },
                     {
                         "id": "fan",
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "inputs": [{"name": "items", "type": "json", "from": "src.items"}],
                         "foreach": {"over": "items", "max": 5},
                     },
@@ -7033,7 +6956,7 @@ class FactoryGraphWatchTest(_ExecutorTestCase):
         self.assertIn("fan", graph["active_nodes"])
 
     @async_test
-    async def test_graph_of_a_stored_spec_returns_the_static_structure(self) -> None:
+    async def test_graph_of_a_library_machine_returns_the_static_structure(self) -> None:
         graph = await rlm_module.rlm.factory.graph("sw")
         self.assertIsNone(graph["run_id"])
         self.assertEqual(graph["spec_id"], "sw")
@@ -7046,13 +6969,12 @@ class FactoryGraphWatchTest(_ExecutorTestCase):
         self.seed_factory(valid_dag(), spec_id="dag")
         dag_graph = await rlm_module.rlm.factory.graph("dag")
         self.assertEqual(dag_graph["machine"]["order"], ["collect", "fan-out", "review"])
-        # unknown refs fail loudly; a corrupt spec names itself
-        with self.assertRaisesRegex(ValueError, "unknown factory run or spec 'missing'"):
+        # unknown refs fail loudly; a broken machine file names its errors
+        with self.assertRaisesRegex(ValueError, "unknown factory run or machine 'missing'"):
             await rlm_module.rlm.factory.graph("missing")
-        self.seed_factory({"nodes": [node("a")]}, spec_id="broken")
-        self.corrupt_spec("broken", {"nodes": []})
-        with self.assertRaisesRegex(ValueError, "does not validate"):
-            await rlm_module.rlm.factory.graph("broken")
+        self.corrupt_spec("sw", {"nodes": []})
+        with self.assertRaisesRegex(ValueError, "exists but is broken"):
+            await rlm_module.rlm.factory.graph("sw")
 
     @async_test
     async def test_compact_snapshot_sheds_answers_and_carries_the_short_tail(self) -> None:
@@ -7141,9 +7063,8 @@ class FactoryGraphWatchTest(_ExecutorTestCase):
         `running`), so the machine stays in flight until the test acts. The
         state id carries no dash: the fake host routes outcomes by the
         dash-split spawn name."""
-        self.seed_subagent("Sleeper", "Never settles.", id="sleeper")
         self.seed_machine(
-            {"states": [{"id": "heldstate", "entry": True, "subagent": "sleeper"}]},
+            {"states": [{"id": "heldstate", "entry": True, "subagent": {"prompt": "Never settles."}}]},
             spec_id="held",
         )
         self.host.outcomes["heldstate"] = {"status": "running"}
@@ -7273,18 +7194,20 @@ class FactoryGraphWatchTest(_ExecutorTestCase):
     @async_test
     async def test_run_activity_caps_the_error_reply(self) -> None:
         # The error lane's reply rides the same wire cap as the success
-        # lane: a validation error joining thousands of rows (a stored spec
-        # corrupted the way a hand-edited store would be) must never
+        # lane: a validation error joining thousands of rows (a library
+        # machine corrupted the way a hand-edited file would be) must never
         # exceed the transport bound — the cap's fallback names the wire
         # cap (the mutation check: an uncapped error frame would carry
         # the multi-hundred-kilobyte reason raw).
-        self.seed_machine(valid_machine(), spec_id="big-spec")
-        self.saved_entries["factory"]["big-spec"]["arguments"]["machine"] = {
-            "run": {"failure_policy": "continue"},
-            "states": [{"id": "a", "entry": True, "subagent": "worker"}],
-            "transitions": [{"from": "a", "to": f"missing{i}"} for i in range(6_000)],
-        }
-        self.flush_saved_store()
+        self.corrupt_stored_spec(
+            "big-spec",
+            {
+                "run": {"failure_policy": "continue"},
+                "states": [{"id": "a", "entry": True, "subagent": {"prompt": "Do the work carefully."}}],
+                "transitions": [{"from": "a", "to": f"missing{i}"} for i in range(6_000)],
+            },
+            key="machine",
+        )
         sent: list[dict[str, Any]] = []
         patcher = patch("rlm.repl._send", sent.append)
         patcher.start()
@@ -7316,10 +7239,10 @@ class FactoryGraphWatchTest(_ExecutorTestCase):
                     {
                         "id": "a",
                         "entry": True,
-                        "subagent": "worker",
+                        "subagent": {"prompt": "Do the work carefully."},
                         "outputs": [{"name": "verdict", "type": "json"}],
                     },
-                    {"id": "b", "subagent": "worker"},
+                    {"id": "b", "subagent": {"prompt": "Do the work carefully."}},
                 ],
                 "transitions": [
                     {
@@ -7358,7 +7281,7 @@ class FactoryGraphWatchTest(_ExecutorTestCase):
         self.seed_machine(
             {
                 "run": {"failure_policy": "continue"},
-                "states": [{"id": "a", "entry": True, "subagent": "worker"}],
+                "states": [{"id": "a", "entry": True, "subagent": {"prompt": "Do the work carefully."}}],
                 "transitions": [],
             },
             spec_id="solo",
@@ -7393,7 +7316,7 @@ class FactoryGraphWatchTest(_ExecutorTestCase):
         self.seed_machine(
             {
                 "states": [
-                    {"id": "watcher", "entry": True, "subagent": "worker", "lifecycle": "resident"},
+                    {"id": "watcher", "entry": True, "subagent": {"prompt": "Do the work carefully."}, "lifecycle": "resident"},
                 ],
                 "transitions": [],
             },
@@ -7411,7 +7334,7 @@ class FactoryGraphWatchTest(_ExecutorTestCase):
         self.seed_machine(
             {
                 "run": {"failure_policy": "continue"},
-                "states": [{"id": "a", "entry": True, "subagent": "worker"}],
+                "states": [{"id": "a", "entry": True, "subagent": {"prompt": "Do the work carefully."}}],
                 "transitions": [],
             },
             spec_id="solo",
@@ -8351,7 +8274,7 @@ class MachineLibraryResolutionTest(unittest.TestCase):
             self.assertEqual(machine_two.spec, machine.spec, name)
 
 
-class MachineCliDispatchTest(_SavedStoreMixin, unittest.TestCase):
+class MachineCliDispatchTest(unittest.TestCase):
     """The JSON facade the CLI's factory subcommands drive.
 
     The payload carries only what the user typed (an op, a path, a name, an
@@ -8430,26 +8353,6 @@ class MachineCliDispatchTest(_SavedStoreMixin, unittest.TestCase):
         self.assertTrue(any("already exists" in e for e in result["errors"]), result)
         self.assertEqual(target.read_text(encoding="utf-8"), "keep me")
 
-    def test_export_dispatch_resolves_the_library_only(self) -> None:
-        # A fresh CLI process has no session state, so the dispatch resolves
-        # library machines only: a stored factory entry never intercepts
-        # the CLI's export, even when one exists.
-        self.agent_home.mkdir(parents=True, exist_ok=True)
-        (self.agent_home / "settings.json").write_text(
-            json.dumps({"factory": {"enabled": True}}), encoding="utf-8"
-        )
-        self.seed_store()
-        self.seed_machine(
-            {"states": [{"id": "a", "entry": True, "subagent": {"prompt": "P."}}]},
-            spec_id="sweep",
-        )
-        previous_executor = factory_module._DEFAULT_EXECUTOR
-        factory_module._DEFAULT_EXECUTOR = FactoryExecutor(harness=self.harness)
-        self.addCleanup(lambda: setattr(factory_module, "_DEFAULT_EXECUTOR", previous_executor))
-        result = cli_dispatch({"op": "export", "name": "sweep", "out": str(self.out_dir / "s.MACHINE.md")})
-        self.assertFalse(result["ok"])
-        self.assertTrue(any("unknown machine 'sweep'" in e for e in result["errors"]), result)
-
     def test_export_dispatch_reports_unknown_machines(self) -> None:
         result = cli_dispatch({
             "op": "export",
@@ -8482,8 +8385,8 @@ class MachineCliDispatchTest(_SavedStoreMixin, unittest.TestCase):
         self.assertIn("'list'", unknown_op["errors"][0])
 
 
-class ExportMachineTest(_SavedStoreMixin, unittest.TestCase):
-    """export_machine serializes library machines, entries, and runs."""
+class ExportMachineTest(unittest.TestCase):
+    """export_machine serializes library machines and runs."""
 
     def setUp(self) -> None:
         temp = TemporaryDirectory()
@@ -8492,9 +8395,8 @@ class ExportMachineTest(_SavedStoreMixin, unittest.TestCase):
         self.library = root / "machines"
         self.out_dir = root / "out"
         self.out_dir.mkdir(parents=True)
-        self.seed_store()
         self.previous_executor = factory_module._DEFAULT_EXECUTOR
-        self.executor = FactoryExecutor(harness=self.harness)
+        self.executor = FactoryExecutor()
         factory_module._DEFAULT_EXECUTOR = self.executor
         self.addCleanup(lambda: setattr(factory_module, "_DEFAULT_EXECUTOR", self.previous_executor))
         agent_temp = TemporaryDirectory()
@@ -8564,18 +8466,19 @@ class ExportMachineTest(_SavedStoreMixin, unittest.TestCase):
         self.assertEqual(victim.read_text(encoding="utf-8"), "keep me")
         self.assertTrue(link.is_symlink())
 
-    def test_multiline_entry_content_exports_as_one_line(self) -> None:
-        # A stored entry's content is free prose; a machine description
+    def test_multiline_run_name_exports_as_one_line(self) -> None:
+        # A run's name is free prose; a machine description
         # must be a single line, so the export collapses it instead of
-        # refusing a perfectly ordinary entry.
-        self.saved_entries["factory"]["multiline"] = factory_entry(
-            machine={"states": [{"id": "a", "entry": True, "subagent": {"prompt": "P."}}]},
-            title="multiline",
-            content="First line of prose.\nSecond line of prose.\n\nThird paragraph.",
+        # refusing a perfectly ordinary run.
+        run = self.executor._create_run(
+            "multiline",
+            canonicalize_factory_spec({"states": [{"id": "a", "entry": True, "subagent": {"prompt": "P."}}]}),
+            {},
+            name="First line of prose.\nSecond line of prose.\n\nThird paragraph.",
         )
-        self.flush_saved_store()
+        self.executor._runs[run.run_id] = run
         out = self.out_dir / "multiline.MACHINE.md"
-        result = export_machine("multiline", out)
+        result = export_machine(run.run_id, out, repo_dir=None, user_dir=self.library)
         self.assertEqual(result["source"], "spec")
         rendered = out.read_text(encoding="utf-8")
         self.assertIn(
@@ -8609,26 +8512,7 @@ class ExportMachineTest(_SavedStoreMixin, unittest.TestCase):
             str(raised.exception), "frontmatter description must be a single line"
         )
 
-    def test_exports_a_stored_entry_spec_byte_pretty(self) -> None:
-        self.seed_factory(valid_dag(), spec_id="sweep")
-        out = self.out_dir / "sweep.MACHINE.md"
-        result = export_machine("sweep", out, repo_dir=None, user_dir=self.library)
-        self.assertEqual(result["source"], "spec")
-        machine, errors = parse_machine_file(out.read_text(encoding="utf-8"), source=str(out))
-        self.assertEqual(errors, [])
-        assert machine is not None
-        self.assertEqual(machine.name, "sweep")
-        self.assertEqual(validate_factory_spec(machine.spec), [])
-        self.assertEqual(canonicalize_factory_spec(machine.spec), canonicalize_factory_spec(valid_dag()))
-
-    def test_entry_ids_that_are_not_machine_names_are_rejected(self) -> None:
-        self.seed_factory(valid_dag(), spec_id="Sweep Entry")
-        with self.assertRaises(ValueError) as ctx:
-            export_machine("Sweep Entry", self.out_dir / "x.MACHINE.md", repo_dir=None, user_dir=self.library)
-        self.assertIn("invalid characters", str(ctx.exception))
-
     def test_exports_a_runs_canonical_machine(self) -> None:
-        self.seed_machine(valid_machine(), spec_id="sweep")
         run = self.executor._create_run(
             "sweep", canonicalize_factory_spec(valid_machine()), {}, name="the run"
         )
@@ -8669,20 +8553,18 @@ class ExportMachineTest(_SavedStoreMixin, unittest.TestCase):
         self.assertFalse((self.out_dir / "bad.MACHINE.md").exists())
 
 
-class FactoryRunFromLibraryTest(_SavedStoreMixin, unittest.TestCase):
-    """rlm.factory.run falls back to the machine library for machine names."""
+class FactoryRunFromLibraryTest(unittest.TestCase):
+    """rlm.factory.run resolves machine names from the machine library."""
 
     def setUp(self) -> None:
         temp = TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         root = Path(temp.name).resolve()
         self.library = root / "machines"
-        self.seed_store()
-        self.seed_subagent("Worker", "Do the work carefully.", id="worker")
         self.clock = FakeClock()
         self.host = FakeHost(clock=self.clock)
         self.sleeps = ClockSleep(self.clock)
-        self.executor = FactoryExecutor(now=self.clock, sleep=self.sleeps, harness=self.harness)
+        self.executor = FactoryExecutor(now=self.clock, sleep=self.sleeps)
         previous_executor = factory_module._DEFAULT_EXECUTOR
         factory_module._DEFAULT_EXECUTOR = self.executor
         self.addCleanup(lambda: setattr(factory_module, "_DEFAULT_EXECUTOR", previous_executor))
@@ -8723,7 +8605,7 @@ class FactoryRunFromLibraryTest(_SavedStoreMixin, unittest.TestCase):
             {
                 "run": {"failure_policy": "continue", "max_parallel": 2},
                 "nodes": [
-                    {"id": "a", "subagent": "worker", "outputs": [{"name": "out", "type": "text"}]},
+                    {"id": "a", "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "out", "type": "text"}]},
                     {
                         "id": "b",
                         "subagent": {"prompt": "Use {draft}"},
@@ -8744,40 +8626,23 @@ class FactoryRunFromLibraryTest(_SavedStoreMixin, unittest.TestCase):
         self.assertEqual(len(self.host.calls_of("rlm.run")), 2)
 
     @async_test
-    async def test_stored_entries_win_over_library_machines(self) -> None:
-        self.store_machine_file(
-            "sweep",
-            {"nodes": [{"id": "only-a", "subagent": "worker"}]},
-        )
-        self.seed_factory({"nodes": [
-            {"id": "entry-a", "subagent": "worker"},
-            {"id": "entry-b", "subagent": "worker"},
-        ]}, spec_id="sweep")
-        result = await rlm_module.rlm.factory.run("sweep")
-        self.assertNotIn("machine", result)
-        self.assertEqual(result["nodes"], 2)
-        self.assertEqual(sorted(result["started"]), ["entry-a", "entry-b"])
-
-    @async_test
     async def test_unknown_names_report_the_library(self) -> None:
-        with self.assertRaisesRegex(ValueError, "unknown factory spec 'missing-spec'"):
+        with self.assertRaisesRegex(ValueError, "unknown factory machine 'missing-spec'"):
             await rlm_module.rlm.factory.run("missing-spec")
         try:
             await rlm_module.rlm.factory.run("missing-spec")
         except ValueError as error:
-            self.assertIn("no stored factory entry", str(error))
             self.assertIn("no library machine with that name", str(error))
 
     @async_test
-    async def test_an_invalid_name_still_reports_the_unknown_spec_frame(self) -> None:
-        # A stored-entry id that is not a legal machine name (spaces,
-        # capitals) can never resolve from the library: the lookup must
-        # not surface the bare name-rule sentence, losing the unknown-spec
-        # frame.
+    async def test_an_invalid_name_still_reports_the_unknown_machine_frame(self) -> None:
+        # An id that is not a legal machine name (spaces, capitals) can
+        # never resolve from the library: the lookup must not surface the
+        # bare name-rule sentence, losing the unknown-machine frame.
         with self.assertRaises(ValueError) as raised:
             await rlm_module.rlm.factory.run("My Spec")
         message = str(raised.exception)
-        self.assertIn("unknown factory spec 'My Spec'", message)
+        self.assertIn("unknown factory machine 'My Spec'", message)
         self.assertIn("not a valid machine name", message)
         self.assertIn("lowercase a-z, 0-9, hyphens", message)
         self.assertEqual(self.host.calls, [])
@@ -8832,7 +8697,7 @@ class FactoryRunFromLibraryTest(_SavedStoreMixin, unittest.TestCase):
             machine_file_text(
                 name="sweep",
                 description="The user machine.",
-                spec_json=json.dumps({"nodes": [{"id": "a", "subagent": "worker"}]}),
+                spec_json=json.dumps({"nodes": [{"id": "a", "subagent": {"prompt": "Do the work carefully."}}]}),
             ),
             encoding="utf-8",
         )
@@ -8868,15 +8733,15 @@ class FactoryRunFromLibraryTest(_SavedStoreMixin, unittest.TestCase):
     @async_test
     async def test_one_corrupt_library_file_never_reframes_unknown_names(self) -> None:
         # One non-decodable file skips in the listing scan like any broken
-        # file: an unrelated unknown name keeps the unknown-spec frame, never
-        # the name-rule arm the decode error would otherwise reach.
+        # file: an unrelated unknown name keeps the unknown-machine frame,
+        # never the name-rule arm the decode error would otherwise reach.
         corrupt = self.library / "zz-corrupt"
         corrupt.mkdir(parents=True, exist_ok=True)
         (corrupt / "MACHINE.md").write_bytes(b"\xff\xfe")
         with self.assertRaises(ValueError) as raised:
             await rlm_module.rlm.factory.run("missing-spec")
         message = str(raised.exception)
-        self.assertIn("unknown factory spec 'missing-spec'", message)
+        self.assertIn("unknown factory machine 'missing-spec'", message)
         self.assertIn("no library machine with that name", message)
         self.assertNotIn("not a valid machine name", message)
         self.assertEqual(self.host.calls, [])
@@ -8888,7 +8753,7 @@ class FactoryRunFromLibraryTest(_SavedStoreMixin, unittest.TestCase):
         # setting is off, a stored library machine name is refused with the
         # one disabled message -- never an unknown-spec error, never a run
         # -- and nothing spawns.
-        self.store_machine_file("sweep", {"nodes": [{"id": "a", "subagent": "worker"}]})
+        self.store_machine_file("sweep", {"nodes": [{"id": "a", "subagent": {"prompt": "Do the work carefully."}}]})
         agent_home = Path(os.environ["PRIME_AGENT_CODING_AGENT_DIR"])
         (agent_home / "settings.json").write_text(
             json.dumps({"factory": {"enabled": False}}), encoding="utf-8"
@@ -8910,7 +8775,7 @@ class FactoryRunFromLibraryTest(_SavedStoreMixin, unittest.TestCase):
             "pipeline",
             {
                 "nodes": [
-                    {"id": "src", "subagent": "worker", "outputs": [{"name": "v", "type": "text"}]},
+                    {"id": "src", "subagent": {"prompt": "Do the work carefully."}, "outputs": [{"name": "v", "type": "text"}]},
                     {
                         "id": "fan-in",
                         "subagent": {"prompt": "Merge {v}."},

@@ -1,23 +1,22 @@
 """Validation and compilation for factory specifications.
 
-A continual-harness ``factory`` entry stores a declarative state machine of
-subagent states in ``arguments["machine"]``: entry states (which declare
-no inputs), guarded transitions between states, and bounded re-entry
-(``max_entries``). The original DAG form in ``arguments["dag"]`` stays as
-sugar: it compiles to machine form (each node becomes a state entered
-once; a node's full effective dependency set compiles to ONE join
-transition that waits for every predecessor, so fan-in nodes never start
-after a single parent settles with a blocked second transition). Wait
-states are specified for the communication series but gated here:
-the watch host handlers (``rlm.watch.*``) do not exist yet, so a state
-carrying a ``wait`` block is rejected at validation time.
+A factory machine is a declarative state machine of subagent states: entry
+states (which declare no inputs), guarded transitions between states, and
+bounded re-entry (``max_entries``). The original DAG form stays as sugar:
+it compiles to machine form (each node becomes a state entered once; a
+node's full effective dependency set compiles to ONE join transition that
+waits for every predecessor, so fan-in nodes never start after a single
+parent settles with a blocked second transition). Wait states are specified
+for the communication series but gated here: the watch host handlers
+(``rlm.watch.*``) do not exist yet, so a state carrying a ``wait`` block is
+rejected at validation time.
 
-A stored factory entry is a runtime instance in the shared harness store:
-host refinement runs write the store (the factory preflight only reads it),
-and this module reads saved entries through the private saved-entry reader
-in ``_harness_entries``. The authoring path is the machine library:
-``MACHINE.md`` files validated at import time (``prime-agent factory
-import``) and run directly (``rlm.factory.run('<name>')``).
+Machines live in the machine library and nowhere else: ``MACHINE.md`` files
+(bundled seeds inside the runtime, the personal library under the agent dir)
+validated at import time (``prime-agent factory import``) and run directly
+(``rlm.factory.run('<name>')``). There is no stored-spec store: a state's
+subagent is an inline object with a prompt, and every run resolves its
+machine from the library.
 
 This module implements the validation dry run for both forms -- the machine
 validator, the dag-to-machine compiler, the unified entry point
@@ -59,8 +58,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
-
-from ._harness_entries import SavedHarnessEntries
 
 FAILURE_POLICIES: tuple[str, ...] = ("fail_fast", "continue", "escalate")
 PORT_TYPES: tuple[str, ...] = ("text", "json")
@@ -293,9 +290,7 @@ def _validate_state_fields(
         )
 
     subagent = state.get("subagent")
-    if _is_nonempty_str(subagent):
-        pass  # Harness subagent entry id or title; resolved at run time.
-    elif isinstance(subagent, dict):
+    if isinstance(subagent, dict):
         # Runtime resolution strips these fields (_resolve_subagents /
         # _validate_spawn_settings), so whitespace-only values are rejected
         # here too: a persistable factory must be spawnable.
@@ -313,8 +308,7 @@ def _validate_state_fields(
             )
     else:
         errors.append(
-            f"{noun} {ref} requires a subagent: a harness subagent id/title string "
-            "or an inline object with a prompt"
+            f"{noun} {ref} requires a subagent: an inline object with a prompt"
         )
 
     if "budget_ms" in state:
@@ -819,8 +813,8 @@ def validate_factory_spec(spec: Any) -> list[str]:
     machine form; anything else is dag form and compiles to machine form
     first. A spec carrying both dag and machine keys is rejected outright.
     Returns a list of human-readable error sentences; an empty list means
-    the specification is valid. Every rule is enforced before a factory entry
-    is stored, so an invalid spec never reaches the store.
+    the specification is valid. Every authoring path enforces the same
+    rules (library import and every run), so an invalid spec never runs.
     """
     if not isinstance(spec, dict):
         return ["factory dag must be a JSON object"]
@@ -1467,8 +1461,8 @@ class FactoryRun:
     run_id: str
     spec_id: str
     name: str | None
-    # The canonicalized machine this run executes: a stored entry's spec or
-    # a library machine's template, kept read-only. The graph snapshot's
+    # The canonicalized machine this run executes: a library machine's
+    # template, kept read-only. The graph snapshot's
     # static structure (states, transitions, run block) reads it, so
     # agents and the TUI see the machine the run validated, and
     # export_machine serializes the exact machine a run is running
@@ -1532,10 +1526,6 @@ class FactoryExecutor:
     ``rlm.host_request``. ``now`` (default ``time.monotonic``) and ``sleep``
     (default ``asyncio.sleep``) are injectable: budgets measure admission
     to settlement and rate-limit backoff is testable with fake sleeps.
-    ``harness`` is injectable too: the saved-entry store stored specs and
-    subagent references resolve from (default: the private read-only
-    reader over the shared harness store).
-
 
     Machine semantics: admission enters every entry state; each settle is
     queued and its outgoing transitions evaluated once -- every guard that
@@ -1555,62 +1545,28 @@ class FactoryExecutor:
         *,
         now: "Callable[[], float] | None" = None,
         sleep: "Callable[[float], Any] | None" = None,
-        harness: Any = None,
     ) -> None:
         import asyncio
 
         self._now_fn: Callable[[], float] = now or time.monotonic
         self._sleep_fn: Callable[[float], Any] = sleep or asyncio.sleep
-        self._harness = harness
         self._runs: dict[str, FactoryRun] = {}
 
     # -- public API ---------------------------------------------------------
-
-    async def run(self, spec_id: str, *, name: str | None = None) -> dict[str, Any]:
-        """Validate a stored factory spec and start a run of it.
-
-        The dry run happens in two halves. The store's writer (the host)
-        validated the machine at store time; here ``run`` re-validates and
-        canonicalizes it (dag sugar compiles to machine form), then resolves every state's
-        subagent reference, reporting ALL failures in one ``ValueError`` and
-        starting nothing on any failure. The resolved state count and
-        ``max_parallel`` are reported in the result; actual admission limits
-        (concurrency, tree depth, provider rate limits) are enforced at
-        spawn time through the backoff path. Admission enters every entry
-        state up to ``max_parallel``, records handles, and returns; a
-        background asyncio task continues the run, so the calling model turn
-        ends immediately (nonblocking).
-        """
-        harness = self._resolve_harness()
-        entry = harness.get("factory", spec_id)
-        if entry is None:
-            raise ValueError(f"unknown factory spec {spec_id!r}")
-        arguments = entry.arguments if isinstance(entry.arguments, dict) else {}
-        spec = arguments.get("machine")
-        if spec is None:
-            spec = arguments.get("dag")
-        canonical = canonicalize_factory_spec(spec)
-        resolved, reference_errors = self._resolve_subagents(harness, canonical)
-        if reference_errors:
-            raise ValueError("; ".join(reference_errors))
-        run = self._create_run(entry.id, canonical, resolved, name=name)
-        return await self._launch_run(run)
 
     async def run_machine(
         self, machine: MachineFile, *, machine_path: Path | None = None, name: str | None = None
     ) -> dict[str, Any]:
         """Validate a library machine and start a run of it.
 
-        Harness entries remain runtime instances; machines in the library
-        are templates, so a library run never creates one. The machine's
-        spec goes through the same validation and canonicalization as a
-        stored entry's (``canonicalize_factory_spec``), the run records the
+        Machines in the library are the only specs: the machine's spec goes
+        through the same validation and canonicalization every authoring
+        path applies (``canonicalize_factory_spec``), the run records the
         machine's name as its spec id, and the result reports the machine
         fields so a caller can trace the run back to the library file.
         """
         canonical = canonicalize_factory_spec(machine.spec)
-        harness = self._resolve_harness()
-        resolved, reference_errors = self._resolve_subagents(harness, canonical)
+        resolved, reference_errors = self._resolve_subagents(canonical)
         if reference_errors:
             raise ValueError("; ".join(reference_errors))
         run = self._create_run(machine.name, canonical, resolved, name=name)
@@ -1623,9 +1579,8 @@ class FactoryExecutor:
     async def _launch_run(self, run: FactoryRun) -> dict[str, Any]:
         """Register a run, enter its entry states, and start the control loop.
 
-        Shared by ``run`` (stored entries) and ``run_machine`` (library
-        machines): both validate first, so this never sees an invalid
-        spec. Nonblocking: admission enters every entry state up to
+        ``run_machine`` is the only entry: it validates first, so this
+        never sees an invalid spec. Nonblocking: admission enters every entry state up to
         ``max_parallel`` and returns; a background task continues the run.
         """
         self._runs[run.run_id] = run
@@ -2004,10 +1959,10 @@ class FactoryExecutor:
     def _spec_snapshot(
         self, spec_id: str, canonical: dict[str, Any], *, compact: bool
     ) -> dict[str, Any]:
-        """A stored spec's static graph: no live run exists, so the overlay
-        reports the shape a fresh run starts from (nothing entered, nothing
-        consumed). The compact flag is accepted for lane symmetry; a spec
-        graph carries no answers to shed."""
+        """A library machine's static graph: no live run exists, so the
+        overlay reports the shape a fresh run starts from (nothing entered,
+        nothing consumed). The compact flag is accepted for lane symmetry;
+        a spec graph carries no answers to shed."""
         run_block = canonical["run"]
         return {
             "run_id": None,
@@ -2030,12 +1985,11 @@ class FactoryExecutor:
 
         ``ref`` naming a live run id returns that run's fused snapshot
         (``status()``'s data plus the static graph and the diagram overlay);
-        ``ref`` naming a stored factory spec id returns the static
-        structure with no live overlay. ``ref=None`` returns every live
+        ``ref`` naming a library machine returns the static structure with
+        no live overlay. ``ref=None`` returns every live
         run's snapshot, oldest run first, as ``{"runs": [...]}`` (the view
         lane's polling shape). Raises ``ValueError`` when ``ref`` names
-        neither a live run nor a stored spec, or a stored spec fails its
-        own validation.
+        neither a live run nor a library machine.
         """
         if ref is None:
             # Insertion order is start order (runs append to the registry),
@@ -2077,19 +2031,17 @@ class FactoryExecutor:
         run = self._runs.get(ref)
         if run is not None:
             return self._graph_snapshot(run, compact=compact)
-        harness = self._resolve_harness()
-        entry = harness.get("factory", ref)
-        if entry is None:
-            raise ValueError(f"unknown factory run or spec {ref!r}")
-        arguments = entry.arguments if isinstance(entry.arguments, dict) else {}
-        spec = arguments.get("machine")
-        if spec is None:
-            spec = arguments.get("dag")
         try:
-            canonical = canonicalize_factory_spec(spec)
-        except ValueError as exc:
-            raise ValueError(f"factory spec {ref!r} does not validate: {exc}") from exc
-        return self._spec_snapshot(entry.id, canonical, compact=compact)
+            machine, _path = resolve_machine(ref)
+        except MachineResolutionError as error:
+            if error.broken:
+                raise ValueError(
+                    f"the library machine {ref!r} exists but is broken ({error})"
+                ) from None
+            raise ValueError(f"unknown factory run or machine {ref!r} ({error})") from None
+        except ValueError as error:
+            raise ValueError(f"unknown factory run or machine {ref!r} ({error})") from None
+        return self._spec_snapshot(machine.name, canonicalize_factory_spec(machine.spec), compact=compact)
 
     def _signature(self, run: FactoryRun) -> tuple[Any, ...]:
         """The run's live shape a watch treats as a change: the run state,
@@ -2173,11 +2125,11 @@ class FactoryExecutor:
         host bridge's lane): route the action to ``graph``/``status``/
         ``watch``/``run``/``stop``/``resume`` and return the reply's result
         payload. Raises ``ValueError`` for malformed requests and unknown
-        runs/specs (the reply carries it as the error reason). ``graph``
+        runs/machines (the reply carries it as the error reason). ``graph``
         and ``watch`` answer with the compact snapshots (the host lane
         renders diagrams, not answers); ``run`` is the lane that starts a
-        run from the daemon or TUI, so it rides the full ``run()``
-        validation. The reply's result payload carries the WIRE's
+        run from the daemon or TUI, so it rides the full ``run_factory``
+        resolution and validation. The reply's result payload carries the WIRE's
         camelCase keys (``_wire_payload`` re-keys the snake_case rows: the
         protocol's request frame is camelCase end to end) — the
         conversation API (``rlm.factory.graph()`` in-kernel) stays
@@ -2218,7 +2170,7 @@ class FactoryExecutor:
         if action == "run":
             if not spec_id:
                 raise ValueError("factory activity run requires specId")
-            return _wire_payload(await self.run(spec_id))
+            return _wire_payload(await run_factory(spec_id))
         if not run_id:
             raise ValueError(f"factory activity {action} requires runId")
         if action == "stop":
@@ -2227,11 +2179,6 @@ class FactoryExecutor:
 
     # -- setup --------------------------------------------------------------
 
-    def _resolve_harness(self) -> Any:
-        if self._harness is not None:
-            return self._harness
-        return SavedHarnessEntries()
-
     def _require_run(self, run_id: str) -> FactoryRun:
         run = self._runs.get(run_id)
         if run is None:
@@ -2239,39 +2186,25 @@ class FactoryExecutor:
         return run
 
     def _resolve_subagents(
-        self, harness: Any, canonical: dict[str, Any]
+        self, canonical: dict[str, Any]
     ) -> tuple[dict[str, tuple[str, str | None, str | None, str | None]], list[str]]:
-        """Resolve every state's subagent reference; collect ALL failures.
+        """Collect every state's inline subagent object; collect ALL failures.
 
-        A string reference is a harness subagent entry id or title: its
-        content is the prompt template and ``metadata.model``/``metadata.thinking``
-        carry optional spawn settings. An inline object uses its own fields;
-        its ``name`` (stripped the way the host strips spawn names) labels
-        the spawned children.
+        A state's ``subagent`` is the inline object validation required: its
+        ``prompt`` is the prompt template, ``name`` (stripped the way the
+        host strips spawn names) labels the spawned children, and
+        ``model``/``thinking`` carry optional spawn settings.
         """
         resolved: dict[str, tuple[str, str | None, str | None, str | None]] = {}
         errors: list[str] = []
         for state_spec in canonical["states"]:
             state_id = state_spec["id"]
             reference = state_spec["subagent"]
-            if isinstance(reference, dict):
-                prompt = reference.get("prompt")
-                raw_name = reference.get("name")
-                name = raw_name.strip() if isinstance(raw_name, str) else None
-                model = reference.get("model")
-                thinking = reference.get("thinking")
-            else:
-                entry = harness.get("subagent", reference)
-                if entry is None:
-                    entry = next((row for row in harness.list("subagent") if row.title == reference), None)
-                if entry is None:
-                    errors.append(f"state {state_id!r} references unknown subagent {reference!r}")
-                    continue
-                prompt = entry.content
-                name = None
-                metadata = entry.metadata if isinstance(entry.metadata, dict) else {}
-                model = metadata.get("model")
-                thinking = metadata.get("thinking")
+            prompt = reference.get("prompt")
+            raw_name = reference.get("name")
+            name = raw_name.strip() if isinstance(raw_name, str) else None
+            model = reference.get("model")
+            thinking = reference.get("thinking")
             if not isinstance(prompt, str) or not prompt.strip():
                 errors.append(f"state {state_id!r} has an empty subagent prompt")
                 continue
@@ -3773,10 +3706,14 @@ def factory_enabled() -> bool:
     means disabled -- the opt-in default is fail-closed, so an unreadable
     settings file refuses the factory instead of silently enabling it.
     """
-    # One home for the agent-dir resolution (_harness_entries owns it).
-    from ._harness_entries import _agent_dir
-
-    path = _agent_dir() / _SETTINGS_FILE_NAME
+    # One home for the agent-dir resolution: the env override pair the host
+    # exports (PRIME_AGENT_CODING_AGENT_DIR wins over the legacy PI_ name).
+    raw = (
+        os.environ.get("PRIME_AGENT_CODING_AGENT_DIR")
+        or os.environ.get("PI_CODING_AGENT_DIR")
+        or str(Path.home() / ".prime" / "agent")
+    )
+    path = Path(raw).expanduser().resolve() / _SETTINGS_FILE_NAME
     try:
         with open(path, encoding="utf-8") as handle:
             document = json.load(handle)
@@ -3820,43 +3757,37 @@ def default_factory_executor() -> FactoryExecutor:
 
 
 async def run_factory(spec_id: str, *, name: str | None = None) -> dict[str, Any]:
-    """Validate a factory spec and start a nonblocking run of it.
+    """Validate a library machine and start a nonblocking run of it.
 
-    The argument names a stored factory entry (a runtime instance) first;
-    when no entry carries that id, it resolves a machine from the library
-    (repo directory first, user second) and runs the template directly:
-    ``await rlm.factory.run("review-sweep")`` starts the library machine
-    without creating a harness entry. Harness entries remain runtime
-    instances; machines are templates.
+    The argument names a machine from the library (repo directory first,
+    user second) and runs it directly: ``await rlm.factory.run("review-sweep")``
+    starts the library machine. Machines in the library are the only specs.
     """
     require_factory_enabled()
     executor = default_factory_executor()
-    harness = executor._resolve_harness()
-    if harness.get("factory", spec_id) is None:
-        try:
-            machine, path = resolve_machine(spec_id)
-        except MachineResolutionError as error:
-            if error.broken:
-                raise ValueError(
-                    f"the library machine {spec_id!r} exists but is broken ({error})"
-                ) from None
+    try:
+        machine, path = resolve_machine(spec_id)
+    except MachineResolutionError as error:
+        if error.broken:
             raise ValueError(
-                f"unknown factory spec {spec_id!r}: no stored factory entry and "
-                f"no library machine with that name ({error})"
+                f"the library machine {spec_id!r} exists but is broken ({error})"
             ) from None
-        except ValueError as error:
-            # An id that is not a legal machine name (spaces, capitals) can
-            # never resolve from the library either; the unknown-spec frame
-            # must not lose the lookup to the name-rule sentence. Only the
-            # name-rule error can arrive here: every library-file failure
-            # (unreadable, non-UTF-8, unparseable, spec-invalid) is a
-            # MachineResolutionError in the first except arm.
-            raise ValueError(
-                f"unknown factory spec {spec_id!r}: no stored factory entry, and "
-                f"the id is not a valid machine name either ({error})"
-            ) from None
-        return await executor.run_machine(machine, machine_path=path, name=name)
-    return await executor.run(spec_id, name=name)
+        raise ValueError(
+            f"unknown factory machine {spec_id!r}: "
+            f"no library machine with that name ({error})"
+        ) from None
+    except ValueError as error:
+        # An id that is not a legal machine name (spaces, capitals) can
+        # never resolve from the library; the unknown-machine frame must
+        # not lose the lookup to the name-rule sentence. Only the name-rule
+        # error can arrive here: every library-file failure (unreadable,
+        # non-UTF-8, unparseable, spec-invalid) is a MachineResolutionError
+        # in the first except arm.
+        raise ValueError(
+            f"unknown factory machine {spec_id!r}: "
+            f"the id is not a valid machine name either ({error})"
+        ) from None
+    return await executor.run_machine(machine, machine_path=path, name=name)
 
 
 async def status_factory(run_id: str) -> dict[str, Any]:
@@ -3883,8 +3814,8 @@ async def resume_factory(run_id: str) -> dict[str, Any]:
 
 def graph_factory(ref: str | None = None, *, compact: bool = False) -> dict[str, Any]:
     """Return one machine's structure fused with live state (see
-    ``FactoryExecutor.graph``): a live run id, a stored spec id, or no ref
-    for every live run."""
+    ``FactoryExecutor.graph``): a live run id, a library machine name, or
+    no ref for every live run."""
     require_factory_enabled()
     return default_factory_executor().graph(ref, compact=compact)
 
@@ -4129,12 +4060,11 @@ def _cap_factory_frame(frame: dict[str, Any]) -> None:
 # spec through the SAME write-time validator as every factory write (an
 # invalid spec never persists, with exact user-correctable errors), then
 # writes the file verbatim into the user library so its documentation
-# travels with the spec. ``export_machine`` serializes a library machine, a
-# stored factory entry's spec, or a run's canonical machine back to
-# MACHINE.md (byte-pretty, stable formatting for diffs). Harness entries
-# remain runtime instances; machines in the library are templates, so
-# ``run_factory`` falls back to the library when its argument names no
-# stored entry: ``await rlm.factory.run("review-sweep")``.
+# travels with the spec. ``export_machine`` serializes a library machine or
+# a run's canonical machine back to MACHINE.md (byte-pretty, stable
+# formatting for diffs). Machines in the library are the only specs, so
+# ``run_factory`` resolves its argument against the library directly:
+# ``await rlm.factory.run("review-sweep")``.
 # ---------------------------------------------------------------------------
 
 MACHINE_FILE_NAME = "MACHINE.md"
@@ -4475,7 +4405,7 @@ def render_machine_file(machine: MachineFile) -> str:
 
 
 def _machine_env_dir(name: str) -> str | None:
-    # Set-but-empty env values behave as unset (mirrors harness._env_dir).
+    # Set-but-empty env values behave as unset.
     value = (os.environ.get(name) or "").strip()
     return value or None
 
@@ -4708,8 +4638,9 @@ def import_machine(path: "str | Path", *, target_dir: "str | Path | None" = None
 def _single_line(text: Any) -> str:
     """Collapse free prose onto one line (whitespace runs become spaces).
 
-    A stored entry's ``content`` is free prose while a machine description
-    must be a single line, so exports collapse rather than refuse.
+    A run's free-prose name or description may wrap while a machine
+    description must be a single line, so exports collapse rather than
+    refuse.
     """
     if not isinstance(text, str):
         return ""
@@ -4748,7 +4679,7 @@ def export_factory_spec(
     author: str = "",
     overwrite: bool = False,
 ) -> "dict[str, Any]":
-    """Serialize any spec (stored entry or run machine) to MACHINE.md.
+    """Serialize any spec (a run's canonical machine) to MACHINE.md.
 
     Byte-pretty and stable: the same spec always renders to the same bytes.
     The spec passes through the write-time validator first, so an exported
@@ -4790,7 +4721,7 @@ def export_library_machine(
     with the spec. The out target is never overwritten silently: an
     existing file refuses unless ``overwrite=True`` says otherwise. The
     CLI dispatches here because a fresh CLI process has no session state
-    (stored entries and live runs) to resolve from.
+    (live runs) to resolve from.
     """
     machine, path = resolve_machine(name, repo_dir=repo_dir, user_dir=user_dir)
     destination = Path(out_path).expanduser()
@@ -4813,31 +4744,12 @@ def export_machine(
 ) -> "dict[str, Any]":
     """Export one machine to MACHINE.md at ``out_path``.
 
-    Resolution mirrors ``run_factory``: a stored factory entry first, a
-    live run's canonical machine second, then the library machine (repo
-    directory first, user second). Library machines copy their file
-    verbatim so the shared documentation travels with the spec; entry and
-    run specs render byte-pretty.
+    Resolution mirrors ``run_factory``: a live run's canonical machine
+    first, then the library machine (repo directory first, user second).
+    Library machines copy their file verbatim so the shared documentation
+    travels with the spec; run specs render byte-pretty.
     """
     executor = default_factory_executor()
-    harness = executor._resolve_harness()
-    entry = harness.get("factory", target)
-    if entry is not None:
-        arguments = entry.arguments if isinstance(entry.arguments, dict) else {}
-        spec = arguments.get("machine")
-        if spec is None:
-            spec = arguments.get("dag")
-        if spec is None:
-            raise ValueError(f"factory entry {target!r} carries no machine or dag spec")
-        errors = machine_name_errors(target)
-        if errors:
-            raise ValueError(
-                "; ".join(errors + [f"the stored entry id {target!r} cannot become a machine name"])
-            )
-        description = _single_line(entry.content) or _single_line(entry.title)
-        return export_factory_spec(
-            spec, out_path, name=target, description=description, overwrite=overwrite
-        )
     run = executor._runs.get(target)
     if run is not None and run.machine:
         errors = machine_name_errors(run.spec_id)
@@ -4864,8 +4776,8 @@ def cli_dispatch(payload: Any) -> "dict[str, Any]":
     The payload carries only what the user typed (an op, a path, a name,
     an out target); this process resolves every library directory itself,
     so the kernel is the single resolution contract for list, import, and
-    export alike — a fresh CLI process has no session state (stored
-    entries, live runs), so export resolves the library only.
+    export alike — a fresh CLI process has no session state (live
+    runs), so export resolves the library only.
     """
     if not isinstance(payload, dict):
         return {"ok": False, "errors": ["factory cli payload must be a JSON object"]}
@@ -4899,9 +4811,9 @@ def cli_dispatch(payload: Any) -> "dict[str, Any]":
 
 FACTORY_HELP: str = r"""# Factory
 
-The factory runs state-machine workflows of spawned child agents. A stored
-factory entry declares the machine — states, each backed by a subagent
-spec, plus guarded transitions between them. `await rlm.factory.run('<spec_id>')`
+The factory runs state-machine workflows of spawned child agents. A library
+machine declares the shape — states, each backed by an inline subagent
+object, plus guarded transitions between them. `await rlm.factory.run('<name>')`
 spawns each state's subagent as an ordinary child, feeds captured outputs
 into the successors' prompts, and drives the run to quiescence in a
 background kernel task; the call returns immediately and the run continues
@@ -4918,20 +4830,17 @@ clean error:
 "the factory is disabled; run /factory on to enable it". `help()` answers
 while disabled, so this guide stays readable before opting in.
 
-## Author and store the spec
+## Author the spec
 
-A stored factory spec is a continual-harness entry of kind `factory` — a
-runtime instance in the shared harness store, which host refinement runs
-write and this kernel only reads (`run` re-validates a stored spec before
-starting it). The authoring path
-is the machine library: a machine is a `MACHINE.md` file (frontmatter plus
-one fenced `machine-spec` block) imported with
+A factory spec is a machine in the library: a `MACHINE.md` file (frontmatter
+plus one fenced `machine-spec` block), imported with
 `prime-agent factory import <path>` — the import validates, so an invalid
-machine never persists — and `await rlm.factory.run('<name>')` runs a
-library machine directly, no entry created. The spec rides the `machine`
-form (the native shape below) or the `dag` form (sugar that compiles to
-machine form). This review/fix loop is the shipped `pr-manager` library
-machine's spec, as its `machine-spec` fence stores it:
+machine never persists — and run directly with
+`await rlm.factory.run('<name>')`, which re-validates before starting.
+The spec rides the `machine` form (the native shape below) or the `dag`
+form (sugar that compiles to machine form). This review/fix loop is the
+shipped `pr-manager` library machine's spec, as its `machine-spec` fence
+stores it:
 
 ```json
 {
@@ -4991,10 +4900,8 @@ the cap, fails to capture, and fails the producing state through its
 
 - **States**: 1 to 1024, unique ids matching `^[a-z0-9][a-z0-9-]{0,63}$`; at
   least one state carries `"entry": true`, and entry states declare no
-  inputs. A state's `subagent` is a harness subagent entry id or title (its
-  content is the prompt template; `metadata.model`/`metadata.thinking` are
-  spawn settings) or an inline `{"prompt": ...}` object with optional
-  `name`/`model`/`thinking`. The optional `name` labels the spawned
+  inputs. A state's `subagent` is an inline `{"prompt": ...}` object with
+  optional `name`/`model`/`thinking`. The optional `name` labels the spawned
   children run-scoped (at most 64 characters, unique across the
   machine's states — a name another state's name can suffix onto, `foo`
   vs `foo-i1`, is rejected at write time): the spawn label is
@@ -5173,7 +5080,7 @@ graph = await rlm.factory.graph(result["run_id"])
 #  "consumed_ms": ...}}  — structure fused with live state.
 
 every = await rlm.factory.graph()        # every live run ({"runs": [...]})
-spec = await rlm.factory.graph("pr-manager")  # a stored spec's static graph
+spec = await rlm.factory.graph("pr-manager")  # a library machine's static graph
 
 watched = await rlm.factory.watch(result["run_id"], 30)
 # the same fused snapshot plus "changed" — the call blocks until the
@@ -5184,7 +5091,7 @@ watched = await rlm.factory.watch(result["run_id"], 30)
 - `graph(ref)` fuses the machine's structure (states, guarded
   transitions, the declared order) with the live run's overlay (the
   node reports, active nodes, recently fired edges, the event tail,
-  usage, budget consumed); a stored spec id answers the static
+  usage, budget consumed); a library machine name answers the static
   structure, and no ref answers every live run.
 - `watch(run_id, timeout)` returns immediately with the snapshot when
   nothing changed, blocks until the run's state/instance shape changes,
@@ -5217,7 +5124,7 @@ watched = await rlm.factory.watch(result["run_id"], 30)
   spec the same way `run` does so an invalid machine never
   persists, and export copies a library machine verbatim to a fresh path
   (an existing target is refused, never overwritten). `rlm.factory.run('<name>')`
-  runs a library machine directly without creating a harness entry; a
+  runs a library machine directly; a
   machine that exists but is broken names its errors
   instead of pretending the name is unknown. The bundled seeds are
   `builder`, `pr-manager`, and `review-sweep`; the worked examples above
