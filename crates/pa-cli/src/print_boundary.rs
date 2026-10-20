@@ -113,9 +113,7 @@ impl TurnBoundary {
                     OverflowBoundary::SettledTurn,
                 )
                 .await?;
-            if let OverflowOutcome::RetryTurn = outcome {
-                continue;
-            } else {
+            if !matches!(outcome, OverflowOutcome::RetryTurn) {
                 break matches!(outcome, OverflowOutcome::Finished);
             }
         };
