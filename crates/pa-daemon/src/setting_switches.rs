@@ -377,11 +377,23 @@ impl Worker {
                 None,
             );
         };
-        if config.trim().is_empty() {
+        // Shape check only (the supervisor canonicalized the payload): a
+        // malformed forward is refused loudly instead of poisoning kernels.
+        let shape_ok = serde_json::from_str::<Value>(config)
+            .ok()
+            .is_some_and(|value| {
+                value
+                    .get("command")
+                    .and_then(Value::as_array)
+                    .is_some_and(|command| {
+                        !command.is_empty() && command.iter().all(Value::is_string)
+                    })
+            });
+        if !shape_ok {
             return response_failure(
                 None,
                 "set_task_reporter",
-                "set_task_reporter requires a nonempty config string",
+                "set_task_reporter requires a canonical reporter config",
                 None,
             );
         }

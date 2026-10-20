@@ -728,34 +728,57 @@ impl Supervisor {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(canonical.clone());
                 self.note_daemon_event("task_reporter_set", None);
-                // Forward to every live resident worker: its engine stores the
-                // value and injects it into each kernel (re)start's env, so an
-                // existing worker picks the configuration up without a worker
-                // restart. A worker that cannot be reached now still carries
-                // the value on its next spawn (the launch-env stamp above).
-                let residents = self.registry.list().await;
-                for resident in residents {
-                    let worker_id = resident.worker_id.clone();
-                    let forwarded = self
-                        .route_command_typed(
-                            &resident,
-                            "set_task_reporter",
-                            json!({ "config": canonical }),
-                            TASKS_REPORTER_FORWARD_BUDGET_MS,
-                            RouteAdmission::SupervisorInternal,
-                        )
-                        .await;
-                    if forwarded.is_err() {
-                        self.log_line(&format!(
-                            "the set_task_reporter forward to worker {worker_id} did not land; its next spawn replays the configuration"
-                        ));
+                // Forward to every live resident worker as one concurrent
+                // batch: its engine stores the value and injects it into each
+                // kernel (re)start's env, so an existing worker picks the
+                // configuration up without a worker restart. A worker whose
+                // forward does not land still carries the value on its next
+                // spawn (the launch-env stamp above), so failures are logged
+                // and reported, never blocking the accepted configuration.
+                let config = canonical.as_str();
+                let forwards =
+                    futures::future::join_all(self.registry.list().await.into_iter().map(
+                        |resident| async move {
+                            let worker_id = resident.worker_id.clone();
+                            let outcome = self
+                                .route_command_typed(
+                                    &resident,
+                                    "set_task_reporter",
+                                    json!({ "config": config }),
+                                    TASKS_REPORTER_FORWARD_BUDGET_MS,
+                                    RouteAdmission::SupervisorInternal,
+                                )
+                                .await;
+                            (worker_id, outcome)
+                        },
+                    ))
+                    .await;
+                let mut forwarded = 0usize;
+                let mut failed: Vec<String> = Vec::new();
+                for (worker_id, outcome) in forwards {
+                    match outcome {
+                        Ok(response) if response.success => forwarded += 1,
+                        Ok(_) | Err(_) => failed.push(worker_id),
                     }
+                }
+                if failed.is_empty() {
+                    self.log_line(&format!(
+                        "set_task_reporter forwarded to {forwarded} live workers"
+                    ));
+                } else {
+                    self.log_line(&format!(
+                        "set_task_reporter forwarded to {forwarded} live workers; not confirmed for: {} (their next spawn replays the configuration)",
+                        failed.join(", ")
+                    ));
                 }
                 (
                     vec![response_line(&response_success(
                         Some(&command_id),
                         &type_name,
-                        None,
+                        Some(json!({
+                            "forwarded": forwarded,
+                            "unconfirmed": failed.len(),
+                        })),
                     ))],
                     false,
                 )
