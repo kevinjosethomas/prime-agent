@@ -18,8 +18,6 @@ pub use pa_types::slash_commands::{
     SESSION_SLASH_COMMAND_CUSTOM_TYPE, SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE,
 };
 pub const COMPACTION_OUTCOME_CUSTOM_TYPE: &str = "compaction_outcome";
-pub const REFINEMENT_OUTCOME_CUSTOM_TYPE: &str = "refinement_outcome";
-pub const REFINEMENT_NOTICE_CUSTOM_TYPE: &str = "refinement_notice";
 /// The durable single-row disclosure of one provider-retry episode (SANCTIONED
 /// DIVERGENCE, operator ruling 2026-09-23): a user-facing disclosure, never
 /// model context — `convert_to_llm` drops it.
@@ -321,7 +319,6 @@ pub fn convert_to_llm(messages: &[AgentMessage]) -> Vec<AgentMessage> {
                     SESSION_SLASH_COMMAND_CUSTOM_TYPE
                         | SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE
                         | COMPACTION_OUTCOME_CUSTOM_TYPE
-                        | REFINEMENT_OUTCOME_CUSTOM_TYPE
                         | PROVIDER_RETRY_OUTCOME_CUSTOM_TYPE
                         | crate::prompts::model_prompts::MODEL_PROMPT_ERROR_CUSTOM_TYPE
                 ) {
