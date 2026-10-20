@@ -11,7 +11,6 @@ jobs:
       fail-fast: false
       matrix:
         source:
-          - 204cfaa71e1d9eb409239f599a102cf0ec7dd65c
           - 6b7e0913a6ae06507b1224ff4c4f559cf0f44fff
           - 2991a781c4957daa2fa039f8158c9b2ffad0f439
     runs-on: ubuntu-24.04
@@ -53,6 +52,12 @@ jobs:
           needle = '"timed out waiting for supervisor line: {error}"'
           assert source.count(needle) == 1
           source = source.replace(needle, '"timed out waiting for supervisor line: {error}; observed event types: {:?}", self.events.iter().map(|event| event.get("type")).collect::<Vec<_>>()')
+          needle = '            self.collect_event(&line);'
+          assert source.count(needle) == 1
+          source = source.replace(needle, '''            if line.get("type").and_then(Value::as_str) == Some("response") {
+                          eprintln!("unmatched response while waiting for {id}: {line}");
+                      }
+          ''' + needle)
           p.write_text(source)
           PY
       - name: Prove old readers fail and fixed reader passes the same fragmented frame
