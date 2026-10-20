@@ -753,7 +753,7 @@ pub async fn connect(
                                 // this pump's own registry entry) and exit:
                                 // the pump never awaits the cleanup that
                                 // joins it.
-                                Inner::start_close(&inner, true, "the frame queue overflowed");
+                                Inner::start_close(&frame_inner, true, "the frame queue overflowed");
                                 break;
                             }
                         }
