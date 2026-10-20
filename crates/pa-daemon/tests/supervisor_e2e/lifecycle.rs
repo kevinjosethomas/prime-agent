@@ -52,6 +52,7 @@ fn supervisor_end_to_end_scripted_session_lifecycle() {
             // Fork-native capabilities (no TS counterpart).
             "subagent_model_defaults",
             "global_harness_defaults",
+            "prompt_guidelines",
             "workstream_classification",
             "side_question_transcript",
             "transient_bash",
