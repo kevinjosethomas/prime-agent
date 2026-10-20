@@ -1,0 +1,62 @@
+name: Recovery import and factory qualification
+on:
+  push:
+    branches: [diagnostic/recovery-import-factory]
+permissions:
+  contents: read
+jobs:
+  compare:
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [204cfaa71e1d9eb409239f599a102cf0ec7dd65c, 7a441174eb4fc4aa3f74c2798f18d95e56785b3b]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Retain qualification driver
+        run: cp .github/scripts/recovery-qualification-proof.py "$RUNNER_TEMP/qualification-proof.py"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 7a441174eb4fc4aa3f74c2798f18d95e56785b3b
+          persist-credentials: false
+      - name: Retain identical corrected test and factory fixtures
+        run: |
+          cp crates/pa-daemon/tests/import_compaction_e2e.rs "$RUNNER_TEMP/import-canonical.rs"
+          cp -R scripts "$RUNNER_TEMP/qualification-scripts"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ matrix.source }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          shared-key: test-shards
+      - name: Match full-suite binary and kernel prerequisites
+        run: |
+          python3 -m pip install --user uv
+          export PATH="$HOME/.local/bin:$PATH"
+          cargo build --locked --workspace --bins
+          ./target/debug/prime-agent --prime-agent-bootstrap
+          test -x "$HOME/.prime/agent/kernel-venv/bin/python"
+      - name: Fetch checksum-pinned historical reference
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/ts-reference/package"
+          gh release download v0.9.8 --repo PrimeIntellect-ai/prime-agent --pattern prime-agent-0.9.8-linux-x64.tar.gz --dir "$RUNNER_TEMP/ts-reference"
+          echo "83fb09129bf78e3e60268212cd70932166591b15188caa70c1b0efbcc76235e2  $RUNNER_TEMP/ts-reference/prime-agent-0.9.8-linux-x64.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/ts-reference/prime-agent-0.9.8-linux-x64.tar.gz" -C "$RUNNER_TEMP/ts-reference/package"
+      - name: Prove import selection and retain three factory samples
+        run: python3 "$RUNNER_TEMP/qualification-proof.py"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: import-factory-${{ matrix.source }}
+          path: ${{ runner.temp }}/qualification-evidence
+          if-no-files-found: error
