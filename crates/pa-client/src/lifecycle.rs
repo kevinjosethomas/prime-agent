@@ -407,6 +407,7 @@ impl DaemonClientSession {
                     if *stopped.borrow_and_update() {
                         // The settle completed and the mark flipped before
                         // the task ended: the normal completion.
+                        eprintln!("DBG stop: arm-break, mark was TRUE");
                         break;
                     }
                     // The task ended WITHOUT the mark: a panicked or failed
