@@ -68,8 +68,11 @@ fn committed_fixture_roundtrips() {
 #[test]
 fn historical_fixture_lines_parse_and_survive_reserialization() {
     let mut lines = 0usize;
-    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/historical"))
-        .unwrap()
+    for entry in std::fs::read_dir(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/historical"
+    ))
+    .unwrap()
     {
         let path = entry.unwrap().path();
         if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
@@ -81,8 +84,9 @@ fn historical_fixture_lines_parse_and_survive_reserialization() {
             if line.is_empty() {
                 continue;
             }
-            let parsed: FileEntry = serde_json::from_str(line)
-                .unwrap_or_else(|e| panic!("{}:{}: deserialize failed: {e}", path.display(), n + 1));
+            let parsed: FileEntry = serde_json::from_str(line).unwrap_or_else(|e| {
+                panic!("{}:{}: deserialize failed: {e}", path.display(), n + 1)
+            });
             let reserialized = serde_json::to_string(&parsed).expect("serialize entry");
             let mut original: Value = serde_json::from_str(line).unwrap();
             if let Some(map) = original.as_object_mut() {
