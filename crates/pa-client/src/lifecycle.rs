@@ -654,7 +654,7 @@ fn validate(config: &LifecycleConfig) -> Result<()> {
 }
 
 /// One restore attempt's outcome, consumed by the driver loop.
-enum RestoreOutcome {
+pub(crate) enum RestoreOutcome {
     Done {
         id: String,
         data: Value,
@@ -2354,7 +2354,9 @@ mod tests {
         // Hold the client WRITE guard BEFORE the driver can install: the
         // connect resolves and the driver parks at the guard await (never
         // inside the registry gate — no deadlock by design).
-        let mut guard = session.state.client.write_owned().await;
+        let mut guard = std::sync::Arc::clone(&session.state.client)
+            .write_owned()
+            .await;
         // Give the driver a beat to park at the guard.
         tokio::time::sleep(Duration::from_millis(100)).await;
         // The stop's marks land under the registry gate while the client
@@ -2404,7 +2406,7 @@ mod tests {
         wait_connected(&mut events).await;
         let started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let release = std::sync::Arc::new(std::atomic::AtomicBool::new(false));
+        let release = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         {
             let client = session
                 .state
