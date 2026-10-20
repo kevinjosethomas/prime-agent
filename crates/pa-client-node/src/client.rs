@@ -31,9 +31,7 @@ use std::sync::{Arc, Mutex};
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use pa_client::daemon_client::{
-    DaemonClient, DaemonClientOptions, DEFAULT_REQUEST_TIMEOUT_MS,
-};
+use pa_client::daemon_client::{DaemonClient, DaemonClientOptions, DEFAULT_REQUEST_TIMEOUT_MS};
 use pa_types::daemon::DaemonCommand;
 use serde_json::Value;
 use tokio::sync::{mpsc, watch, Notify};
@@ -97,7 +95,10 @@ struct BridgeGuard {
 impl std::future::Future for BridgeGuard {
     type Output = std::result::Result<(), tokio::task::JoinError>;
 
-    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
         // SAFETY: the guard holds no self-referential data (plain Arc and
         // an Unpin JoinHandle), so &mut through the Pin is sound.
         let this = std::pin::Pin::into_inner(self);
@@ -382,9 +383,8 @@ impl PrimeDaemonClient {
     #[napi]
     pub fn protocol(&self) -> Result<Value> {
         let client = self.inner.client_arc()?;
-        serde_json::to_value(client.protocol()).map_err(|error| {
-            napi_error(transport(format!("serialize protocol info: {error}")))
-        })
+        serde_json::to_value(client.protocol())
+            .map_err(|error| napi_error(transport(format!("serialize protocol info: {error}"))))
     }
 
     #[napi]
@@ -528,22 +528,19 @@ impl PrimeDaemonClient {
     }
 
     #[napi]
-    pub async fn request(
-        &self,
-        command: Value,
-        timeout_ms: Option<u32>,
-    ) -> Result<Value> {
+    pub async fn request(&self, command: Value, timeout_ms: Option<u32>) -> Result<Value> {
         let client = self.inner.client_arc()?;
-        let command: DaemonCommand = serde_json::from_value(command)
-            .map_err(|error| {
-                napi_error(not_sent(format!("command deserialize failed: {error}")))
-            })?;
+        let command: DaemonCommand = serde_json::from_value(command).map_err(|error| {
+            napi_error(not_sent(format!("command deserialize failed: {error}")))
+        })?;
         let timeout = u64::from(
-            timeout_ms.unwrap_or(u32::try_from(DEFAULT_REQUEST_TIMEOUT_MS).expect(
-                "the default request timeout fits a u32",
-            )),
+            timeout_ms.unwrap_or(
+                u32::try_from(DEFAULT_REQUEST_TIMEOUT_MS)
+                    .expect("the default request timeout fits a u32"),
+            ),
         );
-        let (result_tx, result_rx) = tokio::sync::oneshot::channel::<std::result::Result<Value, Box<ErrorPayload>>>();
+        let (result_tx, result_rx) =
+            tokio::sync::oneshot::channel::<std::result::Result<Value, Box<ErrorPayload>>>();
         let inner = Arc::clone(&self.inner);
         // ONE tracked worker carries the operation; the napi promise rides a
         // oneshot so a cancelled JS promise never detaches the work — the
@@ -604,11 +601,11 @@ impl PrimeDaemonClient {
     #[napi]
     pub async fn request_ok(&self, command: Value) -> Result<Value> {
         let client = self.inner.client_arc()?;
-        let command: DaemonCommand = serde_json::from_value(command)
-            .map_err(|error| {
-                napi_error(not_sent(format!("command deserialize failed: {error}")))
-            })?;
-        let (result_tx, result_rx) = tokio::sync::oneshot::channel::<std::result::Result<Value, Box<ErrorPayload>>>();
+        let command: DaemonCommand = serde_json::from_value(command).map_err(|error| {
+            napi_error(not_sent(format!("command deserialize failed: {error}")))
+        })?;
+        let (result_tx, result_rx) =
+            tokio::sync::oneshot::channel::<std::result::Result<Value, Box<ErrorPayload>>>();
         let inner = Arc::clone(&self.inner);
         self.inner
             .spawn_tracked(async move {
@@ -685,16 +682,24 @@ pub async fn connect(
         ))));
     }
     if options.max_frame_bytes.is_some_and(|cap| cap == 0) {
-        return Err(napi_error(transport("maxFrameBytes must be at least 1".to_string())));
+        return Err(napi_error(transport(
+            "maxFrameBytes must be at least 1".to_string(),
+        )));
     }
     if options.max_pending.is_some_and(|cap| cap == 0) {
-        return Err(napi_error(transport("maxPending must be at least 1".to_string())));
+        return Err(napi_error(transport(
+            "maxPending must be at least 1".to_string(),
+        )));
     }
     let (tap_tx, tap_rx) = mpsc::unbounded_channel::<Value>();
     let core_options = DaemonClientOptions {
         raw_tap: Some(tap_tx),
-        max_frame_bytes: options.max_frame_bytes.and_then(|cap| usize::try_from(cap).ok()),
-        max_pending: options.max_pending.and_then(|cap| usize::try_from(cap).ok()),
+        max_frame_bytes: options
+            .max_frame_bytes
+            .and_then(|cap| usize::try_from(cap).ok()),
+        max_pending: options
+            .max_pending
+            .and_then(|cap| usize::try_from(cap).ok()),
     };
     let caps = Caps {
         frame_buffer,
@@ -703,14 +708,13 @@ pub async fn connect(
     };
     let path = std::path::PathBuf::from(socket_path);
 
-    let (client, event_rx) = bridge(async move {
-        DaemonClient::connect_with_options(&path, core_options).await
-    })
-    .await
-    .map_err(|join_error| {
-        napi_error(transport(format!("the connect task failed: {join_error}")))
-    })?
-    .map_err(|error| napi_error(classify(error, None)))?;
+    let (client, event_rx) =
+        bridge(async move { DaemonClient::connect_with_options(&path, core_options).await })
+            .await
+            .map_err(|join_error| {
+                napi_error(transport(format!("the connect task failed: {join_error}")))
+            })?
+            .map_err(|error| napi_error(classify(error, None)))?;
     let client = Arc::new(client);
 
     let (frame_tx, frame_rx) =
@@ -778,9 +782,7 @@ pub async fn connect(
     {
         let mut event_rx = event_rx;
         inner
-            .spawn_tracked(async move {
-                while event_rx.recv().await.is_some() {}
-            })
+            .spawn_tracked(async move { while event_rx.recv().await.is_some() {} })
             .expect("the connection is open when the event drain registers");
     }
     Ok(PrimeDaemonClient { inner })

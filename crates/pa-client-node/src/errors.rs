@@ -55,10 +55,7 @@ pub(crate) fn uncertain(message: String, cause: Option<&'static str>) -> ErrorPa
 }
 
 /// Rejection with the `Rejected` class and the daemon's error code.
-pub(crate) fn rejected(
-    message: String,
-    info: Option<serde_json::Value>,
-) -> ErrorPayload {
+pub(crate) fn rejected(message: String, info: Option<serde_json::Value>) -> ErrorPayload {
     payload(ErrorPayload {
         kind: "Rejected",
         message,
