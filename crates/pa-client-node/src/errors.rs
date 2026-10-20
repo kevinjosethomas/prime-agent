@@ -67,6 +67,20 @@ pub(crate) fn rejected(
     })
 }
 
+/// Rejection with the `NotSent` class and a teardown cause surfaced.
+pub(crate) fn not_sent_cause(cause: Option<&'static str>) -> napi::Error {
+    let cause_text = match cause {
+        Some("overflow") => "the connection was torn down after the frame queue overflowed",
+        _ => "the connection was torn down",
+    };
+    payload(ErrorPayload {
+        kind: "NotSent",
+        message: format!("{cause_text}; the command was never queued"),
+        cause,
+        info: None,
+    })
+}
+
 /// Rejection with the terminal `Overflow` class.
 pub(crate) fn overflow() -> napi::Error {
     payload(ErrorPayload {

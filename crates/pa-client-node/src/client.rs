@@ -38,7 +38,7 @@ use pa_types::daemon::DaemonCommand;
 use serde_json::Value;
 use tokio::sync::{mpsc, watch, Notify};
 
-use crate::errors::{classify, not_sent, overflow, transport, uncertain};
+use crate::errors::{classify, not_sent, not_sent_cause, overflow, transport, uncertain};
 use crate::runtime::bridge;
 
 /// The default bounded frame-queue capacity. Reported in the README.
@@ -343,11 +343,11 @@ impl PrimeDaemonClient {
             notified.as_mut().enable();
             let fut = client.request_with_timeout(command, timeout);
             tokio::pin!(fut);
+            // Deterministic pre-poll barrier: teardown observed here is
+            // BEFORE the request's first poll, so the line was provably
+            // never queued — NotSent with the cause, never Uncertain.
             if let Some(cause) = inner.teardown_cause() {
-                return Err(uncertain(
-                    "the connection was torn down before the response arrived".to_string(),
-                    Some(cause),
-                ));
+                return Err(not_sent_cause(Some(cause)));
             }
             tokio::select! {
                 response = &mut fut => {
@@ -385,11 +385,9 @@ impl PrimeDaemonClient {
             notified.as_mut().enable();
             let fut = client.request_ok(command);
             tokio::pin!(fut);
+            // Deterministic pre-poll barrier (see `request`).
             if let Some(cause) = inner.teardown_cause() {
-                return Err(uncertain(
-                    "the connection was torn down before the response arrived".to_string(),
-                    Some(cause),
-                ));
+                return Err(not_sent_cause(Some(cause)));
             }
             tokio::select! {
                 data = &mut fut => data.map_err(|error| classify(error, None)),
