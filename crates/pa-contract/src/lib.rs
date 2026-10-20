@@ -165,7 +165,6 @@ fn drop_phantom_unknown_branch(schema: &mut Value) {
 /// must carry its branch shape; an unknown code passes through (serde:
 /// `DaemonErrorInfo::Unknown`).
 fn patch_error_info_everywhere(schema: &mut Value, codes: &[String]) {
-    let patch = strict_known_open_unknown_error_info(codes);
     fn walk(schema: &mut Value, patch: &Value) {
         match schema {
             Value::Object(object) => {
@@ -175,8 +174,7 @@ fn patch_error_info_everywhere(schema: &mut Value, codes: &[String]) {
                         props.insert("errorInfo".to_string(), patch.clone());
                     }
                 }
-                for (key, value) in owned.iter_mut() {
-                    let _ = key;
+                for value in owned.values_mut() {
                     walk(value, patch);
                 }
                 *object = owned;
@@ -189,12 +187,14 @@ fn patch_error_info_everywhere(schema: &mut Value, codes: &[String]) {
             _ => {}
         }
     }
+    let patch = strict_known_open_unknown_error_info(codes);
     walk(schema, &patch);
 }
 
 /// The discriminant property name of a tagged enum's schema: the property
 /// that is a `const` in every branch (`type` for commands/outbound frames,
 /// `code` for error info, `role` for messages, `state` for reply ownership).
+#[must_use]
 pub fn discriminant_property(schema: &Value) -> Option<String> {
     let branches = schema
         .get("oneOf")
@@ -251,6 +251,12 @@ pub fn enum_tags(schema: &Value) -> Vec<String> {
 /// Derive one minimal accepted witness per enum branch, plus per-optional-
 /// property variants and an unknown-extras variant. All synthesized from the
 /// schema itself — no hand-maintained samples.
+///
+/// # Panics
+///
+/// Panics when a schema branch is not synthesizable (a malformed schema
+/// graph — a generation-time failure, never a runtime one).
+#[must_use]
 pub fn witnesses(stem: &str, schema: &Value) -> Vec<Value> {
     let defs = defs_of(schema);
     let mut out = Vec::new();
@@ -396,8 +402,7 @@ fn synth(schema: &Value, defs: &Map<String, Value>, depth: usize) -> Value {
     }
     match member_type.as_deref() {
         Some("string") => json!("wire"),
-        Some("integer") => json!(0),
-        Some("number") => json!(0),
+        Some("integer" | "number") => json!(0),
         Some("boolean") => json!(false),
         Some("null") => Value::Null,
         Some("array") => json!([]),
@@ -486,6 +491,7 @@ pub fn mutation_candidates(stem: &str, schema: &Value, witness: &Value) -> Vec<(
 /// branch with that property re-synthesized (message content as a bare
 /// string vs. typed block arrays) — all synthesized from the schema, never
 /// hand-written.
+#[must_use]
 pub fn nested_branch_variants(
     schema: &Value,
     witness: &Value,
@@ -619,12 +625,12 @@ pub fn tagged_object_field_drops(witness: &Value) -> Vec<(String, Value)> {
             }
         }
     }
-    for child in witness
-        .as_object()
-        .map(|o| o.values().cloned().collect::<Vec<_>>())
-        .or_else(|| witness.as_array().map(|a| a.iter().cloned().collect()))
-        .unwrap_or_default()
-    {
+    let children: Vec<Value> = match witness {
+        Value::Object(map) => map.values().cloned().collect(),
+        Value::Array(list) => list.to_vec(),
+        _ => Vec::new(),
+    };
+    for child in children {
         for (name, variant) in tagged_object_field_drops(&child) {
             out.push((format!("nested-{name}"), variant));
             if out.len() >= 64 {
@@ -705,11 +711,23 @@ pub fn metadata(command_schema: &Value, outbound_schema: &Value, error_schema: &
 }
 
 /// The generated-output directory inside the client package.
+#[must_use]
 pub fn generated_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/client-contract/generated")
 }
 
-/// Export every canonical artifact into `dir`: `schema/`, `corpus/`, `metadata.json`.
+/// Export every canonical artifact into `dir`: `schema/`, `corpus/`,
+/// `metadata.json`.
+///
+/// # Errors
+///
+/// Returns `Err` when the artifact directory cannot be created, a schema or
+/// corpus line cannot be serialized, or any file cannot be written.
+///
+/// # Panics
+///
+/// Panics when a schema branch is not synthesizable (see [`witnesses`]).
+#[allow(clippy::too_many_lines)]
 pub fn export(dir: &Path) -> Result<Vec<PathBuf>> {
     let roots = schema_roots();
     let command_schema = roots
@@ -835,35 +853,41 @@ pub fn export(dir: &Path) -> Result<Vec<PathBuf>> {
 }
 
 /// The roots' stem list (test helpers and package docs).
+#[must_use]
 pub fn root_stems() -> Vec<&'static str> {
     schema_roots().into_iter().map(|root| root.stem).collect()
 }
 
 /// Map a schema-root stem to the Rust type that must (de)serialize its
 /// accepted corpus and reject its rejected corpus.
+///
+/// # Errors
+///
+/// Returns `Err` only for an unknown schema-root stem or (in the lossless
+/// round-trip helper) a re-serialization failure.
 pub fn parse_as_root(stem: &str, sample: &Value) -> Result<bool> {
     use pa_types::daemon::{
         DaemonCommand, DaemonCommandEnvelope, DaemonCommandWire, DaemonErrorInfo,
         DaemonEventEnvelope, DaemonEventMeta, DaemonOutbound, DaemonResponse, DaemonResumeCursor,
     };
     use pa_types::session::AgentMessage;
-    fn accepts<T: serde::de::DeserializeOwned + serde::Serialize>(sample: &Value) -> Result<bool> {
+    fn accepts<T: serde::de::DeserializeOwned>(sample: &Value) -> bool {
         // The accept verdict is the parse alone: deserialization may normalize
         // (defaults, `serde(other)` -> Unknown, deny-unknown-field drops).
         // Lossless round trips are asserted separately, on real fixtures.
-        Ok(serde_json::from_value::<T>(sample.clone()).is_ok())
+        serde_json::from_value::<T>(sample.clone()).is_ok()
     }
     Ok(match stem {
-        "daemon-command" => accepts::<DaemonCommand>(sample)?,
-        "daemon-command-envelope" => accepts::<DaemonCommandEnvelope>(sample)?,
-        "daemon-command-wire" => accepts::<DaemonCommandWire>(sample)?,
-        "daemon-outbound" => accepts::<DaemonOutbound>(sample)?,
-        "daemon-response" => accepts::<DaemonResponse>(sample)?,
-        "daemon-error-info" => accepts::<DaemonErrorInfo>(sample)?,
-        "daemon-event-envelope" => accepts::<DaemonEventEnvelope>(sample)?,
-        "daemon-event-meta" => accepts::<DaemonEventMeta>(sample)?,
-        "daemon-resume-cursor" => accepts::<DaemonResumeCursor>(sample)?,
-        "agent-message" => accepts::<AgentMessage>(sample)?,
+        "daemon-command" => accepts::<DaemonCommand>(sample),
+        "daemon-command-envelope" => accepts::<DaemonCommandEnvelope>(sample),
+        "daemon-command-wire" => accepts::<DaemonCommandWire>(sample),
+        "daemon-outbound" => accepts::<DaemonOutbound>(sample),
+        "daemon-response" => accepts::<DaemonResponse>(sample),
+        "daemon-error-info" => accepts::<DaemonErrorInfo>(sample),
+        "daemon-event-envelope" => accepts::<DaemonEventEnvelope>(sample),
+        "daemon-event-meta" => accepts::<DaemonEventMeta>(sample),
+        "daemon-resume-cursor" => accepts::<DaemonResumeCursor>(sample),
+        "agent-message" => accepts::<AgentMessage>(sample),
         "client-inbound-frame" => {
             // The open envelope: any object with a string type.
             sample.get("type").and_then(Value::as_str).is_some() && sample.is_object()
@@ -874,6 +898,11 @@ pub fn parse_as_root(stem: &str, sample: &Value) -> Result<bool> {
 
 /// Lossless re-emission: parsed and re-serialized back to the exact input
 /// value. Guaranteed for flatten-preserving types, asserted on real goldens.
+///
+/// # Errors
+///
+/// Returns `Err` for an unknown schema-root stem or a re-serialization
+/// failure.
 pub fn roundtrips_as_root(stem: &str, sample: &Value) -> Result<bool> {
     use pa_types::daemon::{
         DaemonCommand, DaemonCommandEnvelope, DaemonCommandWire, DaemonErrorInfo,
@@ -903,6 +932,10 @@ pub fn roundtrips_as_root(stem: &str, sample: &Value) -> Result<bool> {
 }
 
 /// Corrupted variants must fail the same Rust parse that accepts the witness.
+///
+/// # Errors
+///
+/// Returns `Err` for an unknown schema-root stem.
 pub fn rejects_as_root(stem: &str, sample: &Value) -> Result<bool> {
     use pa_types::daemon::{
         DaemonCommand, DaemonCommandEnvelope, DaemonCommandWire, DaemonErrorInfo,
@@ -932,6 +965,11 @@ pub fn rejects_as_root(stem: &str, sample: &Value) -> Result<bool> {
 }
 
 /// File-name -> content map of the canonical export (drift gate input).
+///
+/// # Errors
+///
+/// Returns `Err` when the export or a read fails. The temporary export
+/// directory is best-effort removed afterwards.
 pub fn export_map() -> Result<BTreeMap<String, String>> {
     let dir = std::env::temp_dir().join(format!("pa-contract-export-{}", std::process::id()));
     export(&dir)?;
