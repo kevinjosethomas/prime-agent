@@ -774,6 +774,7 @@ async fn live_system_prompt(engine: &std::sync::Arc<AgentSessionEngine>) -> Stri
 /// lands in both. The prompt keeps the deleted skill until the reload.
 #[tokio::test]
 async fn reload_reloads_skills_and_the_snapshot_hides_deleted_files() {
+    use crate::engine::SessionEngine as _;
     let (engine, _dir, agent_dir) = {
         let _faux = FAUX_TEST_LOCK
             .lock()
@@ -830,6 +831,21 @@ async fn reload_reloads_skills_and_the_snapshot_hides_deleted_files() {
         "the snapshot hides the deleted skill file"
     );
     assert!(!after_delete.contains(&"added-skill".to_string()));
+    // The command list applies the same hiding rule.
+    let command_names = engine
+        .connection_commands()
+        .await
+        .iter()
+        .filter(|command| command.get("source").and_then(Value::as_str) == Some("skill"))
+        .filter_map(|command| command.get("name").and_then(Value::as_str))
+        .map(|name| name.trim_start_matches("skill:").to_string())
+        .collect::<Vec<String>>();
+    assert!(command_names.contains(&"keep-skill".to_string()));
+    assert!(
+        !command_names.contains(&"drop-skill".to_string()),
+        "the command list hides the deleted skill file"
+    );
+    assert!(!command_names.contains(&"added-skill".to_string()));
     let stale_prompt = live_system_prompt(&engine).await;
     assert!(stale_prompt.contains("drop-skill"));
     assert!(!stale_prompt.contains("added-skill"));
