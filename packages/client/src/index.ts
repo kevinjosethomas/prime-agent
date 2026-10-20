@@ -47,7 +47,7 @@ interface NativeClient {
   supportsServerCapability(capability: string): boolean;
   socketPath(): string;
   caps(): Caps;
-  close(): void;
+  close(): Promise<void>;
 }
 
 interface NativeAddon {
@@ -137,8 +137,8 @@ export class DaemonConnection {
     return this.native.caps();
   }
 
-  close(): void {
-    this.native.close();
+  close(): Promise<void> {
+    return decode(this.native.close());
   }
 }
 

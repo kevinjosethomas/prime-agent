@@ -7,7 +7,7 @@ test('close resolves after pending request, upgrade, and pull are all torn down'
   const socketPath = tmpSocket('close-full');
   const stop = await startMock(socketPath, 'silent');
   const connection = await DaemonConnection.connect(socketPath);
-  const pendingRequest = connection.request({ type: 'get_connection_state' }, 60_000);
+  const pendingRequest = connection.request({ type: 'get_connection_state', activeSessionId: 'active-1' }, 60_000);
   const pendingUpgrade = connection.upgradeDirect('active-1');
   const pendingFrame = connection.nextFrame();
   const pendingStatus = connection.nextStatus();
