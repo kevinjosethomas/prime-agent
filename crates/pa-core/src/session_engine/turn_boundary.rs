@@ -312,9 +312,7 @@ impl SessionEngine {
         abort: Option<&pa_agent::abort::AbortSignal>,
     ) -> TurnBoundaryConsumption {
         let mut consumption = TurnBoundaryConsumption { compaction: None };
-        consumption.compaction = self
-            .consume_pending_compaction(model, api_key, abort)
-            .await;
+        consumption.compaction = self.consume_pending_compaction(model, api_key, abort).await;
         consumption
     }
 }

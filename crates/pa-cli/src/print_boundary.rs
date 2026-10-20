@@ -24,7 +24,6 @@ use compaction_arms::{OverflowBoundary, OverflowOutcome, OverflowRecovery};
 #[cfg(test)]
 use compaction_arms::OVERFLOW_RECOVERY_FAILED_MESSAGE;
 
-
 /// Where the boundary's json events go: stdout in the product, a captured
 /// buffer in tests.
 type EventSink = std::sync::Arc<dyn Fn(&serde_json::Value) + Send + Sync>;

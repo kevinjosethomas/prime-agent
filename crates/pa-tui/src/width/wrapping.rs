@@ -133,4 +133,3 @@ pub(super) fn count_text(text: &str, width: usize) -> usize {
         })
         .sum()
 }
-
