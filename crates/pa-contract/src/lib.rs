@@ -45,6 +45,11 @@ fn root_schema<T: schemars::JsonSchema>(stem: &'static str) -> SchemaRoot {
 }
 
 /// The client-facing schema roots: the supervisor-socket wire only.
+///
+/// # Panics
+///
+/// Panics when a schema derivation fails to serialize (a build-time
+/// contract-generation failure, never a runtime one).
 pub fn schema_roots() -> Vec<SchemaRoot> {
     use pa_types::daemon::{
         DaemonCommand, DaemonCommandEnvelope, DaemonCommandWire, DaemonErrorInfo,
@@ -224,6 +229,10 @@ pub fn discriminant_property(schema: &Value) -> Option<String> {
 
 /// The wire tag consts of a tagged enum's schema (`oneOf`/`anyOf` branches),
 /// read off the schema's own discriminant — never a hardcoded property name.
+///
+/// # Panics
+///
+/// Panics on a malformed branch list (generation-time input only).
 pub fn enum_tags(schema: &Value) -> Vec<String> {
     let Some(tag_property) = discriminant_property(schema) else {
         return Vec::new();
@@ -405,7 +414,10 @@ fn synth(schema: &Value, defs: &Map<String, Value>, depth: usize) -> Value {
         Some("integer" | "number") => json!(0),
         Some("boolean") => json!(false),
         Some("null") => Value::Null,
-        Some("array") => json!([]),
+        Some("array") => match schema.get("items") {
+            Some(items) => json!([synth(items, defs, depth + 1)]),
+            None => json!([]),
+        },
         Some("object") | None => {
             // A bare `true` schema or open object: minimal open object.
             if schema.get("properties").is_none() {
@@ -487,29 +499,42 @@ pub fn mutation_candidates(stem: &str, schema: &Value, witness: &Value) -> Vec<(
 }
 
 /// Nested union branches: walk the schema and the witness in parallel; where
-/// a property's subschema is a union (oneOf/anyOf), emit one variant per
-/// branch with that property re-synthesized (message content as a bare
-/// string vs. typed block arrays) — all synthesized from the schema, never
-/// hand-written.
+/// a property's subschema is a union (oneOf/anyOf), emit one FULL-ROOT
+/// variant per branch with that property re-synthesized at its path (message
+/// content as a bare string vs. typed block arrays) — all synthesized from
+/// the schema, never hand-written.
 #[must_use]
 pub fn nested_branch_variants(
     schema: &Value,
     witness: &Value,
     defs: &Map<String, Value>,
 ) -> Vec<Value> {
+    let mut replacements: Vec<(Vec<String>, Value)> = Vec::new();
+    collect_union_replacements(schema, witness, defs, &mut Vec::new(), 0, &mut replacements);
     let mut out = Vec::new();
-    collect_branch_variants(schema, witness, defs, 0, &mut out);
+    for (path, value) in replacements {
+        if out.len() >= 32 {
+            break;
+        }
+        let mut variant = witness.clone();
+        let pointer = format!("/{}", path.join("/"));
+        if let Some(slot) = variant.pointer_mut(&pointer) {
+            *slot = value;
+            out.push(variant);
+        }
+    }
     out
 }
 
-fn collect_branch_variants(
+fn collect_union_replacements(
     schema: &Value,
     witness: &Value,
     defs: &Map<String, Value>,
+    prefix: &[String],
     depth: usize,
-    out: &mut Vec<Value>,
+    out: &mut Vec<(Vec<String>, Value)>,
 ) {
-    if depth > 4 || out.len() >= 32 {
+    if depth > 4 || out.len() >= 64 {
         return;
     }
     let schema = &resolve_ref(schema, defs);
@@ -532,51 +557,53 @@ fn collect_branch_variants(
                     .and_then(Value::as_str)
                     == Some(tag)
                 {
-                    collect_branch_variants(branch, witness, defs, depth + 1, out);
+                    collect_union_replacements(
+                        branch, witness, defs, prefix, depth + 1, out,
+                    );
                     return;
                 }
             }
         }
         return;
     }
-    // A $ref with siblings (internally tagged enums): merge walk.
-    if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
-        let Some(object) = witness.as_object() else {
-            return;
-        };
-        for (name, prop) in properties {
-            let resolved = resolve_ref(prop, defs);
-            if let Some(branches) = resolved
-                .get("anyOf")
-                .or_else(|| resolved.get("oneOf"))
-                .and_then(Value::as_array)
-            {
-                for branch in branches {
-                    if out.len() >= 32 {
-                        return;
-                    }
-                    let mut variant = witness.clone();
-                    if let Some(target) = variant.as_object_mut() {
-                        target.insert(name.clone(), synth(branch, defs, 0));
-                    }
-                    out.push(variant);
+    let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+        return;
+    };
+    let Some(object) = witness.as_object() else { return };
+    for (name, prop) in properties {
+        let mut path = prefix.to_vec();
+        path.push(name.clone());
+        let resolved = resolve_ref(prop, defs);
+        if let Some(branches) = resolved
+            .get("anyOf")
+            .or_else(|| resolved.get("oneOf"))
+            .and_then(Value::as_array)
+        {
+            for branch in branches {
+                if out.len() >= 64 {
+                    return;
                 }
+                out.push((path.clone(), synth(branch, defs, 0)));
             }
-            // Descend into the property's own value (arrays included).
-            if let Some(child) = object.get(name) {
-                match child {
-                    Value::Array(list) => {
-                        if let Some(items) = resolved.get("items") {
-                            for element in list {
-                                collect_branch_variants(items, element, defs, depth + 1, out);
-                            }
+        }
+        // Descend into the property's own value (arrays included).
+        if let Some(child) = object.get(name) {
+            match child {
+                Value::Array(list) => {
+                    if let Some(items) = resolved.get("items") {
+                        for (index, element) in list.iter().enumerate() {
+                            let mut element_path = path.clone();
+                            element_path.push(index.to_string());
+                            collect_union_replacements(
+                                items, element, defs, &element_path, depth + 1, out,
+                            );
                         }
                     }
-                    Value::Object(_) => {
-                        collect_branch_variants(prop, child, defs, depth + 1, out);
-                    }
-                    _ => {}
                 }
+                Value::Object(_) => {
+                    collect_union_replacements(prop, child, defs, &path, depth + 1, out);
+                }
+                _ => {}
             }
         }
     }
@@ -637,7 +664,7 @@ pub fn tagged_object_field_drops(witness: &Value) -> Vec<(String, Value)> {
     }
     let children: Vec<Value> = match witness {
         Value::Object(map) => map.values().cloned().collect(),
-        Value::Array(list) => list.to_vec(),
+        Value::Array(list) => list.clone(),
         _ => Vec::new(),
     };
     for child in children {
@@ -652,6 +679,10 @@ pub fn tagged_object_field_drops(witness: &Value) -> Vec<(String, Value)> {
 }
 
 /// Client-facing metadata, every list derived from the canonical Rust sources.
+///
+/// # Panics
+///
+/// Panics on a malformed schema branch list (generation-time input only).
 pub fn metadata(command_schema: &Value, outbound_schema: &Value, error_schema: &Value) -> Value {
     let command_tags = enum_tags(command_schema);
     let known: Vec<String> = pa_daemon::protocol::KNOWN_COMMAND_TYPES
@@ -863,6 +894,10 @@ pub fn export(dir: &Path) -> Result<Vec<PathBuf>> {
 }
 
 /// The roots' stem list (test helpers and package docs).
+///
+/// # Panics
+///
+/// Panics when a root schema cannot be serialized (see [`schema_roots`]).
 #[must_use]
 pub fn root_stems() -> Vec<&'static str> {
     schema_roots().into_iter().map(|root| root.stem).collect()
@@ -942,6 +977,10 @@ pub fn roundtrips_as_root(stem: &str, sample: &Value) -> Result<bool> {
 }
 
 /// Corrupted variants must fail the same Rust parse that accepts the witness.
+///
+/// # Panics
+///
+/// Panics only via the schema-root helpers on malformed generation input.
 ///
 /// # Errors
 ///
