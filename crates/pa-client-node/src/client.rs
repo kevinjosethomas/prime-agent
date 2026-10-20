@@ -225,14 +225,23 @@ impl Inner {
         Ok(())
     }
 
-    /// The binding-owned wake of step one: flags, status, and the notify —
-    /// every pending pull and in-flight request observes the cause.
+    /// The synchronous tear-down mark: flags, status, and the notify —
+    /// every pending pull and in-flight request observes the cause. The
+    /// flag section runs under the registry lock so it linearizes with
+    /// `spawn_tracked`: an operation either registers before the mark
+    /// (visible to the cleanup drain) or refuses after it.
     fn mark_closed(&self, is_overflow: bool, reason: &str) {
-        if self.closed.swap(true, Ordering::SeqCst) {
-            return;
-        }
-        if is_overflow {
-            self.overflow.store(true, Ordering::SeqCst);
+        {
+            let _registry = self
+                .bridges
+                .lock()
+                .expect("the bridge registry is not poisoned");
+            if self.closed.swap(true, Ordering::SeqCst) {
+                return;
+            }
+            if is_overflow {
+                self.overflow.store(true, Ordering::SeqCst);
+            }
         }
         let status = if is_overflow {
             Status::Overflow
@@ -269,10 +278,15 @@ impl Inner {
         match *gate {
             CloseState::Done | CloseState::Closing => {}
             CloseState::Open => {
+                // The terminal mark happens HERE, synchronously under the
+                // gate, BEFORE the cleanup is scheduled: new operations
+                // are refused and pending pulls wake immediately at the
+                // detection point; the async cleanup follows.
+                self.mark_closed(is_overflow, reason);
                 *gate = CloseState::Closing;
                 let inner = Arc::clone(self);
                 bridge(async move {
-                    inner.close_chain(is_overflow, reason).await;
+                    inner.close_chain(reason).await;
                 });
             }
         }
@@ -282,8 +296,7 @@ impl Inner {
     /// closed and refuse new operations, shut the core transport down, drain
     /// the binding-owned operation registry one handle at a time behind the
     /// re-insertion guard, then join the core's registered task set.
-    async fn close_chain(self: Arc<Self>, is_overflow: bool, reason: &'static str) {
-        self.mark_closed(is_overflow, reason);
+    async fn close_chain(self: Arc<Self>, reason: &'static str) {
         let client = self
             .client
             .lock()
@@ -739,6 +752,21 @@ pub async fn connect(
         initial_status_delivered: AtomicBool::new(false),
     });
 
+    // The legacy typed-event drain registers FIRST: an overflow can
+    // only fire from the tap pump, so every registration precedes any
+    // possible tear-down; a registration refusal during setup is a
+    // normal cleanup, never a panic.
+    // The typed event channel is unbound from JS (no TUI enum serde, no
+    // hand-written event mirror) but must still be drained: the core keeps
+    // it unbounded, and this discard pump owns exactly that. Registered
+    // like every other binding-owned task.
+    {
+        let mut event_rx = event_rx;
+        inner
+            .spawn_tracked(async move { while event_rx.recv().await.is_some() {} })
+            .map_err(|payload| napi_error(*payload))?;
+    }
+
     // The tap pump: forwards raw frames from the core's (unbounded) tap
     // channel into the bounded delivery queue, drains promptly, and fails
     // closed the moment the bounded queue is full — never dropping a frame.
@@ -782,17 +810,7 @@ pub async fn connect(
                 }
             }
         })
-        .expect("the connection is open when the tap pump registers");
-    }
-    // The typed event channel is unbound from JS (no TUI enum serde, no
-    // hand-written event mirror) but must still be drained: the core keeps
-    // it unbounded, and this discard pump owns exactly that. Registered
-    // like every other binding-owned task.
-    {
-        let mut event_rx = event_rx;
-        inner
-            .spawn_tracked(async move { while event_rx.recv().await.is_some() {} })
-            .expect("the connection is open when the event drain registers");
+        .map_err(|payload| napi_error(*payload))?;
     }
     Ok(PrimeDaemonClient { inner })
 }
