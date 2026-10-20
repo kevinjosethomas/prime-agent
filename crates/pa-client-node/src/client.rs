@@ -305,10 +305,9 @@ impl PrimeDaemonClient {
     #[napi]
     pub fn protocol(&self) -> Result<Value> {
         let client = self.inner.client_arc()?;
-        Ok(serde_json::to_value(client.protocol())
-            .map_err(|error| {
-                napi_error(transport(format!("serialize protocol info: {error}")))
-            })?)
+        serde_json::to_value(client.protocol()).map_err(|error| {
+            napi_error(transport(format!("serialize protocol info: {error}")))
+        })
     }
 
     #[napi]
@@ -340,12 +339,12 @@ impl PrimeDaemonClient {
     pub async fn upgrade_direct(&self, active_session_id: String) -> Result<bool> {
         let client = self.inner.client_arc()?;
         let (result_tx, result_rx) =
-            tokio::sync::oneshot::channel::<std::result::Result<bool, ErrorPayload>>();
+            tokio::sync::oneshot::channel::<std::result::Result<bool, Box<ErrorPayload>>>();
         let handle = bridge(async move {
             let outcome = client
                 .upgrade_direct(&active_session_id)
                 .await
-                .map_err(|error| classify(error, None));
+                .map_err(|error| Box::new(classify(error, None)));
             let _ = result_tx.send(outcome);
         });
         self.inner.track_bridge(handle);
@@ -354,7 +353,7 @@ impl PrimeDaemonClient {
             .map_err(|_| {
                 napi_error(transport("the direct upgrade task failed".to_string()))
             })?
-            .map_err(napi_error)
+            .map_err(|payload| napi_error(*payload))
     }
 
     #[napi]
@@ -447,7 +446,7 @@ impl PrimeDaemonClient {
                 "the default request timeout fits a u32",
             )),
         );
-        let (result_tx, result_rx) = tokio::sync::oneshot::channel::<std::result::Result<Value, ErrorPayload>>();
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel::<std::result::Result<Value, Box<ErrorPayload>>>();
         let inner = Arc::clone(&self.inner);
         // ONE tracked task carries the operation; the napi promise rides a
         // oneshot so a cancelled JS promise never detaches the work — close
@@ -462,7 +461,7 @@ impl PrimeDaemonClient {
             // BEFORE the request's first poll, so the line was provably
             // never queued — NotSent with the cause, never Uncertain.
             if let Some(cause) = inner.teardown_cause() {
-                let _ = result_tx.send(Err(not_sent_cause(Some(cause))));
+                let _ = result_tx.send(Err(Box::new(not_sent_cause(Some(cause)))));
                 return;
             }
             // Biased with the core future FIRST: when a completed answer
@@ -481,10 +480,10 @@ impl PrimeDaemonClient {
                 }
                 _ = &mut notified => {
                     let cause = inner.teardown_cause().unwrap_or("closed");
-                    Err(uncertain(
+                    Err(Box::new(uncertain(
                         "the connection was torn down before the response arrived".to_string(),
                         Some(cause),
-                    ))
+                    )))
                 }
             };
             let _ = result_tx.send(outcome);
@@ -493,7 +492,7 @@ impl PrimeDaemonClient {
         result_rx
             .await
             .map_err(|_| napi_error(transport("the request task failed".to_string())))?
-            .map_err(napi_error)
+            .map_err(|payload| napi_error(*payload))
     }
 
     #[napi]
@@ -503,7 +502,7 @@ impl PrimeDaemonClient {
             .map_err(|error| {
                 napi_error(not_sent(format!("command deserialize failed: {error}")))
             })?;
-        let (result_tx, result_rx) = tokio::sync::oneshot::channel::<std::result::Result<Value, ErrorPayload>>();
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel::<std::result::Result<Value, Box<ErrorPayload>>>();
         let inner = Arc::clone(&self.inner);
         let handle = bridge(async move {
             let notified = inner.teardown.notified();
@@ -513,19 +512,19 @@ impl PrimeDaemonClient {
             tokio::pin!(fut);
             // Deterministic pre-poll barrier (see `request`).
             if let Some(cause) = inner.teardown_cause() {
-                let _ = result_tx.send(Err(not_sent_cause(Some(cause))));
+                let _ = result_tx.send(Err(Box::new(not_sent_cause(Some(cause)))));
                 return;
             }
             // Biased with the core future first (see `request`).
             let outcome = tokio::select! {
                 biased;
-                data = &mut fut => data.map_err(|error| classify(error, None)),
+                data = &mut fut => data.map_err(|error| Box::new(classify(error, None))),
                 _ = &mut notified => {
                     let cause = inner.teardown_cause().unwrap_or("closed");
-                    Err(uncertain(
+                    Err(Box::new(uncertain(
                         "the connection was torn down before the response arrived".to_string(),
                         Some(cause),
-                    ))
+                    )))
                 }
             };
             let _ = result_tx.send(outcome);
@@ -534,7 +533,7 @@ impl PrimeDaemonClient {
         result_rx
             .await
             .map_err(|_| napi_error(transport("the request task failed".to_string())))?
-            .map_err(napi_error)
+            .map_err(|payload| napi_error(*payload))
     }
 
     #[napi]
