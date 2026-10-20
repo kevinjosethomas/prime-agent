@@ -28,5 +28,6 @@
     "scripts",
     "dist",
     "README.md"
-  ]
+  ],
+  "types": "dist/src/index.d.ts"
 }

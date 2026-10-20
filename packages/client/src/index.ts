@@ -8,10 +8,10 @@
 import { decodeError, NotSentError, OverflowError, RejectedError, TransportError, UncertainError } from './errors.js';
 import { loadAddon } from './loader.js';
 // Generated wire types ONLY (the client contract package, PR3a): no
-// hand-maintained TS wire mirror lives in this wrapper. Type-only SOURCE
-// reference to the generated surface (erased at runtime; the package's
-// dist ships validators, not declarations).
-import type { DaemonCommand, DaemonResponse } from '../../client-contract/src/index.js';
+// hand-maintained TS wire mirror lives in this wrapper. Type-only import
+// of the contract package (file: dependency; declarations from its own
+// build), erased at runtime.
+import type { DaemonCommand, DaemonResponse } from 'prime-agent-client-contract';
 
 interface ConnectOptions {
   /** Bounded frame-queue capacity in frames (default 1024). */
