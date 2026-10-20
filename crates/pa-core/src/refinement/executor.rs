@@ -364,7 +364,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             *plan_systems.lock().unwrap(),
-            vec![super::super::planner::REFINEMENT_PLAN_SYSTEM_PROMPT]
+            vec![super::super::planner::REFINEMENT_SYSTEM_PROMPT]
         );
     }
 
