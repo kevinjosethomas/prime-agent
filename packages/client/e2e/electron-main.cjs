@@ -53,12 +53,19 @@ async function main() {
     // Uncertain-cause-overflow, post-mark -> NotSent-cause-overflow; the
     // close is AWAITED and the flood mock's EOF observed before stop.
     const floodPath = tmpSocket('electron-overflow');
-    const flood = await startMockReporting(floodPath, 'flood');
+    const flood = await startMockReporting(floodPath, 'flood-trigger');
     mark('flood-mock-up');
     const flooded = await DaemonConnection.connect(floodPath, { frameBuffer: 2 });
     mark('flood-connected');
     const preMarkRequest = flooded
-      .request({ type: 'get_connection_state', activeSessionId: 'wire' }, 60_000)
+      .request(
+        {
+          type: 'get_connection_state',
+          activeSessionId: 'wire',
+          floodTrigger: true,
+        },
+        60_000,
+      )
       .then(
         () => {
           throw new Error('the pre-mark request should have torn down');
