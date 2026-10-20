@@ -10,6 +10,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /** The platform-qualified artifact name this host must load. */
@@ -27,6 +28,8 @@ interface ProvenanceEntry {
 interface ProvenanceManifest {
   artifacts: Record<string, ProvenanceEntry>;
 }
+
+const require = createRequire(import.meta.url);
 
 function packageRoot(): string {
   return join(dirname(fileURLToPath(import.meta.url)), '..');
