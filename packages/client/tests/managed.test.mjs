@@ -227,9 +227,22 @@ test('a connect failure surfaces the structural error code', async () => {
 
 test('a dead socket surfaces connection_refused', async () => {
   const socketPath = tmpSocket('managed-dead-socket');
-  // A plain FILE at the socket path: nothing listens.
-  const { writeFileSync } = await import('node:fs');
-  writeFileSync(socketPath, '');
+  // A REAL bound-then-abandoned socket: the binder exits WITHOUT close
+  // (close unlinks the file — observed not_found on macOS, darwin-diag at
+  // 7aa19bd56), leaving a socket file nothing listens on. The kernel
+  // refuses on both Linux and macOS; a plain FILE is platform-divergent
+  // (Linux ECONNREFUSED, macOS ENOTSOCK → 'uncategorized').
+  const { spawn } = await import('node:child_process');
+  const binder = spawn(
+    process.execPath,
+    ['-e', "const s = require('node:net').createServer(); s.listen(process.argv[1], () => process.exit(0));", socketPath],
+    { stdio: 'ignore' },
+  );
+  const bound = await new Promise((resolve, reject) => {
+    binder.on('exit', resolve);
+    binder.on('error', reject);
+  });
+  assert.equal(bound, 0);
   const session = await ManagedDaemonSession.start({ socketPath, ...OPTIONS });
   try {
     const status = await untilEvent(
