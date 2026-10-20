@@ -59,7 +59,7 @@ jobs:
       - name: Build the addon (release, locked)
         run: cargo build --release --locked -p pa-client-node
         working-directory: crates/pa-client-node
-      - name: Build the contract package (client's file: dependency)
+      - name: "Build the contract package (the client's file: dependency)"
         run: |
           npm ci --no-audit --no-fund
           npm run build:validators
