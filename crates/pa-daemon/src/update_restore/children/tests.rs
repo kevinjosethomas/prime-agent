@@ -102,6 +102,13 @@ fn restore_child_busy_or_queued_completion_never_discards_work() {
         assert!(prepare_roster(&mut roster).is_empty());
         assert_eq!(roster, before);
     }
+    let mut queued = original.clone();
+    queued.sessions[0].queue.next_turn.push(serde_json::from_value(json!({
+        "customType":"agent_message", "content":"keep queued input", "display":false, "timestamp":42
+    })).unwrap());
+    let expected = queued.clone();
+    assert!(prepare_roster(&mut queued).is_empty());
+    assert_eq!(queued, expected);
     let mut roster = original.clone();
     roster.sessions[0].should_resume = true;
     let before = roster.clone();
@@ -201,6 +208,19 @@ fn restore_child_missing_ambiguous_deleted_and_conflicting_parents_fail_closed()
 }
 
 #[test]
+fn restore_child_conflicting_top_level_claims_do_not_override_verified_identity() {
+    let (_dir, roster, edge) = fixture();
+    let row = &roster.sessions[0];
+    for (key, value) in [("rlmChildId", json!("other-child")), ("rlmDepth", json!(3))] {
+        let mut payload = row.runtime_config["create"].clone();
+        payload[key] = value;
+        let expected = payload.clone();
+        assert!(hydrate_create(&mut payload, row, std::slice::from_ref(&edge)).is_err());
+        assert_eq!(payload, expected);
+    }
+}
+
+#[test]
 fn restore_child_nested_parent_can_stay_dormant_while_its_child_recovers() {
     let (dir, mut roster, mut edge) = fixture();
     let mut row = roster.sessions[0].clone();
@@ -229,4 +249,44 @@ fn restore_child_nested_parent_can_stay_dormant_while_its_child_recovers() {
     roster.workers[0].sessions.push(row.session_id.clone());
     prepare_roster(&mut roster);
     assert_eq!(roster.sessions, vec![row]);
+}
+
+#[tokio::test]
+async fn restore_child_passive_rows_never_create_workers_or_duplicate_continuations() {
+    let (dir, mut roster, edge) = fixture();
+    prepare_roster(&mut roster);
+    let supervisor = std::sync::Arc::new(
+        crate::supervisor::Supervisor::new(crate::supervisor::SupervisorOptions {
+            socket_path: dir.path().join("daemon.sock"),
+            agent_dir: dir.path().join("agent"),
+        })
+        .unwrap(),
+    );
+    let display = Path::new(&edge.child)
+        .parent()
+        .unwrap()
+        .join("rlm-subagent.json");
+    let before = std::fs::read(&display).unwrap();
+    for _ in 0..2 {
+        supervisor.restore.begin(Some(&roster));
+        crate::update_restore::restore_pass(
+            &supervisor,
+            tokio::spawn(async {}),
+            Some(roster.clone()),
+        )
+        .await;
+        let status = supervisor.restore_status_body();
+        assert_eq!(
+            status["counts"],
+            json!({"total":0,"restored":0,"resumed":0,"failed":0})
+        );
+        assert_eq!(status["failures"], json!([]));
+        assert_eq!(status["complete"], json!(true));
+        assert!(supervisor
+            .registry
+            .find_by_session_file(&edge.child)
+            .await
+            .is_none());
+        assert_eq!(std::fs::read(&display).unwrap(), before);
+    }
 }

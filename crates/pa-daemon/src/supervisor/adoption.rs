@@ -843,3 +843,6 @@ impl Supervisor {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod restore_tests;
