@@ -2257,6 +2257,10 @@ mod tests {
         let socket = dir.path().join("p4.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         tokio::spawn(async move {
+            // Both greeted connections STAY OPEN (their streams held for
+            // the task's life) — a greeting that instantly drops its
+            // stream would fake a loss.
+            let mut held = Vec::new();
             for _ in 0..2 {
                 let (stream, _) = listener.accept().await.expect("accept");
                 let mut writer = stream;
@@ -2268,6 +2272,7 @@ mod tests {
                     .write_all(format!("{hello}\n").as_bytes())
                     .await
                     .unwrap();
+                held.push(writer);
             }
             std::future::pending::<()>().await;
         });
