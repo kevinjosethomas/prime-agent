@@ -1,6 +1,6 @@
 use super::*;
 use serde_json::json;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 
 /// Minimal scripted supervisor used by client tests: hello on connect,
@@ -2298,4 +2298,226 @@ async fn dropped_mid_flight_upgrade_leaves_no_residual_tasks() {
         .expect("tasks join after shutdown");
     assert_eq!(drained, 2, "exactly the supervisor pair — zero residual");
     let _ = supervisor.await;
+}
+
+#[tokio::test]
+async fn a_cancelled_connect_aborts_its_spawned_tasks() {
+    // The handshake guard's proof: the reader and writer tasks are spawned
+    // BEFORE the hello await; cancelling the connect future there drops
+    // their handles — the guard ABORTS both, and BOTH socket halves close.
+    // The mock observes the write half's EOF (its read) AND the read
+    // half's closure (its write erroring).
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let write_failed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let read_ended = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let failed = std::sync::Arc::clone(&write_failed);
+    let ended = std::sync::Arc::clone(&read_ended);
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let (mut reader, mut writer) = stream.into_split();
+        let mut chunk = [0u8; 64];
+        // The write half closes first (the writer pump aborts): EOF here.
+        match reader.read(&mut chunk).await {
+            Ok(0) | Err(_) => {
+                ended.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            Ok(_) => {}
+        }
+        // The read half closes too (the reader task aborts): this write
+        // must error — a live reader would just buffer it.
+        writer
+            .write_all(b"x")
+            .await
+            .expect_err("the client's read half is gone");
+        failed.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+
+    // Drive the connect into its hello wait, then cancel the future: the
+    // guard must abort the spawned tasks (the pre-fix code detached them,
+    // and this write below would have buffered forever).
+    let mut connect = Box::pin(DaemonClient::connect_with_options(
+        &socket,
+        DaemonClientOptions::default(),
+    ));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), connect.as_mut())
+            .await
+            .is_err(),
+        "the never-greeting daemon keeps the connect pending"
+    );
+    // Drop the OWNED connect future NOW (a select arm drops it in the
+    // driver; a pinned binding would keep the socket halves alive here).
+    drop(connect);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !(read_ended.load(std::sync::atomic::Ordering::SeqCst)
+            && write_failed.load(std::sync::atomic::Ordering::SeqCst))
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("both halves closed: reader AND writer were aborted");
+}
+
+#[tokio::test]
+async fn an_oversized_hello_line_fails_under_the_cap() {
+    // Item 1: the cap covers EVERY decoded line — a COMPLETE hello line
+    // (newline included in the read) beyond the cap must refuse the connect.
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let mut writer = stream;
+        let hello = json!({
+            "type": "daemon_hello",
+            "protocol": { "name": "prime-agent.daemon", "version": 7 },
+            "padding": "x".repeat(700),
+        });
+        writer
+            .write_all(format!("{hello}\n").as_bytes())
+            .await
+            .unwrap();
+        std::future::pending::<()>().await;
+    });
+    let result = DaemonClient::connect_with_options(
+        &socket,
+        DaemonClientOptions {
+            max_frame_bytes: Some(512),
+            ..DaemonClientOptions::default()
+        },
+    )
+    .await;
+    let Err(error) = result else {
+        panic!("the oversized hello line must be refused")
+    };
+    assert!(
+        error.to_string().contains("exceeded the limit"),
+        "the oversized hello line is refused: {error}"
+    );
+}
+
+#[tokio::test]
+async fn an_oversized_pre_hello_frame_fails_under_the_cap() {
+    // Item 1: a complete pre-hello event line beyond the cap also refuses.
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let mut writer = stream;
+        let early = json!({
+            "type": "session_event",
+            "activeSessionId": "s1",
+            "event": { "type": "delta", "padding": "x".repeat(700) },
+        });
+        writer
+            .write_all(format!("{early}\n").as_bytes())
+            .await
+            .unwrap();
+        std::future::pending::<()>().await;
+    });
+    let result = DaemonClient::connect_with_options(
+        &socket,
+        DaemonClientOptions {
+            max_frame_bytes: Some(512),
+            ..DaemonClientOptions::default()
+        },
+    )
+    .await;
+    let Err(error) = result else {
+        panic!("the oversized pre-hello line must be refused")
+    };
+    assert!(
+        error.to_string().contains("exceeded the limit"),
+        "the oversized pre-hello line is refused: {error}"
+    );
+}
+
+#[tokio::test]
+async fn an_invalid_utf8_seed_line_terminates_the_reader() {
+    // Item 2: a coalesced post-hello seed containing an invalid-UTF-8 line
+    // tears the transport down — the in-flight request resolves as the
+    // uncertain sweep class and the death watch flips, asserted BEFORE any
+    // further frame delivers.
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let mut writer = stream;
+        let hello = json!({
+            "type": "daemon_hello",
+            "protocol": { "name": "prime-agent.daemon", "version": 7 },
+        });
+        writer
+            .write_all(format!("{hello}\n").as_bytes())
+            .await
+            .unwrap();
+        // The invalid-UTF-8 seed line, coalesced with the hello.
+        writer.write_all(&[0xff, 0xfe, b'\n']).await.unwrap();
+        std::future::pending::<()>().await;
+    });
+    let (client, _events) = DaemonClient::connect(&socket).await.unwrap();
+    let request = client.request_with_timeout(
+        DaemonCommand::List {
+            id: None,
+            all: None,
+            cwd: None,
+            session_dir: None,
+            include_client_owned: None,
+            rest: Map::default(),
+        },
+        30_000,
+    );
+    let error = tokio::time::timeout(Duration::from_secs(5), request)
+        .await
+        .expect("the seed failure resolves the pending request")
+        .unwrap_err();
+    assert!(is_command_result_uncertain(&error), "unexpected: {error}");
+    let mut dead = client.reader_dead();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !*dead.borrow_and_update() {
+            dead.changed().await.expect("the watch lives");
+        }
+    })
+    .await
+    .expect("the death watch flipped");
+}
+
+#[tokio::test]
+async fn an_eof_unterminated_valid_hello_resolves_the_handshake() {
+    // Item 3: base parity — a COMPLETE hello WITHOUT its trailing newline
+    // at EOF dispatches once and the handshake RESOLVES (the connect
+    // succeeds; the EOF then becomes the ordinary first loss).
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let mut writer = stream;
+        let hello = json!({
+            "type": "daemon_hello",
+            "protocol": { "name": "prime-agent.daemon", "version": 7 },
+        });
+        // No trailing newline: EOF right after the hello bytes.
+        writer
+            .write_all(serde_json::to_string(&hello).unwrap().as_bytes())
+            .await
+            .unwrap();
+        drop(writer);
+    });
+    let (client, _events) = DaemonClient::connect(&socket).await.unwrap();
+    assert_eq!(client.protocol().version, 7);
+    // The EOF becomes the ordinary first loss: the death watch flips.
+    let mut dead = client.reader_dead();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !*dead.borrow_and_update() {
+            dead.changed().await.expect("the watch lives");
+        }
+    })
+    .await
+    .expect("the EOF-after-hello-accept became the ordinary first loss");
 }

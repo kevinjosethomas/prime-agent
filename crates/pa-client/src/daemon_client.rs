@@ -27,7 +27,8 @@ mod errors;
 #[cfg(all(test, unix))]
 mod tests;
 
-use errors::{command_type_debug, response_data_or_error, DirectRequestError};
+pub(crate) use errors::response_data_or_error;
+use errors::{command_type_debug, DirectRequestError};
 pub use errors::{
     is_command_not_sent, is_command_result_uncertain, is_daemon_rejection, is_daemon_timeout,
     is_daemon_unreachable, is_kernel_not_running, is_update_restarting_rejection,
@@ -39,7 +40,7 @@ pub use errors::{
 /// and the opt-in wire bounds. Defaults preserve the existing
 /// [`DaemonClient::connect`] behavior exactly — no tap, unbounded frames,
 /// unbounded pending requests.
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct DaemonClientOptions {
     /// The raw outbound tap: a separate channel carrying every decoded
     /// application frame after the `daemon_hello` handshake — supervisor
@@ -556,8 +557,9 @@ pub struct DaemonClient {
     /// flips the watch for every clone without waiting for the reader's own
     /// exit.
     reader_dead_tx: tokio::sync::watch::Sender<bool>,
-    /// The connection's tasks (see [`TaskSet`]).
-    tasks: Arc<TaskSet>,
+    /// The connection's tasks (see [`TaskSet`]); crate-visible for the
+    /// lifecycle tests' real-join barrier (no public surface).
+    pub(crate) tasks: Arc<TaskSet>,
     /// The transport options this connection was established with (the
     /// raw outbound tap rides the direct reader pumps on upgrade).
     options: DaemonClientOptions,
@@ -619,15 +621,157 @@ impl DaemonClient {
         // never observe a supervisor socket loss.
         let (reader_dead_tx, reader_dead_rx) = tokio::sync::watch::channel(false);
         let client_dead_tx = reader_dead_tx.clone();
-        let tasks = Arc::new(TaskSet::default());
-        let (hello_tx, hello_rx) = oneshot::channel::<Value>();
         let shared = Arc::new(Shared {
             pending: Mutex::new(HashMap::new()),
             max_pending: options.max_pending,
         });
         let reader_shared = Arc::clone(&shared);
+        let tasks = Arc::new(TaskSet::default());
+        let raw_tap = options.raw_tap.clone();
+        let max_frame_bytes = options.max_frame_bytes;
 
-        // Writer task: serializes one line per write.
+        // The INLINE handshake: NOTHING spawns until a valid hello — a
+        // cancelled connect future (a select arm, a dropped future) closes
+        // both socket halves with the future itself, so no transport task can
+        // ever be orphaned. The SAME BufReader and partial spill ownership
+        // continue into the reader task below (any coalesced post-hello
+        // buffered bytes ride along — no frame lost, no read-ahead dropped).
+        let (reader, partial, hello) = {
+            let mut reader = BufReader::with_capacity(64 * 1024, reader_half);
+            let mut partial: Vec<u8> = Vec::new();
+            let deadline = tokio::time::sleep(Duration::from_millis(HELLO_TIMEOUT_MS));
+            tokio::pin!(deadline);
+            let hello = {
+                loop {
+                    // The deadline is checked inside the buffered scan too: a
+                    // pre-hello flood already in the socket cannot starve it.
+                    if deadline.is_elapsed() {
+                        return Err(anyhow!(
+                            "Timed out after {HELLO_TIMEOUT_MS}ms waiting for the Prime Agent daemon handshake. Socket: {}.",
+                            socket_path.display()
+                        ));
+                    }
+                    if let Some(newline) = partial.iter().position(|byte| *byte == b'\n') {
+                        // The cap covers EVERY decoded line — the drained
+                        // line without its newline, spill included (the
+                        // base reader's accounting, verbatim).
+                        if max_frame_bytes.is_some_and(|cap| newline > cap) {
+                            return Err(anyhow!(
+                                "a frame exceeded the limit before the Prime Agent daemon handshake. Socket: {}.",
+                                socket_path.display()
+                            ));
+                        }
+                        let line: Vec<u8> = partial.drain(..=newline).collect();
+                        // The legacy teardown class: invalid UTF-8 before the
+                        // handshake failed the connect, too.
+                        let Ok(text) = std::str::from_utf8(&line) else {
+                            return Err(anyhow!(
+                                "the daemon sent an invalid frame before the handshake. Socket: {}.",
+                                socket_path.display()
+                            ));
+                        };
+                        let Ok(value) = serde_json::from_str::<Value>(text.trim()) else {
+                            continue;
+                        };
+                        if value.get("type").and_then(Value::as_str) == Some("daemon_hello") {
+                            break Some(value);
+                        }
+                        // The legacy pre-hello behavior, verbatim: a known frame
+                        // dispatches to the typed channel only — the tap stays
+                        // post-handshake-only, and unknown frames stay silent.
+                        if let Some(event) = client_event_from_value(&value) {
+                            let _ = event_tx.send(event);
+                        }
+                        // More buffered lines may hold the hello: re-scan the
+                        // remaining partial BEFORE refilling from the socket.
+                        continue;
+                    } else if max_frame_bytes.is_some_and(|cap| partial.len() > cap) {
+                        return Err(anyhow!(
+                            "a frame exceeded the limit before the Prime Agent daemon handshake. Socket: {}.",
+                            socket_path.display()
+                        ));
+                    }
+                    let resolved = tokio::select! {
+                        // The socket closed before the hello: the BASE's
+                        // last-line-at-EOF semantics — the residual
+                        // unterminated line dispatches ONCE; a VALID hello
+                        // resolves the handshake (the connect SUCCEEDS, and
+                        // the EOF becomes the ordinary first loss); anything
+                        // else takes the closed-before-handshake error.
+                        resolved = reader.fill_buf() => resolved,
+                        () = &mut deadline => {
+                            return Err(anyhow!(
+                                "Timed out after {HELLO_TIMEOUT_MS}ms waiting for the Prime Agent daemon handshake. Socket: {}.",
+                                socket_path.display()
+                            ));
+                        }
+                    };
+                    let buffer = match resolved {
+                        Ok([]) | Err(_) => {
+                            if !partial.is_empty() {
+                                let line: Vec<u8> = std::mem::take(&mut partial);
+                                if max_frame_bytes.is_some_and(|cap| line.len() > cap) {
+                                    return Err(anyhow!(
+                                        "a frame exceeded the limit before the Prime Agent daemon handshake. Socket: {}.",
+                                        socket_path.display()
+                                    ));
+                                }
+                                if let Ok(text) = std::str::from_utf8(&line) {
+                                    if let Ok(value) = serde_json::from_str::<Value>(text.trim()) {
+                                        if value.get("type").and_then(Value::as_str)
+                                            == Some("daemon_hello")
+                                        {
+                                            break Some(value);
+                                        }
+                                        if let Some(event) = client_event_from_value(&value) {
+                                            let _ = event_tx.send(event);
+                                        }
+                                    }
+                                }
+                            }
+                            return Err(anyhow!(
+                                "the daemon connection closed before the handshake. Socket: {}.",
+                                socket_path.display()
+                            ));
+                        }
+                        Ok(buffer) => buffer,
+                    };
+                    let read = buffer.len();
+                    partial.extend_from_slice(buffer);
+                    reader.consume(read);
+                }
+            };
+            (reader, partial, hello)
+        };
+
+        let Some(hello) = hello else {
+            return Err(anyhow!(
+                "the daemon connection closed before the handshake. Socket: {}.",
+                socket_path.display()
+            ));
+        };
+        let protocol = hello
+            .get("protocol")
+            .cloned()
+            .and_then(|p| serde_json::from_value::<DaemonProtocolInfo>(p).ok())
+            .unwrap_or(DaemonProtocolInfo {
+                name: DAEMON_PROTOCOL_NAME.to_string(),
+                version: DAEMON_PROTOCOL_VERSION,
+            });
+        if protocol.name != DAEMON_PROTOCOL_NAME {
+            return Err(anyhow!(
+                "the daemon on {} speaks an unknown protocol \"{}\"",
+                socket_path.display(),
+                protocol.name
+            ));
+        }
+        // Envelope protocol version: the shared minimum.
+        let version = protocol.version.min(DAEMON_PROTOCOL_VERSION);
+
+        // The SYNC TAIL: no await between these spawns and the registration —
+        // a cancellation cannot land here (the structure PR7's review
+        // verified for connect_direct). The reader owns the SAME BufReader
+        // and partial spill the handshake used.
         let writer_task = tokio::spawn(async move {
             let mut writer = writer_half;
             while let Some(line) = line_rx.recv().await {
@@ -639,25 +783,18 @@ impl DaemonClient {
             }
             let _ = writer.shutdown().await;
         });
-
-        // Reader task: dispatch every inbound line; the handle is kept so
-        // handshake-failure paths can abort it. The line assembly is
-        // byte-accurate so the opt-in frame cap can be enforced on the
-        // accumulated bytes; the default `None` keeps the unbounded reader
-        // this crate has always shipped.
-        let raw_tap = options.raw_tap.clone();
-        let max_frame_bytes = options.max_frame_bytes;
         let reader_task = tokio::spawn(async move {
-            let mut reader = BufReader::with_capacity(64 * 1024, reader_half);
-            // The spill of a line longer than the buffer: filled only when
-            // no newline sits in the buffered bytes, so every byte is scanned
-            // once and copied at most once beyond its buffer residency.
-            let mut partial: Vec<u8> = Vec::new();
-            let mut hello_tx = Some(hello_tx);
+            let mut reader = reader;
+            let mut partial = partial;
+            let event_tx = event_tx;
+            let raw_tap = raw_tap;
+            let max_frame_bytes = max_frame_bytes;
+            let reader_shared = reader_shared;
+            let reader_dead_tx = reader_dead_tx;
             // One decoded line: `false` only on invalid UTF-8, the teardown
             // `read_line` always produced. A malformed JSON line is skipped,
             // exactly like before.
-            let mut dispatch = |line: &[u8]| -> bool {
+            let dispatch = |line: &[u8]| -> bool {
                 let Ok(text) = std::str::from_utf8(line) else {
                     return false;
                 };
@@ -668,127 +805,93 @@ impl DaemonClient {
                     .get("type")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                match frame_type {
-                    "daemon_hello" => {
-                        if let Some(tx) = hello_tx.take() {
-                            let _ = tx.send(value);
-                        }
+                if frame_type == "response" {
+                    if let Ok(response) = serde_json::from_value::<DaemonResponse>(value) {
+                        let id = response.id.clone().unwrap_or_default();
+                        reader_shared.resolve(&id, response);
                     }
-                    "response" => {
-                        if let Ok(response) = serde_json::from_value::<DaemonResponse>(value) {
-                            let id = response.id.clone().unwrap_or_default();
-                            reader_shared.resolve(&id, response);
-                        }
+                } else {
+                    // The lossless tap first: every decoded application
+                    // frame AFTER the handshake, verbatim and in wire
+                    // order, before any typed conversion.
+                    if let Some(tap) = raw_tap.as_ref() {
+                        let _ = tap.send(value.clone());
                     }
-                    _ => {
-                        // The lossless tap first: every decoded application
-                        // frame AFTER the handshake, verbatim and in wire
-                        // order, before any typed conversion. A frame before
-                        // the handshake keeps its legacy typed-only behavior,
-                        // so the tap's ordering guarantee holds without
-                        // touching the default event stream.
-                        if hello_tx.is_none() {
-                            if let Some(tap) = raw_tap.as_ref() {
-                                let _ = tap.send(value.clone());
-                            }
-                        }
-                        if let Some(event) = client_event_from_value(&value) {
-                            let _ = event_tx.send(event);
-                        }
+                    if let Some(event) = client_event_from_value(&value) {
+                        let _ = event_tx.send(event);
                     }
                 }
                 true
             };
-            loop {
-                let buffer = match reader.fill_buf().await {
-                    // The socket closed: a trailing unterminated line still
-                    // dispatches once, like `read_line`'s last line at EOF,
-                    // before the teardown.
-                    Ok([]) => {
-                        if !partial.is_empty() {
-                            let line = std::mem::take(&mut partial);
-                            dispatch(&line);
-                        }
-                        break;
-                    }
-                    Ok(buffer) => buffer,
-                    Err(_) => break,
-                };
-                if let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
-                    // The cap covers the line without its newline, like the
-                    // bounded readers' byte accounting — the spill's already
-                    // accumulated bytes count toward it too, so a split line
-                    // whose head passed the cap alone still tears down.
-                    if max_frame_bytes.is_some_and(|cap| partial.len() + newline > cap) {
-                        break;
-                    }
-                    let line: Vec<u8> = if partial.is_empty() {
-                        buffer[..newline].to_vec()
-                    } else {
-                        partial.extend_from_slice(&buffer[..newline]);
-                        std::mem::take(&mut partial)
-                    };
-                    reader.consume(newline + 1);
-                    if !dispatch(&line) {
-                        break;
-                    }
-                } else {
-                    // No newline in the buffered bytes: the cap also
-                    // bounds the partial frame accumulating across
-                    // fills.
-                    if max_frame_bytes.is_some_and(|cap| partial.len() + buffer.len() > cap) {
-                        break;
-                    }
-                    partial.extend_from_slice(buffer);
-                    let read = buffer.len();
-                    reader.consume(read);
+            // The handshake's coalesced read-ahead rides in `partial`: every
+            // complete seeded line dispatches BEFORE the first socket fill —
+            // nothing buffered at handover is ever stranded. A failure class
+            // here (cap, invalid UTF-8) TERMINATES the whole task — the
+            // single exit runs the epilogue below, never the main loop.
+            let mut seed_fatal = false;
+            while let Some(newline) = partial.iter().position(|byte| *byte == b'\n') {
+                if max_frame_bytes.is_some_and(|cap| newline > cap) {
+                    seed_fatal = true;
+                    break;
+                }
+                let line: Vec<u8> = partial.drain(..=newline).collect();
+                if !dispatch(&line) {
+                    seed_fatal = true;
+                    break;
                 }
             }
-            // The supervisor socket closed: pending requests fail now and the death watch wakes the
-            // reconnect driver.
+            if !seed_fatal {
+                loop {
+                    let buffer = match reader.fill_buf().await {
+                        // The socket closed: a trailing unterminated line still
+                        // dispatches once, like `read_line`'s last line at EOF,
+                        // before the teardown.
+                        Ok([]) => {
+                            if !partial.is_empty() {
+                                let line = std::mem::take(&mut partial);
+                                dispatch(&line);
+                            }
+                            break;
+                        }
+                        Ok(buffer) => buffer,
+                        Err(_) => break,
+                    };
+                    if let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
+                        // The cap covers the line without its newline, like the
+                        // bounded readers' byte accounting — the spill's already
+                        // accumulated bytes count toward it too, so a split line
+                        // whose head passed the cap alone still tears down.
+                        if max_frame_bytes.is_some_and(|cap| partial.len() + newline > cap) {
+                            break;
+                        }
+                        let line: Vec<u8> = if partial.is_empty() {
+                            buffer[..newline].to_vec()
+                        } else {
+                            partial.extend_from_slice(&buffer[..newline]);
+                            std::mem::take(&mut partial)
+                        };
+                        let consumed = newline + 1;
+                        reader.consume(consumed);
+                        if !dispatch(&line) {
+                            break;
+                        }
+                    } else {
+                        // No newline in the buffered bytes: the cap also bounds
+                        // the partial frame accumulating across fills.
+                        if max_frame_bytes.is_some_and(|cap| partial.len() + buffer.len() > cap) {
+                            break;
+                        }
+                        partial.extend_from_slice(buffer);
+                        let read = buffer.len();
+                        reader.consume(read);
+                    }
+                }
+            }
+            // The supervisor socket closed: pending requests fail now and the
+            // death watch wakes the reconnect driver.
             let _ = reader_dead_tx.send(true);
             reader_shared.fail_pending("daemon_", "the daemon connection closed");
         });
-
-        // Hello handshake: the supervisor sends daemon_hello immediately on
-        // connect (TS `waitForHello`).
-        let hello = tokio::time::timeout(Duration::from_millis(HELLO_TIMEOUT_MS), hello_rx)
-            .await
-            .map_err(|_| {
-                reader_task.abort();
-                writer_task.abort();
-                anyhow!(
-                    "Timed out after {HELLO_TIMEOUT_MS}ms waiting for the Prime Agent daemon handshake. Socket: {}.",
-                    socket_path.display()
-                )
-            })?
-            .map_err(|_| {
-                reader_task.abort();
-                writer_task.abort();
-                anyhow!("the daemon connection closed before the handshake")
-            })?;
-        let protocol = hello
-            .get("protocol")
-            .cloned()
-            .and_then(|p| serde_json::from_value::<DaemonProtocolInfo>(p).ok())
-            .unwrap_or(DaemonProtocolInfo {
-                name: DAEMON_PROTOCOL_NAME.to_string(),
-                version: DAEMON_PROTOCOL_VERSION,
-            });
-        if protocol.name != DAEMON_PROTOCOL_NAME {
-            reader_task.abort();
-            writer_task.abort();
-            return Err(anyhow!(
-                "the daemon on {} speaks an unknown protocol \"{}\"",
-                socket_path.display(),
-                protocol.name
-            ));
-        }
-        // Envelope protocol version: the shared minimum.
-        let version = protocol.version.min(DAEMON_PROTOCOL_VERSION);
-
-        // The handshake succeeded: the reader and writer tasks now belong to
-        // the connection's shared task set (shutdown aborts, join awaits).
         tasks.register_connection(reader_task, writer_task);
         Ok((
             DaemonClient {
