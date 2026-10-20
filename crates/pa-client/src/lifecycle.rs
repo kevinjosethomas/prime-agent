@@ -381,8 +381,8 @@ impl DaemonClientSession {
                             .to_string(),
                     );
                     let result = self.state.driver.lock().await.memo.take();
-                    return match result {
-                        Some(result) => Err(anyhow::Error::new(result)),
+                    return match result.flatten() {
+                        Some(join_error) => Err(anyhow::Error::new(join_error)),
                         // Never memoized and never started: the honest answer
                         // for a session with no driver to fail.
                         None => Ok(()),
