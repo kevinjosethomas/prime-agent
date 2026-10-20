@@ -559,6 +559,10 @@ async fn driver_run(
                     .await
                     {
                         ServiceEnd::Loss(armed) => {
+                            // The prior connection is dead and its tasks
+                            // joined in the service loop: clear the driver's
+                            // clone so the loop reconnects.
+                            client = None;
                             kind = armed;
                             let window = config.reconnect.window_for(kind);
                             deadline = window
@@ -1117,65 +1121,193 @@ mod tests {
 
     #[tokio::test]
     async fn frames_flow_while_a_restore_is_held_and_requests_never_wait() {
+        // Two scripted connections. The first adopts an attach cursor (g/4)
+        // and is dropped on signal; the second holds the RESTORE attach while
+        // streaming an event — the frame must flow, and a user request must
+        // complete, all while the restore is held; the release completes it.
         let dir = tempfile::TempDir::new().unwrap();
+        let socket = dir.path().join("d.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let drop_first = std::sync::Arc::new(tokio::sync::Notify::new());
+        let release_second = std::sync::Arc::new(tokio::sync::Notify::new());
         let event = json!({
             "type": "session_event",
             "activeSessionId": "s1",
             "event": { "type": "delta" },
             "meta": { "cursor": { "generation": "g", "sequence": 5 } },
         });
-        let (supervisor, socket, release) =
-            Supervisor::spawn(&dir, vec![event.clone()], true, false);
+        {
+            let drop_first = Arc::clone(&drop_first);
+            let release_second = Arc::clone(&release_second);
+            let event = event.clone();
+            tokio::spawn(async move {
+                // Connection 1: adopt, then drop on signal.
+                let (stream, _) = listener.accept().await.expect("accept one");
+                let (reader, mut writer) = stream.into_split();
+                let mut reader = tokio::io::BufReader::new(reader);
+                let mut line = String::new();
+                let hello = json!({
+                    "type": "daemon_hello",
+                    "protocol": { "name": "prime-agent.daemon", "version": 7 },
+                    "serverCapabilities": [],
+                });
+                writer
+                    .write_all(format!("{hello}\n").as_bytes())
+                    .await
+                    .unwrap();
+                loop {
+                    line.clear();
+                    // The scripted death of the first connection.
+                    tokio::select! {
+                        read = reader.read_line(&mut line) => {
+                            if read.unwrap_or(0) == 0 {
+                                break;
+                            }
+                        }
+                        () = drop_first.notified() => break,
+                    }
+                    let envelope: Value = serde_json::from_str(line.trim()).unwrap();
+                    let command = envelope["command"]["type"].as_str().unwrap_or_default();
+                    let data = if command == "attach" {
+                        json!({ "lastEventCursor": { "generation": "g", "sequence": 4 } })
+                    } else {
+                        json!({ "ok": true })
+                    };
+                    let response = json!({
+                        "type": "response",
+                        "id": envelope["id"],
+                        "command": command,
+                        "success": true,
+                        "data": data,
+                    });
+                    writer
+                        .write_all(format!("{response}\n").as_bytes())
+                        .await
+                        .unwrap();
+                }
+                // Connection 2: the held restore and the streamed frame.
+                let (stream, _) = listener.accept().await.expect("accept two");
+                let (reader, mut writer) = stream.into_split();
+                let mut reader = tokio::io::BufReader::new(reader);
+                let mut line = String::new();
+                writer
+                    .write_all(format!("{hello}\n").as_bytes())
+                    .await
+                    .unwrap();
+                writer
+                    .write_all(format!("{event}\n").as_bytes())
+                    .await
+                    .unwrap();
+                loop {
+                    line.clear();
+                    if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+                        break;
+                    }
+                    let envelope: Value = serde_json::from_str(line.trim()).unwrap();
+                    let command = envelope["command"]["type"].as_str().unwrap_or_default();
+                    if command == "attach" {
+                        // The held restore.
+                        release_second.notified().await;
+                    }
+                    let data = if command == "attach" {
+                        json!({ "lastEventCursor": { "generation": "g", "sequence": 6 } })
+                    } else {
+                        json!({ "ok": true })
+                    };
+                    let response = json!({
+                        "type": "response",
+                        "id": envelope["id"],
+                        "command": command,
+                        "success": true,
+                        "data": data,
+                    });
+                    writer
+                    .write_all(format!("{response}\n").as_bytes())
+                    .await
+                    .unwrap();
+                }
+            });
+        }
         let (session, mut events) = DaemonClientSession::start(config(&socket)).await.unwrap();
-        // The restore is held; the frame still streams, and a user request
-        // completes without waiting for the restore.
+        wait_connected(&mut events).await;
+        // The first connection adopts the cursor g/4 through the request
+        // path (registration + attach).
         session.register_attachment("s1", None);
-        let session_clone = session.clone();
-        let list = tokio::spawn(async move {
-            session_clone
-                .request_ok(DaemonCommand::List {
-                    id: None,
-                    all: None,
-                    cwd: None,
-                    session_dir: None,
-                    include_client_owned: None,
-                    rest: Map::new(),
-                })
-                .await
-        });
-        // Frame delivery while the restore attach is held.
-        tokio::time::timeout(Duration::from_secs(10), async {
+        session
+            .request_ok(DaemonCommand::Attach {
+                id: None,
+                active_session_id: "s1".to_string(),
+                client_id: None,
+                capabilities: None,
+                resume_cursor: None,
+                telemetry_disabled: None,
+                recovery_config: None,
+                env: None,
+                launch_env: None,
+                rest: Map::new(),
+            })
+            .await
+            .unwrap();
+        drop_first.notify_one();
+        // The reconnect's restore is HELD; the frame streams meanwhile.
+        let mut saw_begin = false;
+        let saw_frame = tokio::time::timeout(Duration::from_secs(20), async {
             loop {
                 match next_event(&mut events).await {
-                    ConnectionEvent::Frame(frame) if frame == event => return,
+                    ConnectionEvent::ReattachBegin { .. } => {
+                        saw_begin = true;
+                    }
+                    ConnectionEvent::Frame(frame) if frame == event => {
+                        assert!(saw_begin, "the begin precedes the streamed frame");
+                        return;
+                    }
                     _ => {}
                 }
             }
         })
-        .await
-        .expect("frames flow while the restore is held");
-        release.notify_one();
-        tokio::time::timeout(Duration::from_secs(10), async {
-            loop {
-                match next_event(&mut events).await {
-                    ConnectionEvent::Reattached { .. } => return,
-                    _ => {}
-                }
-            }
-        })
-        .await
-        .expect("the restore completes after release");
+        .await;
+        assert!(saw_frame.is_ok(), "the frame flowed while the restore was held");
+        // A user request completes WITHOUT waiting for the held restore.
+        let list = {
+            let session = session.clone();
+            tokio::spawn(async move {
+                session
+                    .request_ok(DaemonCommand::List {
+                        id: None,
+                        all: None,
+                        cwd: None,
+                        session_dir: None,
+                        include_client_owned: None,
+                        rest: Map::new(),
+                    })
+                    .await
+            })
+        };
         let list = tokio::time::timeout(Duration::from_secs(10), list)
             .await
             .expect("the concurrent request settled")
             .unwrap()
             .unwrap();
         assert_eq!(list["ok"], true);
+        // The release completes the restore.
+        release_second.notify_one();
+        let reattached = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match next_event(&mut events).await {
+                    ConnectionEvent::Reattached { data, .. } => {
+                        assert_eq!(data["lastEventCursor"]["sequence"], 6);
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await;
+        assert!(reattached.is_ok(), "the restore completed after release");
         session.stop().await;
-        assert!(supervisor.connected.load(Ordering::SeqCst) >= 1);
     }
 
-    #[tokio::test]
+#[tokio::test]
     async fn stop_settles_the_connection_and_concurrent_stops_all_wait() {
         let dir = tempfile::TempDir::new().unwrap();
         let (supervisor, socket, _release) =

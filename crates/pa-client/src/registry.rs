@@ -164,6 +164,9 @@ impl AttachmentRegistry {
             if !capabilities.is_empty() {
                 entry.capabilities = capabilities.to_vec();
             }
+            // The token is consumed by its adoption: a replayed response can
+            // never adopt twice.
+            entry.attempt = 0;
             let snapshot = data.get("snapshot").unwrap_or(data);
             let current = entry.cursor.clone();
             if let Some(mut cursor) = snapshot.get("lastEventCursor").and_then(parse_cursor) {
