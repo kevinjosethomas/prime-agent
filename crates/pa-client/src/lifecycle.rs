@@ -2208,7 +2208,7 @@ mod tests {
             error: None,
             error_info: None,
         };
-        session.after(Some(&new_bookkeeping), &new_response);
+        session.after(new_bookkeeping.as_ref(), &new_response);
         {
             let entries = session.state.registry.lock().unwrap().restore_entries();
             let cursor = entries[0]
