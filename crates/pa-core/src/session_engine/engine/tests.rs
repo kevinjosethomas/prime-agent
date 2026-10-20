@@ -96,7 +96,9 @@ async fn engine_runs_tool_loop_and_persists() {
 
     // The system prompt is the layered assembly: static core layer
     // first, dynamic tail after.
-    assert!(engine.system_prompt.starts_with("# prime-agent harness"));
+    assert!(engine
+        .system_prompt
+        .starts_with("You are an expert coding assistant operating inside prime-agent"));
     assert!(engine
         .system_prompt
         .contains("Recursive agent depth: 0 (root)"));
@@ -293,7 +295,7 @@ async fn oauth_creds_unlock_generic_mcp_gating_in_new_sessions() {
     let engine = create_session(config(&cwd, &agent_dir, provider.stream_fn()))
         .await
         .unwrap();
-    assert!(!engine.system_prompt.contains("# Generic MCP Connections"));
+    assert!(!engine.system_prompt.contains("Enabled MCP servers"));
 
     // The persisted credential begin_login leaves behind (the TS
     // McpCredentials shape, endpoint-bound).
@@ -322,13 +324,13 @@ async fn oauth_creds_unlock_generic_mcp_gating_in_new_sessions() {
     let engine = create_session(config(&cwd, &agent_dir, provider.stream_fn()))
         .await
         .unwrap();
-    assert!(!engine.system_prompt.contains("# Generic MCP Connections"));
+    assert!(!engine.system_prompt.contains("Enabled MCP servers"));
 
     write_credential("https://fixture.example/mcp");
     let engine = create_session(config(&cwd, &agent_dir, provider.stream_fn()))
         .await
         .unwrap();
-    assert!(engine.system_prompt.contains("# Generic MCP Connections"));
+    assert!(engine.system_prompt.contains("Enabled MCP servers"));
     assert!(engine.system_prompt.contains("`fixture-oauth`"));
 }
 

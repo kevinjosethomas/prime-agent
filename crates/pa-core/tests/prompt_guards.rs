@@ -15,7 +15,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use pa_core::prompts::layers::{CORE_LAYER, OPINIONATED_LAYER, USAGE_LAYER};
+use pa_core::prompts::layers::CORE_LAYER;
 use pa_core::prompts::model_prompts::MODEL_PROMPTS_TOML;
 use pa_core::prompts::system_prompt::{
     system_prompt_breakdown, BuildSystemPromptOptions, SegmentKind,
@@ -51,7 +51,7 @@ const DYNAMIC_ONLY_MARKERS: &[&str] = &[
     "Recursive agent depth:",
     "Current date:",
     "<available_skills>",
-    "Enabled generic MCP servers:",
+    "Enabled MCP servers",
     "# Project Context",
     "Pre-installed Python packages:",
     "You are a child agent spawned by",
@@ -59,12 +59,7 @@ const DYNAMIC_ONLY_MARKERS: &[&str] = &[
 
 #[test]
 fn static_layers_contain_no_dynamic_content() {
-    for (name, text) in [
-        ("core", CORE_LAYER),
-        ("usage", USAGE_LAYER),
-        ("opinionated", OPINIONATED_LAYER),
-        ("model-prompts", MODEL_PROMPTS_TOML),
-    ] {
+    for (name, text) in [("core", CORE_LAYER), ("model-prompts", MODEL_PROMPTS_TOML)] {
         for marker in DYNAMIC_ONLY_MARKERS {
             assert!(
                 !text.contains(marker),
@@ -103,12 +98,7 @@ fn cached_prefix_is_stable_across_sessions() {
     );
     assert_eq!(
         &first.assembled[..first.cached_prefix_len],
-        &format!(
-            "{}\n\n{}\n\n{}\n\nmodel guidance.",
-            CORE_LAYER.trim(),
-            USAGE_LAYER.trim(),
-            OPINIONATED_LAYER.trim()
-        )
+        &format!("{}\n\nmodel guidance.", CORE_LAYER.trim())
     );
 
     let first_tail = &first.assembled[first.cached_prefix_len..];
@@ -119,11 +109,13 @@ fn cached_prefix_is_stable_across_sessions() {
     assert!(first_tail.contains("Pre-installed Python packages:"));
     let second_tail = &second.assembled[second.cached_prefix_len..];
     assert!(second_tail.contains("/completely/different"));
-    assert!(second_tail.contains("Enabled generic MCP servers: `github`, `slack`."));
+    assert!(
+        second_tail.contains("Enabled MCP servers (use them through `mcp`): `github`, `slack`.")
+    );
     assert!(second_tail.contains("Recursive agent depth: 3 (not root)"));
     assert!(second_tail.contains("You are a child agent spawned by orchestrator."));
     assert!(second_tail.contains("# Project Context"));
-    assert!(second_tail.ends_with("And one more thing."));
+    assert!(second_tail.starts_with("\n\nAnd one more thing."));
 
     for segment in &first.segments {
         let inside = first
@@ -164,14 +156,13 @@ fn prompt_tokens_for_host_request(request: &str) -> Vec<String> {
     match request {
         "rlm.run" | "rlm.create_session" => vec!["agents.spawn"],
         "rlm.list_subagents" => vec!["agents.list"],
-        "rlm.collect" => vec!["a.wait"],
-        "rlm.delete_subagent" => vec!["a.stop"],
-        "rlm.rename" => vec!["agents.rename", "a.rename"],
+        "rlm.collect" => vec!["agent.wait"],
+        "rlm.delete_subagent" => vec!["agent.stop"],
+        "rlm.rename" => vec!["agents.rename", "agent.rename"],
         "rlm.progress.note" => vec!["agents.note"],
-        "agent_message.send" => vec!["a.send"],
+        "agent_message.send" => vec!["agent.send"],
         "agent_observe.list" => vec!["agents.parent", "agents.siblings"],
-        "agent_observe.recent" => vec!["a.recent"],
-        "rlm.find_models" => vec!["harness.models"],
+        "agent_observe.recent" => vec!["agent.recent"],
         "compact.run" => vec!["harness.compact"],
         "compact.status" => vec!["harness.context"],
         "goal.create" => vec!["harness.goal.create"],
@@ -413,29 +404,34 @@ fn required_surface_tokens() -> BTreeSet<String> {
     required
 }
 
-/// Surface tokens documented in the core layer: bullet entries whose first
-/// backtick token (after an optional `await`) is a lowercase module path.
+/// Surface tokens documented in the core layer: every backticked call (`name(...)`) whose name is
+/// a lowercase module path, on the bullet lines of the `<api>` block.
 fn documented_surface_tokens() -> BTreeSet<String> {
+    let start = CORE_LAYER
+        .find("<api>")
+        .expect("the core layer has an <api> block");
+    let end = CORE_LAYER
+        .find("</api>")
+        .expect("the <api> block is closed");
     let mut documented = BTreeSet::new();
-    for line in CORE_LAYER.lines() {
-        let Some(rest) = line.trim_start().strip_prefix("- `") else {
+    for line in CORE_LAYER[start..end].lines() {
+        if !line.starts_with("- `") {
             continue;
-        };
-        let Some(end) = rest.find('`') else {
-            continue;
-        };
-        let token = rest[..end].split('(').next().unwrap_or_default().trim();
-        let token = token.strip_prefix("await ").unwrap_or(token);
-        let valid = token
-            .chars()
-            .next()
-            .is_some_and(|ch| ch.is_ascii_lowercase())
-            && token
+        }
+        for span in line.split('`').skip(1).step_by(2) {
+            let Some((token, _)) = span.split_once('(') else {
+                continue;
+            };
+            let valid = token
                 .chars()
-                .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '.')
-            && !token.is_empty();
-        if valid {
-            documented.insert(token.to_string());
+                .next()
+                .is_some_and(|ch| ch.is_ascii_lowercase())
+                && token.chars().all(|ch| {
+                    ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '.'
+                });
+            if valid {
+                documented.insert(token.to_string());
+            }
         }
     }
     documented
@@ -551,7 +547,6 @@ fn generic_mcp_skill_renders_in_the_prompt_inventory() {
         .map(|segment| segment.text.clone())
         .expect("the skills inventory segment renders");
     assert!(inventory.contains("<name>mcp</name>"));
-    assert!(inventory.contains("<type>markdown</type>"));
     let mcp_block_start = inventory
         .find("<name>mcp</name>")
         .expect("the mcp skill block");
@@ -565,5 +560,7 @@ fn generic_mcp_skill_renders_in_the_prompt_inventory() {
     );
     options.generic_mcp_servers = vec!["notion".into()];
     let second = system_prompt_breakdown(&options);
-    assert!(second.assembled.contains("await mcp.tools(\"notion\")"));
+    assert!(second
+        .assembled
+        .contains("Enabled MCP servers (use them through `mcp`): `notion`."));
 }
