@@ -1,6 +1,6 @@
 use super::{
     auxiliary_model, compaction, compaction_exec, image_model_routing, ipython_state,
-    provider_adapter, refine, semantic_edges, telemetry, AgentSession, PromptBatchRow,
+    provider_adapter, semantic_edges, telemetry, AgentSession, PromptBatchRow,
 };
 
 impl AgentSession {
