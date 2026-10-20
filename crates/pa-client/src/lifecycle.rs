@@ -2483,9 +2483,7 @@ mod tests {
     async fn a_missing_socket_path_surfaces_the_structural_not_found_code() {
         let dir = tempfile::TempDir::new().unwrap();
         let missing = dir.path().join("no-such-socket.sock");
-        let (session, mut events) = DaemonClientSession::start(config(&missing))
-            .await
-            .unwrap();
+        let (session, mut events) = DaemonClientSession::start(config(&missing)).await.unwrap();
         // The first connect failure publishes Disconnected WITH the
         // structural code; the unbounded desktop policy keeps retrying, so
         // assert on the first Disconnected status event and the sync
@@ -2516,9 +2514,7 @@ mod tests {
         // and is refused — the "socket file exists, nothing listens" shape.
         let dead = dir.path().join("dead.sock");
         std::fs::write(&dead, b"").unwrap();
-        let (session, mut events) = DaemonClientSession::start(config(&dead))
-            .await
-            .unwrap();
+        let (session, mut events) = DaemonClientSession::start(config(&dead)).await.unwrap();
         let status = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 match next_event(&mut events).await {
@@ -2559,9 +2555,7 @@ mod tests {
             writer.write_all(line.as_bytes()).await.unwrap();
             std::future::pending::<()>().await;
         });
-        let (session, mut events) = DaemonClientSession::start(config(&socket))
-            .await
-            .unwrap();
+        let (session, mut events) = DaemonClientSession::start(config(&socket)).await.unwrap();
         let status = tokio::time::timeout(Duration::from_secs(20), async {
             loop {
                 match next_event(&mut events).await {
@@ -2583,13 +2577,10 @@ mod tests {
     #[tokio::test]
     async fn a_custom_client_id_rides_every_envelope_including_the_restore() {
         let dir = tempfile::TempDir::new().unwrap();
-        let (supervisor, socket, release) =
-            Supervisor::spawn(&dir, Vec::new(), false, true);
+        let (supervisor, socket, release) = Supervisor::spawn(&dir, Vec::new(), false, true);
         let mut lifecycle = config(&socket);
         lifecycle.transport.client_id = Some("prime-desktop:7:uuid".to_string());
-        let (session, mut events) = DaemonClientSession::start(lifecycle)
-            .await
-            .unwrap();
+        let (session, mut events) = DaemonClientSession::start(lifecycle).await.unwrap();
         wait_connected(&mut events).await;
         // Attach through the request path (the envelope adoption), then the
         // scripted death of the first connection: the driver reconnects and

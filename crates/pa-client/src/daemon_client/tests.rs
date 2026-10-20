@@ -74,10 +74,7 @@ fn empty_prompt_input() -> pa_types::daemon::PromptInput {
 
 /// A recording supervisor: greets, captures every command envelope's
 /// `clientId`, and answers with a plain success response.
-async fn spawn_recording_daemon(
-    listener: UnixListener,
-    client_ids: Arc<Mutex<Vec<String>>>,
-) {
+async fn spawn_recording_daemon(listener: UnixListener, client_ids: Arc<Mutex<Vec<String>>>) {
     let (stream, _) = listener.accept().await.expect("accept");
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);

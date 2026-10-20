@@ -311,9 +311,8 @@ impl ManagedInner {
             payload.cause = Some("overflow");
             payload
         } else {
-            let mut payload = not_sent(
-                "the session is stopping; the command was never queued".to_string(),
-            );
+            let mut payload =
+                not_sent("the session is stopping; the command was never queued".to_string());
             payload.cause = Some("closed");
             payload
         }
@@ -413,9 +412,8 @@ impl ManagedInner {
         *self
             .stop_outcome
             .lock()
-            .expect("the stop outcome is not poisoned") = Some(outcome.map_err(|error| {
-            error.to_string()
-        }));
+            .expect("the stop outcome is not poisoned") =
+            Some(outcome.map_err(|error| error.to_string()));
         *self
             .stop_state
             .lock()
@@ -537,10 +535,9 @@ impl ManagedDaemonSession {
     /// honest `NotSent`/`Uncertain`/`Rejected` classes preserved; no
     /// auto-resend, ever.
     pub async fn request(&self, command: Value) -> Result<Value> {
-        let command: DaemonCommand =
-            serde_json::from_value(command).map_err(|error| {
-                napi_error(not_sent(format!("command deserialize failed: {error}")))
-            })?;
+        let command: DaemonCommand = serde_json::from_value(command).map_err(|error| {
+            napi_error(not_sent(format!("command deserialize failed: {error}")))
+        })?;
         let (result_tx, result_rx) =
             tokio::sync::oneshot::channel::<std::result::Result<Value, Box<ErrorPayload>>>();
         let inner = Arc::clone(&self.inner);
@@ -605,10 +602,9 @@ impl ManagedDaemonSession {
     /// [`Self::request`] requiring `success: true`; the daemon refusal
     /// surfaces typed with `errorInfo` preserved.
     pub async fn request_ok(&self, command: Value) -> Result<Value> {
-        let command: DaemonCommand =
-            serde_json::from_value(command).map_err(|error| {
-                napi_error(not_sent(format!("command deserialize failed: {error}")))
-            })?;
+        let command: DaemonCommand = serde_json::from_value(command).map_err(|error| {
+            napi_error(not_sent(format!("command deserialize failed: {error}")))
+        })?;
         let (result_tx, result_rx) =
             tokio::sync::oneshot::channel::<std::result::Result<Value, Box<ErrorPayload>>>();
         let inner = Arc::clone(&self.inner);
@@ -735,14 +731,16 @@ pub async fn start_session(options: ManagedSessionOptions) -> Result<ManagedDaem
         reconnect,
         attach_capabilities,
         dedupe_session_events: options.dedupe_session_events.unwrap_or(true),
-        restore_attempt_timeout: Duration::from_millis(u64::from(options.restore_attempt_timeout_ms)),
+        restore_attempt_timeout: Duration::from_millis(u64::from(
+            options.restore_attempt_timeout_ms,
+        )),
         transport: DaemonClientOptions {
             // The driver installs its own raw tap; a caller's tap would be
             // rejected by the core's validation.
             raw_tap: None,
-            max_frame_bytes: usize::try_from(options.max_frame_bytes.unwrap_or(
-                DEFAULT_MAX_FRAME_BYTES,
-            ))
+            max_frame_bytes: usize::try_from(
+                options.max_frame_bytes.unwrap_or(DEFAULT_MAX_FRAME_BYTES),
+            )
             .ok(),
             max_pending: usize::try_from(options.max_pending.unwrap_or(DEFAULT_MAX_PENDING)).ok(),
             client_id: options.client_id.clone(),
@@ -760,12 +758,13 @@ pub async fn start_session(options: ManagedSessionOptions) -> Result<ManagedDaem
     };
     // The constructor is a core future too: `start` spawns the driver, and
     // it must land on the binding-owned runtime — never napi's private one.
-    let (session, mut core_events) = bridge(async move { DaemonClientSession::start(config).await })
-        .await
-        .map_err(|join_error| {
-            napi_error(transport(format!("the start task failed: {join_error}")))
-        })?
-        .map_err(|error| napi_error(classify(error, None)))?;
+    let (session, mut core_events) =
+        bridge(async move { DaemonClientSession::start(config).await })
+            .await
+            .map_err(|join_error| {
+                napi_error(transport(format!("the start task failed: {join_error}")))
+            })?
+            .map_err(|error| napi_error(classify(error, None)))?;
 
     let (event_tx, event_rx) =
         mpsc::channel::<Value>(usize::try_from(event_buffer).expect("a bounded capacity"));
