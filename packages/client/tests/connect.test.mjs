@@ -14,7 +14,10 @@ test('connect completes the hello handshake', async () => {
   assert.equal(connection.supportsServerCapability('direct_peer_transport'), true);
   assert.equal(connection.supportsServerCapability('made_up_capability'), false);
   assert.equal(connection.socketPath(), socketPath);
-  assert.deepEqual(connection.caps(), { frameBuffer: 1024, maxFrameBytes: undefined, maxPending: undefined });
+  const caps = connection.caps();
+  assert.equal(caps.frameBuffer, 1024);
+  assert.equal('maxFrameBytes' in caps, false);
+  assert.equal('maxPending' in caps, false);
   assert.equal(connection.currentStatus().type, 'open');
   connection.close();
   await stop();

@@ -79,6 +79,20 @@ pub struct Caps {
     pub max_pending: Option<u32>,
 }
 
+/// The binding-owned operation bridges (each request/upgrade future
+/// bridged onto the shared runtime): close joins every live one after
+/// the core shutdown, so no caller-owned task outlives the connection.
+type BridgeHandles = tokio::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>;
+
+/// The close lifecycle: one runner performs the shutdown chain, concurrent
+/// callers await the same real completion (the `close_done` watch), late
+/// callers return settled.
+enum CloseState {
+    Open,
+    Closing,
+    Done,
+}
+
 pub(crate) struct Inner {
     client: Mutex<Option<Arc<DaemonClient>>>,
     /// The effective configuration this connection was built with —
@@ -93,52 +107,57 @@ pub(crate) struct Inner {
     frame_rx: tokio::sync::Mutex<mpsc::Receiver<Value>>,
     /// Wakes in-flight requests on overflow/close teardown.
     teardown: Arc<Notify>,
+    /// The binding-owned operation bridges, joined during close.
+    bridges: BridgeHandles,
+    /// Idempotent close coordination across concurrent callers.
+    close_state: tokio::sync::Mutex<CloseState>,
+    /// Broadcasts the real close completion to concurrent callers.
+    close_done: watch::Sender<bool>,
     overflow: AtomicBool,
     closed: AtomicBool,
     initial_status_delivered: AtomicBool,
 }
 
 impl Inner {
-    /// The live client, or a provable `NotSent` refusal after teardown —
-    /// the overflow cause is surfaced in the message when the frame queue
-    /// tore the connection down.
+    /// The live client, or a provable `NotSent` refusal after the close
+    /// chain started — the overflow cause is surfaced when the frame
+    /// queue tore the connection down.
     fn client_arc(&self) -> Result<Arc<DaemonClient>> {
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(self.closed_refusal());
+        }
         self.client
             .lock()
             .expect("the client slot is not poisoned")
             .clone()
-            .ok_or_else(|| {
-                if self.overflow.load(Ordering::SeqCst) {
-                    not_sent(
-                        "the connection was torn down after the frame queue overflowed; the command was never queued".to_string(),
-                    )
-                } else {
-                    not_sent("the client is closed; the command was never queued".to_string())
-                }
-            })
+            .ok_or_else(|| self.closed_refusal())
     }
 
-    /// Stop the binding's machinery and release the core client. Idempotent.
-    /// `overflow` marks the terminal frame-stream error; `reason` names the
-    /// teardown cause for status and request errors.
-    fn teardown(&self, is_overflow: bool, reason: &str) {
+    fn closed_refusal(&self) -> napi::Error {
+        if self.overflow.load(Ordering::SeqCst) {
+            not_sent(
+                "the connection was torn down after the frame queue overflowed; the command was never queued".to_string(),
+            )
+        } else {
+            not_sent("the client is closed; the command was never queued".to_string())
+        }
+    }
+
+    /// Track one binding-owned operation bridge for close's join phase.
+    fn track_bridge(&self, handle: tokio::task::JoinHandle<()>) {
+        self.bridges
+            .blocking_lock()
+            .push(handle);
+    }
+
+    /// The binding-owned wake of step one: flags, status, and the notify —
+    /// every pending pull and in-flight request observes the cause.
+    fn mark_closed(&self, is_overflow: bool, reason: &str) {
         if self.closed.swap(true, Ordering::SeqCst) {
             return;
         }
         if is_overflow {
             self.overflow.store(true, Ordering::SeqCst);
-        }
-        // Core close first (direct-link detach parity), then release the
-        // value. No claim is made about joining the core's internal
-        // reader/writer tasks here: that is the shutdown-core work, and
-        // the binding will call its join API when it lands.
-        if let Some(client) = self
-            .client
-            .lock()
-            .expect("the client slot is not poisoned")
-            .take()
-        {
-            client.close();
         }
         let status = if is_overflow {
             Status::Overflow
@@ -155,17 +174,54 @@ impl Inner {
             .expect("the frame queue sender is not poisoned") = None;
     }
 
-    /// The teardown cause for in-flight requests: `None` while the
-    /// connection is live, `Some("overflow")` / `Some("closed")` after.
-    fn teardown_cause(&self) -> Option<&'static str> {
-        if !self.closed.load(Ordering::SeqCst) {
-            return None;
+    /// The full close chain (PR7): mark closed and refuse new operations;
+    /// shut the core transport down; cancel/join the binding-owned
+    /// operation bridges; then join the core's registered task set to a
+    /// real completion. Idempotent: concurrent callers await the same
+    /// completion, late callers return settled.
+    pub(crate) async fn close_and_join(self: &Arc<Self>, is_overflow: bool, reason: &'static str) {
+        {
+            let mut gate = self.close_state.lock().await;
+            match *gate {
+                CloseState::Done => return,
+                CloseState::Closing => {
+                    let mut done = self.close_done.subscribe();
+                    drop(gate);
+                    if *done.borrow() {
+                        return;
+                    }
+                    let _ = done.changed().await;
+                    return;
+                }
+                CloseState::Open => {
+                    *gate = CloseState::Closing;
+                }
+            }
         }
-        if self.overflow.load(Ordering::SeqCst) {
-            Some("overflow")
-        } else {
-            Some("closed")
+        // The one runner performs the chain: mark closed and refuse new
+        // operations, shut the core transport down, join the binding-owned
+        // bridges, then join the core's registered task set.
+        self.mark_closed(is_overflow, reason);
+        let client = self
+            .client
+            .lock()
+            .expect("the client slot is not poisoned")
+            .clone();
+        if let Some(client) = &client {
+            client.shutdown();
         }
+        for handle in std::mem::take(&mut *self.bridges.lock().await) {
+            let _ = handle.await;
+        }
+        if let Some(client) = &client {
+            let _ = client.join_tasks().await;
+            self.client
+                .lock()
+                .expect("the client slot is not poisoned")
+                .take();
+        }
+        *self.close_state.lock().await = CloseState::Done;
+        let _ = self.close_done.send(true);
     }
 }
 
@@ -190,6 +246,19 @@ pub struct ConnectOptions {
 /// closed contract.
 pub struct PrimeDaemonClient {
     inner: Arc<Inner>,
+}
+
+impl Drop for PrimeDaemonClient {
+    fn drop(&mut self) {
+        // The napi finalizer (GC) path: async-safe ONLY — schedule the full
+        // close chain on the binding-owned runtime (wake + core shutdown +
+        // bridge joins + core task join). No core calls from the GC thread;
+        // an already-closed connection settles to the Done state instantly.
+        let inner = Arc::clone(&self.inner);
+        bridge(async move {
+            Inner::close_and_join(&inner, false, "dropped without close").await;
+        });
+    }
 }
 
 #[napi]
@@ -252,8 +321,12 @@ impl PrimeDaemonClient {
     #[napi]
     pub async fn upgrade_direct(&self, active_session_id: String) -> Result<bool> {
         let client = self.inner.client_arc()?;
-        bridge(async move { client.upgrade_direct(&active_session_id).await })
-            .await
+        let work = bridge(async move { client.upgrade_direct(&active_session_id).await });
+        let tracker = bridge(async move {
+            let _ = work.await;
+        });
+        self.inner.track_bridge(tracker);
+        work.await
             .map_err(|join_error| {
                 transport(format!("the direct upgrade task failed: {join_error}"))
             })?
@@ -349,7 +422,7 @@ impl PrimeDaemonClient {
             )),
         );
         let inner = Arc::clone(&self.inner);
-        bridge(async move {
+        let work = bridge(async move {
             let notified = inner.teardown.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
@@ -381,11 +454,15 @@ impl PrimeDaemonClient {
                     ))
                 }
             }
-        })
-        .await
-        .map_err(|join_error| {
-            transport(format!("the request task failed: {join_error}"))
-        })?
+        });
+        let tracker = bridge(async move {
+            let _ = work.await;
+        });
+        self.inner.track_bridge(tracker);
+        work.await
+            .map_err(|join_error| {
+                transport(format!("the request task failed: {join_error}"))
+            })?
     }
 
     #[napi]
@@ -396,7 +473,7 @@ impl PrimeDaemonClient {
                 not_sent(format!("command deserialize failed: {error}"))
             })?;
         let inner = Arc::clone(&self.inner);
-        bridge(async move {
+        let work = bridge(async move {
             let notified = inner.teardown.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
@@ -418,20 +495,26 @@ impl PrimeDaemonClient {
                     ))
                 }
             }
-        })
-        .await
-        .map_err(|join_error| {
-            transport(format!("the request task failed: {join_error}"))
-        })?
+        });
+        let tracker = bridge(async move {
+            let _ = work.await;
+        });
+        self.inner.track_bridge(tracker);
+        work.await
+            .map_err(|join_error| {
+                transport(format!("the request task failed: {join_error}"))
+            })?
     }
 
     #[napi]
-    /// Stop the binding's pumps, wake every pending pull with end-of-stream,
-    /// and release the core client. Idempotent. The JS side holds no task,
-    /// channel, or event-loop handle afterwards; synchronous teardown of
-    /// the core's internal reader/writer tasks is the shutdown-core work.
-    pub fn close(&self) -> Result<()> {
-        self.inner.teardown(false, "closed by the host");
+    /// The full close chain, as a promise that resolves on REAL completion:
+    /// mark closed and refuse new operations, shut the core transport down,
+    /// join the binding-owned operation bridges, then join the core's
+    /// registered task set. Idempotent: concurrent callers await the same
+    /// completion; after completion the JS side holds no task, channel, or
+    /// event-loop handle.
+    pub async fn close(&self) -> Result<()> {
+        Inner::close_and_join(&self.inner, false, "closed by the host").await;
         Ok(())
     }
 }
@@ -483,6 +566,7 @@ pub async fn connect(
         mpsc::channel::<Value>(usize::try_from(frame_buffer).expect("a bounded capacity"));
     let (status_tx, _) = watch::channel(Status::Open);
 
+    let (close_done, _) = watch::channel(false);
     let inner = Arc::new(Inner {
         client: Mutex::new(Some(Arc::clone(&client))),
         caps,
@@ -490,6 +574,9 @@ pub async fn connect(
         frame_tx: Mutex::new(Some(frame_tx.clone())),
         frame_rx: tokio::sync::Mutex::new(frame_rx),
         teardown: Arc::new(Notify::new()),
+        bridges: BridgeHandles::default(),
+        close_state: tokio::sync::Mutex::new(CloseState::Open),
+        close_done,
         overflow: AtomicBool::new(false),
         closed: AtomicBool::new(false),
         initial_status_delivered: AtomicBool::new(false),
@@ -514,7 +601,15 @@ pub async fn connect(
                     maybe = tap_rx.recv() => match maybe {
                         Some(frame) => {
                             if frame_tx.try_send(frame).is_err() {
-                                inner.teardown(true, "the frame queue overflowed");
+                                // The full close chain (mark overflow, shut
+                                // the core down, join the bridges and the
+                                // core task set) — scheduled, not blocking
+                                // the pump.
+                                let inner = Arc::clone(&inner);
+                                bridge(async move {
+                                    Inner::close_and_join(&inner, true, "the frame queue overflowed")
+                                        .await;
+                                });
                                 break;
                             }
                         }
