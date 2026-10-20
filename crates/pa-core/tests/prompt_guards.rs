@@ -173,6 +173,7 @@ fn prompt_tokens_for_host_request(request: &str) -> Vec<String> {
         "rlm_heartbeat.update" => vec!["hb.update", "hb.pause", "hb.resume"],
         "rlm_heartbeat.delete" => vec!["hb.delete"],
         "mcp.list_connections" => vec!["mcp.connections"],
+        "rlm.find_models" => vec!["harness.models"],
         other => vec![other],
     }
     .into_iter()
