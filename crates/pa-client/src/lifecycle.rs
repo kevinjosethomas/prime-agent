@@ -283,18 +283,9 @@ impl DaemonClientSession {
     pub async fn request_ok(&self, command: DaemonCommand) -> Result<Value> {
         let name = wire_name(&command);
         let response = self.request(command).await?;
-        if !response.success {
-            // The typed refusal surface: the daemon's error info rides
-            // along for the callers' classification (is_daemon_rejection &c).
-            return Err(anyhow::Error::new(crate::daemon_client::RequestRejected {
-                command: name,
-                message: response
-                    .error
-                    .unwrap_or_else(|| "unknown error".to_string()),
-                error_info: response.error_info,
-            }));
-        }
-        Ok(response.data.unwrap_or(Value::Null))
+        // The crate's own typed refusal surface: `RequestRejected` with the
+        // daemon's error info rides along — never reinvented here.
+        crate::daemon_client::response_data_or_error(&name, response)
     }
 
     /// Explicit stop, in order (§10): refuse new requests + epoch bump,
@@ -303,27 +294,24 @@ impl DaemonClientSession {
     /// (which true-cancels its restore tasks and joins them), then the
     /// driver's final core join; stop awaits the driver's end. Idempotent.
     pub async fn stop(&self) {
-        // The explicit order: refuse new requests + epoch bump, the death
-        // signal on the live client (every pending request resolves), then
-        // the driver cancel; every stop settles only after the driver's
-        // completion mark flips — a concurrent caller never returns early.
+        // The synchronous request signal, all before the first await: refuse
+        // new requests, invalidate every in-flight epoch, cancel the driver.
         self.state.stopping.store(true, Ordering::SeqCst);
         self.state.epoch.fetch_add(1, Ordering::SeqCst);
+        self.state.cancel.send_replace(true);
+        // The death signal on the live client: every pending request
+        // resolves now — no live pending is ever awaited.
         if let Some(client) = self.state.client.write().await.take() {
             client.shutdown();
         }
-        let _ = self.state.cancel.send(true);
-        if let Some(handle) = self.state.driver.lock().await.take() {
-            let _ = handle.await;
-        } else {
-            let mut stopped = self.state.stopped.subscribe();
-            loop {
-                if *stopped.borrow() {
-                    break;
-                }
-                if stopped.changed().await.is_err() {
-                    break;
-                }
+        // The completion authority is the driver's mark — flipped ONLY after
+        // its retained client clone is joined and the restore tasks settled.
+        // No JoinHandle is taken or awaited here: nothing can detach, and a
+        // panicked driver never fakes completion (the wait is honest).
+        let mut stopped = self.state.stopped.subscribe();
+        while !*stopped.borrow_and_update() {
+            if stopped.changed().await.is_err() {
+                break;
             }
         }
     }
@@ -339,17 +327,18 @@ impl DaemonClientSession {
         let mut registry = self.state.registry.lock().unwrap();
         match command {
             DaemonCommand::Attach {
-                active_session_id, ..
-            } => Some(Bookkeeping::Attach {
-                id: active_session_id.clone(),
-                revision: registry.bump_revision(active_session_id),
-            }),
-            DaemonCommand::Reattach {
-                target_active_session_id,
+                active_session_id,
+                capabilities,
+                ..
+            }
+            | DaemonCommand::Reattach {
+                target_active_session_id: active_session_id,
+                capabilities,
                 ..
             } => Some(Bookkeeping::Attach {
-                id: target_active_session_id.clone(),
-                revision: registry.bump_revision(target_active_session_id),
+                id: active_session_id.clone(),
+                token: registry.attempt_token(active_session_id),
+                capabilities: capabilities.clone().unwrap_or_default(),
             }),
             DaemonCommand::Detach {
                 active_session_id, ..
@@ -374,20 +363,17 @@ impl DaemonClientSession {
     /// Panics when the registry lock is poisoned.
     fn after(&self, bookkeeping: Option<&Bookkeeping>, response: &DaemonResponse) {
         match bookkeeping {
-            Some(Bookkeeping::Attach { id, revision }) => {
+            Some(Bookkeeping::Attach {
+                id,
+                token,
+                capabilities,
+            }) => {
                 if !response.success {
                     return;
                 }
                 let data = response.data.clone().unwrap_or(Value::Null);
                 let mut registry = self.state.registry.lock().unwrap();
-                match revision {
-                    Some(revision) => {
-                        registry.record_attach(id, &[], &data, Some(*revision));
-                    }
-                    None => {
-                        registry.record_attach(id, &[], &data, None);
-                    }
-                }
+                registry.record_attach(id, capabilities, &data, *token);
             }
             Some(Bookkeeping::Detach { id }) => {
                 self.state.registry.lock().unwrap().forget(id);
@@ -400,7 +386,13 @@ impl DaemonClientSession {
 /// What one request's registry bookkeeping is.
 #[derive(Debug, Clone)]
 enum Bookkeeping {
-    Attach { id: String, revision: Option<u64> },
+    /// The attach's id, its globally unique attempt token, and the
+    /// command's own capabilities (recorded at adoption).
+    Attach {
+        id: String,
+        token: u64,
+        capabilities: Vec<String>,
+    },
     Detach { id: String },
 }
 
@@ -491,16 +483,9 @@ async fn driver_run(
                 _ = cancel.changed() => break,
                 () = state.events.closed() => break,
             }
-            if let Some(deadline) = deadline {
-                if tokio::time::Instant::now() > deadline {
-                    let _ = state
-                        .events
-                        .send(ConnectionEvent::ReconnectExpired { kind });
-                    publish(&state, |status| {
-                        status.state = ConnectionState::Expired;
-                        status.error =
-                            Some(format!("the {} reconnect window expired", window_name(kind)));
-                    });
+            if let Some(expiry) = deadline {
+                if tokio::time::Instant::now() > expiry {
+                    expire(&state, kind);
                     break; // The driver stops; the host decides. No exit.
                 }
             }
@@ -514,10 +499,23 @@ async fn driver_run(
             transport.raw_tap = Some(tap_tx);
             let connect = DaemonClient::connect_with_options(&config.socket_path, transport);
             tokio::pin!(connect);
-            let result = tokio::select! {
-                result = &mut connect => result,
-                _ = cancel.changed() => break,
-                () = state.events.closed() => break,
+            // The window's deadline is armed against the connect itself: a
+            // hung hello cannot outlive a bounded recovery.
+            let result = match deadline {
+                Some(expiry) => tokio::select! {
+                    result = &mut connect => result,
+                    _ = cancel.changed() => break,
+                    () = state.events.closed() => break,
+                    () = tokio::time::sleep_until(expiry) => {
+                        expire(&state, kind);
+                        break;
+                    }
+                },
+                None => tokio::select! {
+                    result = &mut connect => result,
+                    _ = cancel.changed() => break,
+                    () = state.events.closed() => break,
+                },
             };
             match result {
                 Ok((fresh, _legacy_events)) => {
@@ -613,8 +611,18 @@ async fn driver_run(
             residue.shutdown();
             residue.join_tasks().await;
         }
-        let _ = state.stopped.send(true);
+        state.stopped.send_replace(true);
     }
+}
+
+/// Publish the window expiry: a typed event and the terminal status. The
+/// driver stops (no exit, no resend); the host decides.
+fn expire(state: &Arc<SessionState>, kind: ReconnectKind) {
+    let _ = state.events.send(ConnectionEvent::ReconnectExpired { kind });
+    publish(state, |status| {
+        status.state = ConnectionState::Expired;
+        status.error = Some(format!("the {} reconnect window expired", window_name(kind)));
+    });
 }
 
 fn window_name(kind: ReconnectKind) -> &'static str {
@@ -653,11 +661,14 @@ async fn service(
             _ = dead.changed() => {
                 if *dead.borrow() {
                     // The prior connection's registered tasks are joined
-                    // NOW: no swap leaves a prior join behind.
+                    // NOW: no swap leaves a prior join behind — and the
+                    // epoch moves with the loss, so an old response can
+                    // never adopt while the session is disconnected.
                     if let Some(client) = state.client.write().await.take() {
                         client.shutdown();
                         client.join_tasks().await;
                     }
+                    state.epoch.fetch_add(1, Ordering::SeqCst);
                     return ServiceEnd::Loss(announced.take().unwrap_or(ReconnectKind::Lost));
                 }
             }
@@ -733,9 +744,7 @@ fn spawn_restores(
         let _ = state.events.send(ConnectionEvent::ReattachBegin {
             active_session_id: id.clone(),
         });
-        let Some(revision) = state.registry.lock().unwrap().bump_revision(&id) else {
-            continue;
-        };
+        let token = state.registry.lock().unwrap().attempt_token(&id);
         let state = Arc::clone(state);
         let config = config.clone();
         let restore_tx = restore_tx.clone();
@@ -790,7 +799,7 @@ fn spawn_restores(
                         .registry
                         .lock()
                         .unwrap()
-                        .record_attach(&id, &[], &data, Some(revision));
+                        .record_attach(&id, &capabilities, &data, token);
                     if adopted {
                         let _ = restore_tx.send(RestoreOutcome::Done {
                             id,

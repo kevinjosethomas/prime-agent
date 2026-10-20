@@ -14,47 +14,65 @@ use serde_json::Value;
 pub(crate) enum FrameAction {
     /// Forward the frame to the consumer.
     Deliver,
-    /// A replayed session event inside a registered attachment's current
-    /// generation: suppressed (the driver forwards nothing for it).
+    /// A replayed session event within the attachment's CURRENT generation:
+    /// suppressed (the driver forwards nothing for it).
     Dedupe,
 }
 
 /// One session attachment: the cursor to resume from, the capabilities to
-/// re-attach with, and the revision that guards response adoption.
+/// re-attach with, and the in-flight attempt token that guards adoption.
 #[derive(Debug, Clone)]
 pub(crate) struct Attachment {
-    /// The resume cursor: `None` until the first attach reports one —
-    /// missing (no `resumeCursor` sent on restore) is distinct from null
-    /// adoption and both are distinct from no attachment.
+    /// The resume cursor: `None` until an adoption reports one — a missing
+    /// cursor (no `resumeCursor` sent on restore) is distinct from no
+    /// attachment.
     pub cursor: Option<DaemonResumeCursor>,
-    /// The capabilities to re-attach with (the registry never invents
-    /// them: recorded from the attach command or the session config).
+    /// The capabilities to re-attach with (the attach attempt's own
+    /// capabilities, recorded at adoption).
     pub capabilities: Vec<String>,
-    /// Bumped per attach/reattach attempt: a response adopts only at its
-    /// own revision, so a canceled/detached/superseded attempt can never
-    /// resurrect or roll back an attachment.
-    pub revision: u64,
+    /// The token of the attempt currently in flight for this entry: an
+    /// attach response adopts only at its own token.
+    pub attempt: u64,
 }
 
 /// The ordered multi-attach registry. Dedupe and cursor adoption apply ONLY
 /// to registered attachments; an unregistered session's frames always
-/// deliver. The seen map holds markers only for live registered
-/// attachments — detach/rebind drop them, so it is bounded by the
-/// attachment set, never by session churn.
+/// deliver.
+///
+/// # The generation contract (desktop parity, documented honestly)
+///
+/// Sequences are monotonic WITHIN a generation; generations are OPAQUE and
+/// sequences are NOT ordered across them — the registry never compares
+/// sequences across generations. ONE CURRENT marker exists per attachment
+/// (`(generation, last-sequence-within-it)`, the prior generation's marker
+/// forgotten), so the map is bounded by the attachment set. Dedupe applies
+/// only when an event's generation matches the current marker's. A frame
+/// whose generation differs replaces the marker slot and the cursor — the
+/// desktop machine's own generation replacement, verbatim. A LATE
+/// OLD-GENERATION FRAME (out of order across a transition) is therefore
+/// possible and REPLACES the marker/cursor the same way: a known parity
+/// limitation, explicit here; no cross-generation ordering or authoritative
+/// boundary semantics are claimed or implemented.
 #[derive(Debug, Default)]
 pub(crate) struct AttachmentRegistry {
     /// Insertion order (restore visits entries in it).
     order: Vec<String>,
     attachments: HashMap<String, Attachment>,
-    /// id -> (generation, the last delivered sequence). ONE marker per
-    /// attachment: a new generation replaces the prior marker's slot, so
-    /// the map is bounded by the attachment set, never by generation churn.
+    /// id -> (generation, the last delivered sequence within it). ONE
+    /// CURRENT marker per attachment: a transition replaces the slot, so
+    /// the map is bounded by the attachment set, never by churn.
     seen: HashMap<String, (String, u64)>,
+    /// Fresh (unregistered-id) attach intents: id -> the in-flight attempt
+    /// token. `forget` drops the slot; a stale token can never match again.
+    intents: HashMap<String, u64>,
+    /// The global monotonic attempt counter: every token is unique for the
+    /// registry's lifetime — no ABA across forget/reinsert.
+    attempts: u64,
 }
 
 impl AttachmentRegistry {
     /// Register (or re-register) an attachment; idempotent per id — an
-    /// existing cursor and a higher existing revision survive a re-register.
+    /// existing cursor and in-flight attempt survive a re-register.
     pub(crate) fn register(&mut self, id: &str, capabilities: Vec<String>) {
         if let Some(entry) = self.attachments.get_mut(id) {
             if entry.capabilities.is_empty() {
@@ -69,7 +87,7 @@ impl AttachmentRegistry {
                 Attachment {
                     cursor: None,
                     capabilities,
-                    revision: 0,
+                    attempt: 0,
                 },
             )
             .is_none()
@@ -78,68 +96,78 @@ impl AttachmentRegistry {
         }
     }
 
-    /// Bump and return the attachment's revision for one attach/reattach
-    /// attempt; `None` when the id is not registered (a fresh attach
-    /// self-registers on response adoption).
-    pub(crate) fn bump_revision(&mut self, id: &str) -> Option<u64> {
-        self.attachments.get_mut(id).map(|entry| {
-            entry.revision += 1;
-            entry.revision
-        })
+    /// Mint the attempt token for one attach/reattach: registered ids pin
+    /// the token on the entry; unregistered ids hold it as a fresh intent.
+    /// Globally monotonic, so a forget mid-flight invalidates the attempt
+    /// forever (the dangling token can never match again) and a reinserted
+    /// entry only ever adopts at its OWN later token.
+    pub(crate) fn attempt_token(&mut self, id: &str) -> u64 {
+        self.attempts += 1;
+        let token = self.attempts;
+        match self.attachments.get_mut(id) {
+            Some(entry) => entry.attempt = token,
+            None => {
+                self.intents.insert(id.to_string(), token);
+            }
+        }
+        token
     }
 
-    /// Drop an attachment and every marker it owns (detach/kill/close).
+    /// Drop an attachment and every marker and intent it owns
+    /// (detach/kill/close): an in-flight attempt's token dangles and can
+    /// never adopt afterwards.
     pub(crate) fn forget(&mut self, id: &str) {
         if self.attachments.remove(id).is_some() {
             self.order.retain(|registered| registered != id);
         }
-        self.seen.retain(|(marker_id, _), _| marker_id != id);
+        self.seen.remove(id);
+        self.intents.remove(id);
     }
 
-    /// Adopt an attach/reattach response into the attachment. The desktop
-    /// machine's `updateCursorFromSnapshot`, verbatim in its guards:
-    /// the generation cursor shape or the legacy `eventSequence` shape,
-    /// monotonic-only (a snapshot never rolls a cursor or a seen marker
-    /// back), capability refresh, and the seen marker catch-up. The
-    /// `revision` guard refuses adoption when the attachment was detached,
-    /// superseded by a concurrent attempt (`Some` mismatch), or created
-    /// fresh in the meantime (`None` guard expects unregistered-at-send).
+    /// Adopt an attach/reattach response into the attachment, ONLY at the
+    /// attempt's own token. The desktop machine's `updateCursorFromSnapshot`
+    /// guards, verbatim: the generation-cursor shape or the legacy
+    /// `eventSequence` shape, monotonic within the current marker (a
+    /// snapshot never rolls a cursor back), the capabilities recorded from
+    /// the attempt itself, the marker catch-up, and order membership on
+    /// attachment EXISTENCE (a cursorless attach is as restored as one
+    /// with a cursor). A fresh id adopts only through its live intent; a
+    /// registered entry only at its pinned token.
     pub(crate) fn record_attach(
         &mut self,
         id: &str,
         capabilities: &[String],
         data: &Value,
-        revision: Option<u64>,
+        token: u64,
     ) -> bool {
-        let entry = match (revision, self.attachments.get_mut(id)) {
-            // The attempt's own revision: adopt into the live entry.
-            (Some(expected), Some(entry)) if entry.revision == expected => entry,
-            // A fresh id's first attach (unregistered at send, still
-            // absent): create. A successful attach with a MISSING cursor is
-            // as restored as one with a cursor.
-            (None, None) => self
-                .attachments
-                .entry(id.to_string())
-                .or_insert(Attachment {
-                    cursor: None,
-                    capabilities: capabilities.to_vec(),
-                    revision: 0,
-                }),
-            // (None, Some): an unguarded attempt arriving at an entry that
-            // appeared meanwhile (a register, a detach+register cycle, a
-            // concurrent attach) — NEVER adopt; the fresh response cannot
-            // know the entry's current attempt. (Some, None): the entry was
-            // detached mid-flight — never resurrect. (Some, mismatch): a
-            // later attempt superseded this one — never roll back.
+        let entry = match self.attachments.get_mut(id) {
+            // The live entry at the attempt's own token.
+            Some(entry) if entry.attempt == token => entry,
+            // A fresh id's live intent: create the entry.
+            None if self.intents.get(id) == Some(&token) => {
+                self.intents.remove(id);
+                let entry = self
+                    .attachments
+                    .entry(id.to_string())
+                    .or_insert(Attachment {
+                        cursor: None,
+                        capabilities: Vec::new(),
+                        attempt: token,
+                    });
+                entry.attempt = token;
+                entry
+            }
+            // Superseded, detached, or stale (a forget/reinsert cycle moved
+            // the tokens): never adopt, never resurrect.
             _ => return false,
         };
+        if !capabilities.is_empty() {
+            entry.capabilities = capabilities.to_vec();
+        }
         // A successful adoption restores the attachment regardless of
         // whether a cursor exists.
         if self.order.iter().all(|registered| registered != id) {
             self.order.push(id.to_string());
-        }
-        if !capabilities.is_empty() {
-            entry.capabilities = capabilities.to_vec();
         }
         let snapshot = data.get("snapshot").unwrap_or(data);
         let current = entry.cursor.clone();
@@ -148,13 +176,21 @@ impl AttachmentRegistry {
             if current
                 .as_ref()
                 .is_none_or(|c| c.generation != cursor.generation)
-                || current.as_ref().and_then(|c| c.sequence).unwrap_or(0)
+                || current
+                    .as_ref()
+                    .and_then(|c| c.sequence)
+                    .unwrap_or(0)
                     < cursor.sequence.unwrap_or(0)
             {
                 entry.cursor = Some(cursor);
             }
         } else if let Some(sequence) = snapshot.get("lastEventSequence").and_then(Value::as_u64) {
-            if current.as_ref().and_then(|c| c.event_sequence).unwrap_or(0) < sequence {
+            if current
+                .as_ref()
+                .and_then(|c| c.event_sequence)
+                .unwrap_or(0)
+                < sequence
+            {
                 entry.cursor = Some(DaemonResumeCursor {
                     active_session_id: Some(id.to_string()),
                     generation: None,
@@ -163,32 +199,42 @@ impl AttachmentRegistry {
                 });
             }
         }
-
-        let (sequence, generation) = match entry.cursor.as_ref() {
-            Some(cursor) if cursor.sequence.is_some() => {
-                (cursor.sequence, cursor.generation.clone())
-            }
-            Some(cursor) if cursor.event_sequence.is_some() => (cursor.event_sequence, None),
-            _ => (None, None),
-        };
-        if let Some(sequence) = sequence {
-            let marker = (id.to_string(), generation.unwrap_or_default());
-            let last = self.seen.entry(marker).or_insert(0);
-            *last = (*last).max(sequence);
-        }
+        self.catch_up_marker(id, entry.cursor.as_ref());
         true
+    }
+
+    /// The snapshot's marker catch-up: within the current marker's
+    /// generation the sequence only ever rises.
+    fn catch_up_marker(&mut self, id: &str, cursor: Option<&DaemonResumeCursor>) {
+        let (generation, sequence) = match cursor {
+            Some(cursor) if cursor.sequence.is_some() => {
+                (cursor.generation.clone().unwrap_or_default(), cursor.sequence)
+            }
+            Some(cursor) if cursor.event_sequence.is_some() => {
+                (String::new(), cursor.event_sequence)
+            }
+            _ => return,
+        };
+        let Some(sequence) = sequence else { return };
+        match self.seen.get(id) {
+            Some((marker_generation, last)) if *marker_generation == generation => {
+                if sequence > *last {
+                    self.seen
+                        .insert(id.to_string(), (generation, sequence));
+                }
+            }
+            _ => {
+                self.seen.insert(id.to_string(), (generation, sequence));
+            }
+        }
     }
 
     /// Observe one raw outbound frame for bookkeeping (never consumes it):
     /// session events adopt cursors and decide dedupe for REGISTERED
     /// attachments only, `session_binding` rekeys the entry and its
-    /// markers, `session_closed` drops the entry and its markers.
+    /// marker, `session_closed` drops the entry and everything it owns.
     pub(crate) fn observe_frame(&mut self, frame: &Value) -> FrameAction {
-        match frame
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-        {
+        match frame.get("type").and_then(Value::as_str).unwrap_or_default() {
             "session_event" => self.observe_session_event(frame),
             "session_binding" => self.observe_binding(frame),
             "session_closed" => {
@@ -225,12 +271,16 @@ impl AttachmentRegistry {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
-        let marker = (id.to_string(), generation.clone());
-        let last = self.seen.entry(marker).or_insert(0);
-        if sequence <= *last {
-            return FrameAction::Dedupe;
+        // Dedupe ONLY within the current marker's generation (the contract
+        // above): a same-generation replay is suppressed; a different
+        // generation replaces the marker slot — desktop parity, late
+        // old-generation frames included.
+        if let Some((marker_generation, last)) = self.seen.get(id) {
+            if *marker_generation == generation && sequence <= *last {
+                return FrameAction::Dedupe;
+            }
         }
-        *last = sequence;
+        self.seen.insert(id.to_string(), (generation.clone(), sequence));
         let entry = self.attachments.get_mut(id).expect("registered above");
         if generation.is_empty() {
             let previous = entry
@@ -268,20 +318,13 @@ impl AttachmentRegistry {
             self.order.retain(|registered| registered != previous);
             self.order.push(next.to_string());
         }
-        // The markers follow the attachment: the bound session's events
-        // continue its sequence line under the new id.
-        let stale: Vec<(String, String)> = self
-            .seen
-            .keys()
-            .filter(|(marker_id, _)| marker_id == previous)
-            .cloned()
-            .collect();
-        for (marker_id, generation) in stale {
-            let last = self
-                .seen
-                .remove(&(marker_id, generation.clone()))
-                .unwrap_or(0);
-            self.seen.insert((next.to_string(), generation), last);
+        // The marker and the fresh intent follow the attachment: the bound
+        // session continues its sequence line under the new id.
+        if let Some((_, marker)) = self.seen.remove(previous) {
+            self.seen.insert(next.to_string(), marker);
+        }
+        if let Some(intent) = self.intents.remove(previous) {
+            self.intents.insert(next.to_string(), intent);
         }
         FrameAction::Deliver
     }
@@ -336,12 +379,12 @@ mod tests {
     }
 
     #[test]
-    fn dedupe_within_generation_and_accept_new_generation() {
+    fn dedupe_within_generation_and_generation_replacement() {
         let mut registry = AttachmentRegistry::default();
         registry.register("s1", vec!["attach_snapshot".to_string()]);
         let actions: Vec<FrameAction> = [("g1", 2), ("g1", 2), ("g1", 1), ("g2", 1)]
             .iter()
-            .map(|(generation, sequence)| registry.observe_frame(&event(generation, *sequence)))
+            .map(|(generation, sequence)| registry.observe_frame(&event(generation, sequence)))
             .collect();
         assert_eq!(
             actions,
@@ -356,33 +399,59 @@ mod tests {
         let cursor = entry.cursor.unwrap();
         assert_eq!(cursor.generation.as_deref(), Some("g2"));
         assert_eq!(cursor.sequence, Some(1));
+        // A late old-generation frame replaces the marker and the cursor —
+        // the documented desktop-parity limitation, never a heuristic.
+        assert_eq!(registry.observe_frame(&event("g1", 3)), FrameAction::Deliver);
+        let (_, entry) = registry.restore_entries().remove(0);
+        assert_eq!(entry.cursor.as_ref().unwrap().generation.as_deref(), Some("g1"));
+    }
+
+    #[test]
+    fn generation_churn_keeps_one_current_marker_per_attachment() {
+        let mut registry = AttachmentRegistry::default();
+        registry.register("s1", vec![]);
+        for index in 0..50 {
+            registry.observe_frame(&event(&format!("g{index}"), 1));
+        }
+        assert_eq!(registry.seen.len(), 1, "one current marker, bounded");
+        assert_eq!(registry.observe_frame(&event("g49", 1)), FrameAction::Dedupe);
     }
 
     #[test]
     fn snapshot_adoption_is_monotonic_and_dual_shape() {
         let mut registry = AttachmentRegistry::default();
         registry.register("s1", vec![]);
-        // The generation shape.
+        let token = registry.attempt_token("s1");
+        // The generation shape, carrying its session id.
         assert!(registry.record_attach(
             "s1",
-            &[],
+            &["attach_snapshot".to_string()],
             &json!({ "lastEventCursor": { "generation": "g", "sequence": 4 } }),
-            None
+            token
         ));
         // A stale snapshot never rolls back.
         assert!(registry.record_attach(
             "s1",
             &[],
             &json!({ "lastEventCursor": { "generation": "g", "sequence": 2 } }),
-            None
+            token
         ));
-        let entry = registry.restore_entries()[0].1.clone();
+        let (_, entry) = registry.restore_entries().remove(0);
         assert_eq!(entry.cursor.as_ref().unwrap().sequence, Some(4));
+        assert_eq!(
+            entry.cursor.as_ref().unwrap().active_session_id.as_deref(),
+            Some("s1")
+        );
         // The legacy shape.
-        assert!(registry.record_attach("s1", &[], &json!({ "lastEventSequence": 7 }), None,));
-        let entry = registry.restore_entries()[0].1.clone();
+        assert!(registry.record_attach(
+            "s1",
+            &[],
+            &json!({ "lastEventSequence": 7 }),
+            token
+        ));
+        let (_, entry) = registry.restore_entries().remove(0);
         assert_eq!(entry.cursor.as_ref().unwrap().event_sequence, Some(7));
-        // The seen marker rode along: a replayed sequence dedupes.
+        // The marker rode along: a replayed sequence dedupes.
         let replay = json!({
             "type": "session_event",
             "activeSessionId": "s1",
@@ -390,55 +459,70 @@ mod tests {
             "meta": { "sequence": 7 },
         });
         assert_eq!(registry.observe_frame(&replay), FrameAction::Dedupe);
+        // The capabilities were recorded from the attempt.
+        assert_eq!(entry.capabilities, vec!["attach_snapshot".to_string()]);
     }
 
     #[test]
-    fn revision_guard_refuses_stale_adoption() {
+    fn a_fresh_attach_with_no_cursor_is_still_restored() {
+        let mut registry = AttachmentRegistry::default();
+        let token = registry.attempt_token("s3");
+        assert!(registry.record_attach("s3", &["event_sequence".to_string()], &json!({}), token));
+        let entries = registry.restore_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "s3");
+        assert!(entries[0].1.cursor.is_none());
+        assert_eq!(entries[0].1.capabilities, vec!["event_sequence".to_string()]);
+    }
+
+    #[test]
+    fn tokens_close_the_aba_and_resurrection_holes() {
         let mut registry = AttachmentRegistry::default();
         registry.register("s1", vec![]);
-        let revision = registry.bump_revision("s1").unwrap();
-        // The current attempt adopts.
+        let token = registry.attempt_token("s1");
+        // The current attempt adopts at its own token.
         assert!(registry.record_attach(
             "s1",
             &[],
             &json!({ "lastEventCursor": { "generation": "g", "sequence": 5 } }),
-            Some(revision)
+            token
         ));
-        // A superseded attempt never adopts: the revision moved past it.
-        let superseded = registry.bump_revision("s1").unwrap();
-        assert!(superseded > revision);
-        assert!(!registry.record_attach(
-            "s1",
-            &[],
-            &json!({ "lastEventCursor": { "generation": "g", "sequence": 9 } }),
-            Some(revision)
-        ));
-        // The current attempt still adopts at its own revision.
-        assert!(registry.record_attach(
-            "s1",
-            &[],
-            &json!({ "lastEventCursor": { "generation": "g", "sequence": 6 } }),
-            Some(superseded)
-        ));
+        // A forget mid-flight invalidates the token: the stale response
+        // can never adopt or resurrect.
         registry.forget("s1");
         assert!(!registry.record_attach(
             "s1",
             &[],
             &json!({ "lastEventCursor": { "generation": "g", "sequence": 9 } }),
-            Some(revision)
+            token
+        ));
+        assert!(registry.restore_entries().is_empty());
+        // A re-register mints a NEW token: the old one never matches again
+        // (globally unique, no tombstones needed).
+        registry.register("s1", vec![]);
+        let renewed = registry.attempt_token("s1");
+        assert_ne!(renewed, token);
+        assert!(!registry.record_attach(
+            "s1",
+            &[],
+            &json!({ "lastEventCursor": { "generation": "g", "sequence": 9 } }),
+            token
         ));
         assert!(registry.record_attach(
-            "s2",
-            &["event_sequence".to_string()],
-            &json!({ "lastEventSequence": 1 }),
-            None
+            "s1",
+            &[],
+            &json!({ "lastEventCursor": { "generation": "g", "sequence": 6 } }),
+            renewed
         ));
-        assert_eq!(registry.restore_entries().len(), 1);
-        assert!(registry.restore_entries()[0].1.cursor.is_some());
+        // A fresh id's intent adopts exactly once.
+        let fresh = registry.attempt_token("s4");
+        assert!(registry.record_attach("s4", &[], &json!({ "lastEventSequence": 1 }), fresh));
+        // Replaying the same token after adoption never adopts again.
+        assert!(!registry.record_attach("s4", &[], &json!({ "lastEventSequence": 2 }), fresh));
     }
 
     #[test]
-    fn binding_rekeys_and_closed_drops_with_markers() {
+    fn binding_rekeys_and_closed_drops_with_markers_and_intents() {
         let mut registry = AttachmentRegistry::default();
         registry.register("s1", vec![]);
         registry.observe_frame(&event("g", 3));
@@ -448,8 +532,9 @@ mod tests {
             "activeSessionId": "s2",
         });
         assert_eq!(registry.observe_frame(&binding), FrameAction::Deliver);
-        assert!(registry.restore_entries().iter().any(|(id, _)| id == "s2"));
-        assert!(registry.restore_entries().iter().all(|(id, _)| id != "s1"));
+        let entries = registry.restore_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "s2");
         // The marker moved with the attachment: the replay dedupes under the
         // new id.
         let replay = json!({
@@ -459,56 +544,10 @@ mod tests {
             "meta": { "cursor": { "generation": "g", "sequence": 3 } },
         });
         assert_eq!(registry.observe_frame(&replay), FrameAction::Dedupe);
-        // A close drops the attachment and every marker it owned.
+        // A close drops the attachment, marker, and intent it owned.
         let closed = json!({ "type": "session_closed", "activeSessionId": "s2" });
         assert_eq!(registry.observe_frame(&closed), FrameAction::Deliver);
         assert!(registry.restore_entries().is_empty());
         assert_eq!(registry.observe_frame(&replay), FrameAction::Deliver);
-    }
-
-    #[test]
-    fn generation_churn_keeps_one_marker_per_attachment() {
-        // Every generation change replaces the marker slot: the seen map is
-        // bounded by the attachment set, never by generation churn.
-        let mut registry = AttachmentRegistry::default();
-        registry.register("s1", vec![]);
-        for generation in 0..50 {
-            let generation = format!("g{generation}");
-            registry.observe_frame(&event(&generation, 1));
-        }
-        assert_eq!(registry.seen.len(), 1, "one marker per attachment");
-        // The current generation's replay dedupes.
-        let last = format!("g49");
-        assert_eq!(registry.observe_frame(&event(&last, 1)), FrameAction::Dedupe);
-    }
-
-    #[test]
-    fn a_fresh_attach_with_no_cursor_is_still_restored() {
-        // A successful attach whose snapshot carries neither cursor shape
-        // still creates a restorable attachment (missing cursor, not missing
-        // attachment).
-        let mut registry = AttachmentRegistry::default();
-        assert!(registry.record_attach("s3", &[], &json!({}), None));
-        let entries = registry.restore_entries();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].0, "s3");
-        assert!(entries[0].1.cursor.is_none());
-    }
-
-    #[test]
-    fn a_fresh_response_never_adopts_into_an_entry_that_appeared() {
-        // The ABA guard: an unguarded (no-revision) attempt arriving at an
-        // entry that appeared meanwhile — a register, a detach+register
-        // cycle, a concurrent attach — can never adopt.
-        let mut registry = AttachmentRegistry::default();
-        registry.register("s1", vec![]);
-        assert!(!registry.record_attach(
-            "s1",
-            &[],
-            &json!({ "lastEventCursor": { "generation": "g", "sequence": 9 } }),
-            None
-        ));
-        let entry = registry.restore_entries()[0].1.clone();
-        assert!(entry.cursor.is_none(), "the unguarded response never adopts");
     }
 }

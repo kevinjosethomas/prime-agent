@@ -184,8 +184,10 @@ pub fn is_kernel_not_running(error: &anyhow::Error) -> bool {
 }
 
 /// Unwrap a settled response into its `data`, surfacing the daemon
-/// refusal as a typed [`RequestRejected`] on failure.
-pub(super) fn response_data_or_error(name: &str, response: DaemonResponse) -> Result<Value> {
+/// refusal as a typed [`RequestRejected`] on failure. `pub(crate)` for the
+/// managed session's `request_ok`: the typed refusal (error info included)
+/// is the crate's shared surface, not to be reinvented.
+pub(crate) fn response_data_or_error(name: &str, response: DaemonResponse) -> Result<Value> {
     if !response.success {
         let message = response
             .error
