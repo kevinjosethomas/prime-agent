@@ -261,7 +261,7 @@ pub(crate) async fn connect_direct(
         let alive = Arc::clone(&alive);
         let owner = Arc::clone(&owner);
         let active_session_id = ticket.active_session_id.clone();
-        let reader_task = tokio::spawn(async move {
+        tokio::spawn(async move {
             while let Ok(Some(frame)) = reader.read_frame().await {
                 let header_type = frame
                     .header
