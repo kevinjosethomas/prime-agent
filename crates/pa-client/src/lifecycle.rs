@@ -2141,11 +2141,11 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let socket = dir.path().join("i10.sock");
         let listener = UnixListener::bind(&socket).unwrap();
-        let release_old = std::sync::Arc::new(tokio::sync::Notify::new());
-        let release_new = std::sync::Arc::new(tokio::sync::Notify::new());
+        // The oneshot hold: deterministic wake — no permit races.
+        let (release_old_tx, release_old_rx) = tokio::sync::oneshot::channel::<()>();
+        let release_old_tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(release_old_tx)));
         {
-            let release_old = std::sync::Arc::clone(&release_old);
-            let release_new = std::sync::Arc::clone(&release_new);
+            let mut release_old_rx = release_old_rx;
             tokio::spawn(async move {
                 let hello = json!({
                     "type": "daemon_hello",
@@ -2170,7 +2170,7 @@ mod tests {
                         let envelope: Value = serde_json::from_str(line.trim()).unwrap();
                         let command = envelope["command"]["type"].as_str().unwrap_or_default();
                         if command == "attach" {
-                            release_old.notified().await;
+                            let _ = (&mut release_old_rx).await;
                         }
                         let response = json!({
                             "type": "response",
@@ -2222,8 +2222,7 @@ mod tests {
                         .await
                         .unwrap();
                 }
-                let _ = release_new;
-            });
+                });
         }
         let (session, mut events) = DaemonClientSession::start(config(&socket)).await.unwrap();
         wait_connected(&mut events).await;
@@ -2261,7 +2260,13 @@ mod tests {
         // boundary — covered by the registry's epoch gate; here we assert
         // the coherent capture: the post-swap request adopts the NEW
         // cursor and the registry holds ONLY the new adoption.
-        release_old.notify_one();
+        release_old_tx
+            .lock()
+            .unwrap()
+            .take()
+            .expect("released once")
+            .send(())
+            .expect("the mock lives");
         let baseline = tokio::time::timeout(Duration::from_secs(10), old_attach)
             .await
             .expect("the held old attach settled")
