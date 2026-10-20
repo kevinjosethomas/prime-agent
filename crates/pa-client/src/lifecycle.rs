@@ -2143,7 +2143,7 @@ mod tests {
         let listener = UnixListener::bind(&socket).unwrap();
         // The oneshot hold: deterministic wake — no permit races.
         let (release_old_tx, release_old_rx) = tokio::sync::oneshot::channel::<()>();
-        let release_old_tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(release_old_tx)));
+        let release_old_tx = std::sync::Mutex::new(Some(release_old_tx));
         {
             let mut release_old_rx = release_old_rx;
             tokio::spawn(async move {
