@@ -110,7 +110,7 @@ fn factory_entry(spec_id: &str, spec: &serde_json::Value) -> HarnessEntry {
 }
 
 /// One factory entry's on-disk shape: the spec rides under `machine` (the
-/// dag sugar under `dag`), exactly like `create_factory` stores it.
+/// dag sugar under `dag`), matching the saved factory entry format.
 fn machine_entry(spec_id: &str, spec: &serde_json::Value) -> HarnessEntry {
     factory_entry(spec_id, &json!({ "machine": spec }))
 }
@@ -218,7 +218,7 @@ fn a_null_machine_falls_through_to_the_dag_spec() {
         dir.path(),
         &[
             // The poisoned shape only the /refine writer can store: the
-            // kernel's Python `create_factory` writes exactly one of the
+            // stored factory entry carries exactly one of the
             // two keys; the planner's null-is-absent validation accepts
             // the dag form with an explicit null machine.
             factory_entry(

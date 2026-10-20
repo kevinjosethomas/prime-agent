@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Hosted real-daemon factory recovery receipt; TS has no advertised factory lane.
 
-The Rust kernel runs a real factory child, fails its declared JSON output,
-resumes the same entry, and binds the second child's valid output. Historical
-TS absence is scoped to its actual capability advertisement, not full parity.
+The Rust kernel runs a real factory child from a user-library MACHINE.md
+(the retained authoring path), fails its declared JSON output, resumes the
+same entry, and binds the second child's valid output. Historical TS absence
+is scoped to its actual capability advertisement, not full parity.
 """
 import argparse
 import http.server
@@ -22,16 +23,27 @@ from review_goal_fixture_lifecycle import OwnedProcesses, TAG, finish
 from review_restore_notice_parity import texts
 
 MARKER = 'FACTORY_RECOVERY_RESULT='
-CELL = '''import asyncio, json, time
-factory_harness = rlm.get_harness_state()
-factory_harness.create_factory('Recovery fixture', 'Actual factory output recovery', id='recovery-fixture', machine={
+FIXTURE_MACHINE_SPEC = json.dumps({
     'states': [{'id': 'work', 'entry': True, 'max_entries': 1,
                 'subagent': {'prompt': 'FACTORY_RECOVERY_CHILD'},
                 'outputs': [{'name': 'data', 'type': 'json'}]},
                {'id': 'verified', 'max_entries': 1,
                 'subagent': {'prompt': 'FACTORY_RECOVERY_CHILD_VERIFY'}}],
     'transitions': [{'from': 'work', 'to': 'verified',
-        'when': {'output': 'data', 'path': 'ok', 'op': 'eq', 'value': True}}]})
+        'when': {'output': 'data', 'path': 'ok', 'op': 'eq', 'value': True}}]},
+    indent=2)
+LIBRARY_MACHINE = f'''---
+name: recovery-fixture
+description: Fail a declared JSON output once, resume the paused entry, and bind the valid output.
+version: 1
+author: Factory fixture
+---
+
+```machine-spec
+{FIXTURE_MACHINE_SPEC}
+```
+'''
+CELL = '''import json
 factory_started = await rlm.factory.run('recovery-fixture')
 print('FACTORY_RECOVERY_RESULT=' + json.dumps(factory_started))'''
 
@@ -128,6 +140,9 @@ def observe(binary, kind, root, observed):
         'baseUrl': f'http://127.0.0.1:{server.server_port}/v1', 'models': [{
             'id': 'parity-1', 'name': 'Factory fixture', 'reasoning': False,
             'contextWindow': 128000, 'maxTokens': 4096}]}}}))
+    machines = root / 'agent' / 'machines' / 'recovery-fixture'
+    machines.mkdir(parents=True, exist_ok=True)
+    (machines / 'MACHINE.md').write_text(LIBRARY_MACHINE)
     path = root / 'd.sock'
     scope = OwnedProcesses(binary, root, path)
     daemon = control = None

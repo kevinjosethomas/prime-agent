@@ -10,9 +10,16 @@ transition that waits for every predecessor, so fan-in nodes never start
 after a single parent settles with a blocked second transition). Wait
 states are specified for the communication series but gated here:
 the watch host handlers (``rlm.watch.*``) do not exist yet, so a state
-carrying a ``wait`` block is rejected at write time.
+carrying a ``wait`` block is rejected at validation time.
 
-This module implements the write-time dry run for both forms -- the machine
+A stored factory entry is a runtime instance in the shared harness store:
+host refinement runs write the store (the factory preflight only reads it),
+and this module reads saved entries through the private saved-entry reader
+in ``_harness_entries``. The authoring path is the machine library:
+``MACHINE.md`` files validated at import time (``prime-agent factory
+import``) and run directly (``rlm.factory.run('<name>')``).
+
+This module implements the validation dry run for both forms -- the machine
 validator, the dag-to-machine compiler, the unified entry point
 (``validate_factory_spec`` detects the form), and a canonicalizer that
 applies defaults and returns the canonical MACHINE form -- plus the
@@ -34,8 +41,8 @@ guide.
 
 The namespace is opt-in: while the ``factory.enabled`` setting is off (the
 default; the user turns it on with ``/factory on``), every ``rlm.factory``
-call except ``help()`` and every factory harness write refuses with one
-clean message (``FACTORY_DISABLED_MESSAGE``), never a crash.
+call except ``help()`` refuses with one clean message
+(``FACTORY_DISABLED_MESSAGE``), never a crash.
 """
 
 from __future__ import annotations
@@ -52,6 +59,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
+
+from ._harness_entries import SavedHarnessEntries
 
 FAILURE_POLICIES: tuple[str, ...] = ("fail_fast", "continue", "escalate")
 PORT_TYPES: tuple[str, ...] = ("text", "json")
@@ -1523,6 +1532,10 @@ class FactoryExecutor:
     ``rlm.host_request``. ``now`` (default ``time.monotonic``) and ``sleep``
     (default ``asyncio.sleep``) are injectable: budgets measure admission
     to settlement and rate-limit backoff is testable with fake sleeps.
+    ``harness`` is injectable too: the saved-entry store stored specs and
+    subagent references resolve from (default: the private read-only
+    reader over the shared harness store).
+
 
     Machine semantics: admission enters every entry state; each settle is
     queued and its outgoing transitions evaluated once -- every guard that
@@ -1556,9 +1569,9 @@ class FactoryExecutor:
     async def run(self, spec_id: str, *, name: str | None = None) -> dict[str, Any]:
         """Validate a stored factory spec and start a run of it.
 
-        The dry run happens in two halves. Write time (``create_factory``)
-        validated the machine; here ``run`` re-validates and canonicalizes
-        it (dag sugar compiles to machine form), then resolves every state's
+        The dry run happens in two halves. The store's writer (the host)
+        validated the machine at store time; here ``run`` re-validates and
+        canonicalizes it (dag sugar compiles to machine form), then resolves every state's
         subagent reference, reporting ALL failures in one ``ValueError`` and
         starting nothing on any failure. The resolved state count and
         ``max_parallel`` are reported in the result; actual admission limits
@@ -2217,9 +2230,7 @@ class FactoryExecutor:
     def _resolve_harness(self) -> Any:
         if self._harness is not None:
             return self._harness
-        from . import rlm as rlm_namespace
-
-        return rlm_namespace.harness
+        return SavedHarnessEntries()
 
     def _require_run(self, run_id: str) -> FactoryRun:
         run = self._runs.get(run_id)
@@ -3762,9 +3773,8 @@ def factory_enabled() -> bool:
     means disabled -- the opt-in default is fail-closed, so an unreadable
     settings file refuses the factory instead of silently enabling it.
     """
-    # One home for the agent-dir resolution (harness.py owns it); imported
-    # lazily because harness imports this module at its own top.
-    from .harness import _agent_dir
+    # One home for the agent-dir resolution (_harness_entries owns it).
+    from ._harness_entries import _agent_dir
 
     path = _agent_dir() / _SETTINGS_FILE_NAME
     try:
@@ -3785,8 +3795,8 @@ def require_factory_enabled() -> None:
 
     Every gated surface funnels through here -- the ``rlm.factory``
     namespace calls (``run``/``status``/``stop``/``resume``, and the later
-    ``graph``/``watch``) and the factory harness writes -- so the refusal is
-    one message at every seam. ``help()`` is deliberately exempt: the
+    ``graph``/``watch``) and the out-of-band activity lane -- so the refusal
+    is one message at every seam. ``help()`` is deliberately exempt: the
     authoring reference must stay readable before opting in.
     """
     if not factory_enabled():
@@ -4903,87 +4913,66 @@ The factory is opt-in: it ships disabled, and the user turns it on with
 `/factory on` (`/factory off` disables it again, `/factory status` reports
 it; the persisted setting is `factory.enabled` in the agent dir's
 settings.json). While it is disabled, every `rlm.factory` call except
-`help()` — run, status, stop, and resume — plus every factory harness
-write (`create_factory` and updates of factory entries) refuses with one
+`help()` — run, status, stop, and resume — refuses with one
 clean error:
 "the factory is disabled; run /factory on to enable it". `help()` answers
 while disabled, so this guide stays readable before opting in.
 
-## Store the spec
+## Author and store the spec
 
-A factory spec is a continual-harness entry of kind `factory`.
-`rlm.harness.create_factory(...)` validates at write time; an invalid spec
-is never stored (generic `create`/`update` funnel through the same check).
-The spec rides `machine=` (the native form) or `dag=` (sugar that compiles
-to machine form) — pass exactly one. This review/fix loop is the shipped
-pr-manager shape:
+A stored factory spec is a continual-harness entry of kind `factory` — a
+runtime instance in the shared harness store, which host refinement runs
+write and this kernel only reads (`run` re-validates a stored spec before
+starting it). The authoring path
+is the machine library: a machine is a `MACHINE.md` file (frontmatter plus
+one fenced `machine-spec` block) imported with
+`prime-agent factory import <path>` — the import validates, so an invalid
+machine never persists — and `await rlm.factory.run('<name>')` runs a
+library machine directly, no entry created. The spec rides the `machine`
+form (the native shape below) or the `dag` form (sugar that compiles to
+machine form). This review/fix loop is the shipped `pr-manager` library
+machine's spec, as its `machine-spec` fence stores it:
 
-```python
-rlm.harness.create_factory(
-    "pr-manager",
-    "Drive a PR through review/fix cycles, then keep a resident watcher on it.",
-    id="pr-manager",
-    machine={
-        "run": {"budget_ms": 1_800_000, "max_parallel": 8, "max_transitions": 24},
-        "states": [
-            {
-                "id": "entry", "entry": True,
-                "subagent": {"prompt": (
-                    "Identify the pull request for the current branch with "
-                    "`gh pr view --json url`. Return a fenced json block of the form "
-                    '{"pr_url": "https://github.com/owner/repo/pull/N"}. '
-                    "Output only the json block.")},
-                "outputs": [{"name": "pr_url", "type": "json"}],
-            },
-            {
-                "id": "reviewing",
-                "subagent": {"prompt": (
-                    "Review the pull request at {pr_url} for merge-blocking "
-                    "defects with `gh pr diff`. When a fix report is bound below, "
-                    "verify the described fixes landed. Return a fenced json block "
-                    'of the form {"verdict": {"approved": <true|false>, '
-                    '"findings": ["at most three one-line findings"]}}. '
-                    "Output only the json block.")},
-                "inputs": [
-                    {"name": "pr_url", "type": "json", "from": "entry.pr_url"},
-                    {"name": "fix_report", "type": "json", "from": "fixing.fix_report", "optional": True},
-                ],
-                "outputs": [{"name": "verdict", "type": "json"}],
-                "max_entries": 4,
-            },
-            {
-                "id": "fixing",
-                "subagent": {"prompt": (
-                    "Address the review findings in the verdict below. First "
-                    "reconcile any changes an earlier attempt left in the working "
-                    "tree. Make the smallest targeted fixes, run the relevant "
-                    "tests, and return a fenced json block of the form "
-                    '{"fix_report": {"fixed": ["finding that was addressed"], '
-                    '"skipped": ["finding left alone and why"]}}. '
-                    "Output only the json block.\n\n{verdict}")},
-                "inputs": [{"name": "verdict", "type": "json", "from": "reviewing.verdict"}],
-                "outputs": [{"name": "fix_report", "type": "json"}],
-                "max_entries": 3,
-            },
-            {
-                "id": "monitoring",
-                "subagent": {"prompt": "Stay resident as the watcher for {pr_url}: "
-                    "report the `gh pr checks` state once, then remain available for "
-                    "follow-up questions."},
-                "inputs": [{"name": "pr_url", "type": "json", "from": "entry.pr_url"}],
-                "lifecycle": "resident",
-            },
-        ],
-        "transitions": [
-            {"from": "entry", "to": "reviewing"},
-            {"from": "reviewing", "to": "fixing",
-             "when": {"output": "verdict", "path": "approved", "op": "eq", "value": False}},
-            {"from": "reviewing", "to": "monitoring",
-             "when": {"output": "verdict", "path": "approved", "op": "eq", "value": True}},
-            {"from": "fixing", "to": "reviewing"},
-        ],
+```json
+{
+  "run": {"budget_ms": 1800000, "max_parallel": 8, "max_transitions": 24},
+  "states": [
+    {
+      "id": "entry", "entry": true,
+      "subagent": {"prompt": "Identify the pull request for the current branch with `gh pr view --json url`. Return a fenced json block of the form {\"pr_url\": \"https://github.com/owner/repo/pull/N\"}. Output only the json block."},
+      "outputs": [{"name": "pr_url", "type": "json"}]
     },
-)
+    {
+      "id": "reviewing",
+      "subagent": {"prompt": "Review the pull request at {pr_url} for merge-blocking defects with `gh pr diff`. When a fix report is bound below, verify the described fixes landed. Return a fenced json block of the form {\"verdict\": {\"approved\": <true|false>, \"findings\": [\"at most three one-line findings\"]}}. Output only the json block."},
+      "inputs": [
+        {"name": "pr_url", "type": "json", "from": "entry.pr_url"},
+        {"name": "fix_report", "type": "json", "from": "fixing.fix_report", "optional": true}
+      ],
+      "outputs": [{"name": "verdict", "type": "json"}],
+      "max_entries": 4
+    },
+    {
+      "id": "fixing",
+      "subagent": {"prompt": "Address the review findings in the verdict below. First reconcile any changes an earlier attempt left in the working tree. Make the smallest targeted fixes, run the relevant tests, and return a fenced json block of the form {\"fix_report\": {\"fixed\": [\"finding that was addressed\"], \"skipped\": [\"finding left alone and why\"]}}. Output only the json block.\n\n{verdict}"},
+      "inputs": [{"name": "verdict", "type": "json", "from": "reviewing.verdict"}],
+      "outputs": [{"name": "fix_report", "type": "json"}],
+      "max_entries": 3
+    },
+    {
+      "id": "monitoring",
+      "subagent": {"prompt": "Stay resident as the watcher for {pr_url}: report the `gh pr checks` state once, then remain available for follow-up questions."},
+      "inputs": [{"name": "pr_url", "type": "json", "from": "entry.pr_url"}],
+      "lifecycle": "resident"
+    }
+  ],
+  "transitions": [
+    {"from": "entry", "to": "reviewing"},
+    {"from": "reviewing", "to": "fixing", "when": {"output": "verdict", "path": "approved", "op": "eq", "value": false}},
+    {"from": "reviewing", "to": "monitoring", "when": {"output": "verdict", "path": "approved", "op": "eq", "value": true}},
+    {"from": "fixing", "to": "reviewing"}
+  ]
+}
 ```
 
 The example exercises the core forms: `entry` is an entry state; the two
@@ -5118,48 +5107,32 @@ Sugar, not a second semantics: each node becomes a state entered once, a
 node with no effective dependencies becomes an entry state, and the full
 dependency set — `depends_on` plus every `inputs[].from` source — compiles
 to ONE join transition, so a fan-in node waits for every parent. The
-shipped review-sweep shape:
+shipped `review-sweep` library machine was authored in dag form; its
+`machine-spec` fence carries the dag block:
 
-```python
-rlm.harness.create_factory(
-    "review-sweep",
-    "Sweep the branch's changed files for findings, then merge them into one list.",
-    id="review-sweep",
-    dag={
-        "run": {"budget_ms": 900_000, "max_parallel": 8},
-        "nodes": [
-            {
-                "id": "files",
-                "subagent": {"prompt": (
-                    "List the files the current branch changes relative to the "
-                    "base branch, capped at the eight most relevant. Return "
-                    'a fenced json block of the form {"files": ["path/to/file", ...]}. '
-                    "Output only the json block.")},
-                "outputs": [{"name": "files", "type": "json"}],
-            },
-            {
-                "id": "review",
-                "subagent": {"prompt": (
-                    "Review the changed file {files} for merge-blocking defects: "
-                    "correctness bugs, regressions, unhandled error paths, missing "
-                    "tests. Reply one short line: `<path>: <the most serious "
-                    "problem, or 'clean'>`.")},
-                "inputs": [{"name": "files", "type": "json", "from": "files.files"}],
-                "outputs": [{"name": "found", "type": "text"}],
-                "foreach": {"over": "files", "max": 8},
-            },
-            {
-                "id": "report",
-                "subagent": {"prompt": (
-                    "Merge the review lines below into one fenced json block of "
-                    'the form {"issues": [{"file": "path", "finding": "..."}]} '
-                    "listing every file that is not clean. Output only the json "
-                    "block.\n\n{found}")},
-                "inputs": [{"name": "found", "type": "text", "from": "review.found"}],
-            },
-        ],
+```json
+{
+  "run": {"budget_ms": 900000, "max_parallel": 8},
+  "nodes": [
+    {
+      "id": "files",
+      "subagent": {"prompt": "List the files the current branch changes relative to the base branch, capped at the eight most relevant. Return a fenced json block of the form {\"files\": [\"path/to/file\", ...]}. Output only the json block."},
+      "outputs": [{"name": "files", "type": "json"}]
     },
-)
+    {
+      "id": "review",
+      "subagent": {"prompt": "Review the changed file {files} for merge-blocking defects: correctness bugs, regressions, unhandled error paths, missing tests. Reply one short line: `<path>: <the most serious problem, or 'clean'>`."},
+      "inputs": [{"name": "files", "type": "json", "from": "files.files"}],
+      "outputs": [{"name": "found", "type": "text"}],
+      "foreach": {"over": "files", "max": 8}
+    },
+    {
+      "id": "report",
+      "subagent": {"prompt": "Merge the review lines below into one fenced json block of the form {\"issues\": [{\"file\": \"path\", \"finding\": \"...\"}]} listing every file that is not clean. Output only the json block.\n\n{found}"},
+      "inputs": [{"name": "found", "type": "text", "from": "review.found"}]
+    }
+  ]
+}
 ```
 
 ## Run and steer
@@ -5240,8 +5213,8 @@ watched = await rlm.factory.watch(result["run_id"], 30)
   team directory) first, the personal `machines/` library under the agent
   dir second; the earlier level wins on name conflicts. `prime-agent
   factory list | import | export` manages them: list shows only what
-  parses and validates (broken files print as warnings), import runs the same
-  write-time validation as a stored spec so an invalid machine never
+  parses and validates (broken files print as warnings), import validates the
+  spec the same way `run` does so an invalid machine never
   persists, and export copies a library machine verbatim to a fresh path
   (an existing target is refused, never overwritten). `rlm.factory.run('<name>')`
   runs a library machine directly without creating a harness entry; a
