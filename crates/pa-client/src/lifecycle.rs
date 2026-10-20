@@ -386,7 +386,6 @@ impl DaemonClientSession {
             }
             let mut driver = self.state.driver.lock().await;
             let Some(handle) = driver.handle.as_mut() else {
-                eprintln!("DBG stop: handle-None break");
                 break; // A prior stop observed and memoized the end.
             };
             tokio::select! {
@@ -396,7 +395,6 @@ impl DaemonClientSession {
                     }
                 }
                 result = &mut *handle => {
-                    eprintln!("DBG stop: handle arm {result:?}");
                     // The driver task ended: memoize the cloneable outcome
                     // once, clear the handle (no re-poll).
                     driver.handle = None;
@@ -407,8 +405,7 @@ impl DaemonClientSession {
                     if *stopped.borrow_and_update() {
                         // The settle completed and the mark flipped before
                         // the task ended: the normal completion.
-                        eprintln!("DBG stop: arm-break, mark was TRUE");
-                        break;
+                                break;
                     }
                     // The task ended WITHOUT the mark: a panicked or failed
                     // settle — finish the teardown this stop owns (the join
@@ -451,10 +448,20 @@ impl DaemonClientSession {
         // (the handle is gone): EVERY subsequent stop returns the identical
         // Err — the memo is read, never consumed (item 4).
         let outcome = self.state.driver.lock().await.memo.clone();
-        eprintln!("DBG stop tail: memo {outcome:?}");
         match outcome {
+            // A prior stop observed the driver's honest failure — every
+            // subsequent stop returns the identical Err (the memo is read,
+            // never consumed).
             Some(Err(message)) => Err(anyhow!("{message}")),
-            _ => Ok(()),
+            // A prior stop observed a driver end WITHOUT the settle: the
+            // same honest Err for every later caller — never a faked clean
+            // completion.
+            Some(Ok(())) => Err(anyhow!(
+                "the session driver ended without completing its settle"
+            )),
+            // Never memoized: the normal completion (the mark flipped), or
+            // a session with no driver to fail.
+            None => Ok(()),
         }
     }
 
