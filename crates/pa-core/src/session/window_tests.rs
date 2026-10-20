@@ -215,7 +215,7 @@ fn warm_cache_reads_only_header_and_suffix_and_append_stays_warm() {
 }
 
 #[tokio::test]
-async fn historical_refinement_is_read_only_on_trigger_not_in_hot_cache() {
+async fn historical_custom_row_is_read_only_on_trigger_not_in_hot_cache() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("audit.jsonl");
     let marker = "historical-audit-payload-".to_owned() + &"z".repeat(32_000);
@@ -225,7 +225,7 @@ async fn historical_refinement_is_read_only_on_trigger_not_in_hot_cache() {
         .collect();
     let position = rows.iter().position(|row| row["id"] == "u0").unwrap();
     let parent = rows[position]["parentId"].clone();
-    rows.insert(position, json!({"type":"custom","id":"audit","parentId":parent,"customType":"prime-agent.refinement","data":{"summary":marker}}));
+    rows.insert(position, json!({"type":"custom","id":"audit","parentId":parent,"customType":"prime-agent.audit","data":{"summary":marker}}));
     rows[position + 1]["parentId"] = json!("audit");
     let body: String = rows.into_iter().map(|row| row.to_string() + "\n").collect();
     std::fs::write(&path, &body).unwrap();
@@ -239,7 +239,7 @@ async fn historical_refinement_is_read_only_on_trigger_not_in_hot_cache() {
             .await
             .unwrap();
     let historical = manager.history_snapshot().await.unwrap();
-    assert!(historical.iter().any(|entry| matches!(entry, FileEntry::Custom { payload, .. } if payload.custom_type == "prime-agent.refinement" && payload.data.as_ref().is_some_and(|data| data["summary"] == marker))));
+    assert!(historical.iter().any(|entry| matches!(entry, FileEntry::Custom { payload, .. } if payload.custom_type == "prime-agent.audit" && payload.data.as_ref().is_some_and(|data| data["summary"] == marker))));
     assert_eq!(cold.context().messages, warm.context().messages);
 }
 
@@ -867,8 +867,8 @@ fn full_history_fixture() -> String {
         rows.push(json!({"type":"message","id":id.clone(),"parentId":parent,"message":{"role":"user","content":format!("hello {i}"),"timestamp":0}}));
         parent = Some(id);
     }
-    // One refinement audit row (the class the refine transcript's audit scan reads).
-    rows.push(json!({"type":"custom","id":"audit","parentId":parent,"customType":"prime-agent.refinement","data":{"id":"refine_0","summary":"seed","rationale":"r","expectedOutcome":"o","appliedEdits":[]}}));
+    // One custom audit row (the historical custom class the snapshot serves).
+    rows.push(json!({"type":"custom","id":"audit","parentId":parent,"customType":"prime-agent.audit","data":{"id":"audit_0","summary":"seed"}}));
     rows.into_iter().map(|row| row.to_string() + "\n").collect()
 }
 

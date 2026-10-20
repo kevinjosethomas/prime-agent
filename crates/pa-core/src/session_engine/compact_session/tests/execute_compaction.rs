@@ -1,7 +1,6 @@
 //! Compact-session tests, the execution family: the persist + rebuild
-//! run, the auto-compaction gate, the summary-delta sinks, the
-//! harness-digest snapshot, the error response, and the durable row's
-//! record.
+//! run, the auto-compaction gate, the summary-delta sinks, the error
+//! response, and the durable row's record.
 use super::*;
 use serde_json::Map;
 

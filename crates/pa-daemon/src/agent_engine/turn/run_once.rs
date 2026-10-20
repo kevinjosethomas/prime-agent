@@ -191,7 +191,7 @@ impl AgentSessionEngine {
                                         if custom.role == "custom" && !matches!(
                                             custom.payload.get("customType").and_then(Value::as_str),
                                             Some("ipython_state_restored" | "python_skills_unavailable"
-                                                | "refinement_notice" | "refinement_outcome" | "provider_retry_outcome"
+                                                | "provider_retry_outcome"
                                                 | "compaction_outcome" | "ipython_state")
                                         ))
                                 {
