@@ -241,7 +241,9 @@ impl Inner {
                 reason: reason.to_string(),
             }
         };
-        let _ = self.status_tx.send(status);
+        // send_replace RETAINS the terminal value with zero receivers: a
+        // late subscriber must see the closed state, never a stale open.
+        self.status_tx.send_replace(status);
         self.teardown.notify_waiters();
         *self
             .frame_tx
@@ -755,6 +757,13 @@ pub async fn connect(
             tokio::pin!(notified);
             notified.as_mut().enable();
             loop {
+                // The notify wake (enabled above) and this flag check
+                // together close the miss window: a close marked before the
+                // pump's first poll is caught here; one between the check
+                // and the select wakes the enabled notify.
+                if frame_inner.closed.load(Ordering::SeqCst) {
+                    break;
+                }
                 tokio::select! {
                     maybe = tap_rx.recv() => match maybe {
                         Some(frame) => {
