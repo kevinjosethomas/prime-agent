@@ -12,7 +12,7 @@
     "gen:ts": "node scripts/gen-ts.mjs",
     "verify": "node scripts/verify-drift.mjs",
     "build:validators": "tsc -p tsconfig.build.json",
-    "test": "npm run build:validators && npm run verify && tsc --noEmit && node --test tests/"
+    "test": "npm run build:validators && npm run verify && tsc --noEmit && node --test tests/conformance.test.mjs tests/production-load.test.mjs"
   },
   "devDependencies": {
     "json-schema-to-typescript": "^15.0.0",

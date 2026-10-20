@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 // shell-run commands: this npm fails as a direct execFileSync child in
 // some environments (exit 1, empty stderr); via the shell it is reliable.
 import { execSync } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,24 +37,23 @@ test("packed tarball loads with production dependencies only", async () => {
       `npm install --omit=dev --no-audit --no-fund ${join(staging, tarball)}`,
       consumer,
     );
-    const loaded = await import(
-      new URL("./node_modules/prime-agent-client-contract/dist/src/index.js", `file://${consumer}/`).href
-    );
-    assert.equal(typeof loaded.loadContract, "function");
-    assert.equal(typeof loaded.loadMetadata, "function");
-    const contract = await loaded.loadContract();
-    assert.ok(contract.validateCommand);
-    const metadata = loaded.loadMetadata();
-    assert.equal(metadata.protocol.name, "prime-agent.daemon");
-    console.log(`production load on node ${process.version}`);
-    const witness = { type: "get_state", activeSessionId: "wire" };
-    assert.ok(contract.validateCommand(witness));
-    const malformedBlock = {
-      role: "user",
-      content: [{ type: "text" }],
-      timestamp: 0,
-    };
-    assert.ok(!contract.validateAgentMessage(malformedBlock));
+    // The CONSUMER-side load: a separate node process in the consumer
+    // directory imports the package by NAME (package.json `main` resolution)
+    // and runs real validations — the exact shape PR4's adoption will use.
+    const probe = `import { loadContract, loadMetadata, checkInboundFrame } from "prime-agent-client-contract";
+const contract = await loadContract();
+if (typeof contract.validateCommand !== "function") throw new Error("no validateCommand");
+const witness = { type: "get_state", activeSessionId: "wire" };
+if (!contract.validateCommand(witness)) throw new Error("accepted command rejected");
+const malformedBlock = { role: "user", content: [{ type: "text" }], timestamp: 0 };
+if (contract.validateAgentMessage(malformedBlock)) throw new Error("malformed known-kind block accepted");
+if (loadMetadata().protocol.name !== "prime-agent.daemon") throw new Error("metadata broken");
+const verdict = checkInboundFrame(contract, { type: "brand_new_kind", kept: 1 });
+if (!verdict.unknownKind || !verdict.accepted) throw new Error("unknown kind not passed through");
+console.log("production load on node " + process.version + " via package main");`;
+    writeFileSync(join(consumer, "probe.mjs"), probe);
+    const out = run("node probe.mjs", consumer);
+    console.log(out.trim());
   } finally {
     rmSync(staging, { recursive: true, force: true });
   }
