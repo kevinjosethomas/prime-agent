@@ -39,7 +39,7 @@ test('a timeout on a queued line is Uncertain — never resend', async () => {
   const stop = await startMock(socketPath, 'silent');
   const connection = await DaemonConnection.connect(socketPath);
   await assert.rejects(
-    connection.request({ type: 'get_connection_state' }, 150),
+    connection.request({ type: 'get_connection_state', activeSessionId: 'active-1' }, 150),
     (error) => error instanceof UncertainError && error.kind === 'Uncertain',
   );
   connection.close();
@@ -51,7 +51,7 @@ test('a daemon refusal is Rejected with errorInfo preserved', async () => {
   const stop = await startMock(socketPath, 'refuse');
   const connection = await DaemonConnection.connect(socketPath);
   await assert.rejects(
-    connection.requestOk({ type: 'get_connection_state' }),
+    connection.requestOk({ type: 'get_connection_state', activeSessionId: 'active-1' }),
     (error) =>
       error instanceof RejectedError &&
       error.errorInfo.code === 'session_already_active' &&
@@ -65,10 +65,10 @@ test('socket death under a sent line is Uncertain; later sends are NotSent', asy
   const socketPath = tmpSocket('die');
   const stop = await startMock(socketPath, 'die');
   const connection = await DaemonConnection.connect(socketPath);
-  const underDeath = connection.request({ type: 'get_connection_state' }, 5000);
+  const underDeath = connection.request({ type: 'get_connection_state', activeSessionId: 'active-1' }, 5000);
   await assert.rejects(underDeath, (error) => error instanceof UncertainError);
   await assert.rejects(
-    connection.request({ type: 'get_connection_state' }, 5000),
+    connection.request({ type: 'get_connection_state', activeSessionId: 'active-1' }, 5000),
     (error) => error instanceof NotSentError,
   );
   connection.close();
@@ -79,8 +79,8 @@ test('the pending cap refuses as a provable NotSent', async () => {
   const socketPath = tmpSocket('cap');
   const stop = await startMock(socketPath, 'silent');
   const connection = await DaemonConnection.connect(socketPath, { maxPending: 1 });
-  const first = connection.request({ type: 'get_connection_state' }, 500);
-  const second = connection.request({ type: 'get_connection_state' }, 500);
+  const first = connection.request({ type: 'get_connection_state', activeSessionId: 'active-1' }, 500);
+  const second = connection.request({ type: 'get_connection_state', activeSessionId: 'active-1' }, 500);
   await assert.rejects(second, (error) => error instanceof NotSentError);
   await first.catch(() => {});
   connection.close();
@@ -97,7 +97,7 @@ test('a resolved answer never downgrades under a racing close (biased select pro
     const socketPath = tmpSocket(`race-${i}`);
     const stop = await startMock(socketPath, 'echo');
     const connection = await DaemonConnection.connect(socketPath);
-    const pending = connection.request({ type: 'get_connection_state' });
+    const pending = connection.request({ type: 'get_connection_state', activeSessionId: 'active-1' });
     connection.close();
     const outcome = await pending.then(
       () => 'success',
@@ -117,7 +117,7 @@ test('close tears down an in-flight request with the honest class', async () => 
   const socketPath = tmpSocket('close-inflight');
   const stop = await startMock(socketPath, 'silent');
   const connection = await DaemonConnection.connect(socketPath);
-  const inFlight = connection.request({ type: 'get_connection_state' }, 60_000);
+  const inFlight = connection.request({ type: 'get_connection_state', activeSessionId: 'active-1' }, 60_000);
   connection.close();
   // Structural, not timing-dependent: if close raced before the line was
   // queued the provable NotSent wins; after the first poll the line may be

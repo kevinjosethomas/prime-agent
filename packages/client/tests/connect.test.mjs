@@ -39,7 +39,7 @@ test('requests after close fail as provable NotSent', async () => {
   const connection = await DaemonConnection.connect(socketPath);
   connection.close();
   await assert.rejects(
-    connection.request({ type: 'get_connection_state' }),
+    connection.request({ type: 'get_connection_state', activeSessionId: 'active-1' }),
     (error) => error instanceof NotSentError && error.kind === 'NotSent',
   );
   await stop();

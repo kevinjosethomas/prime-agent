@@ -29,7 +29,7 @@ test('in-flight requests at overflow stay Uncertain with cause overflow', async 
   const socketPath = tmpSocket('overflow-inflight');
   const stop = await startMock(socketPath, 'flood');
   const connection = await DaemonConnection.connect(socketPath, { frameBuffer: 2 });
-  const inFlight = connection.request({ type: 'get_connection_state' }, 60_000);
+  const inFlight = connection.request({ type: 'get_connection_state', activeSessionId: 'active-1' }, 60_000);
   await assert.rejects(
     inFlight,
     (error) => error instanceof UncertainError && error.cause === 'overflow',
@@ -44,7 +44,7 @@ test('new requests after overflow are NotSent with the overflow cause surfaced',
   const connection = await DaemonConnection.connect(socketPath, { frameBuffer: 2 });
   await assert.rejects(connection.nextFrame(), (error) => error instanceof OverflowError);
   await assert.rejects(
-    connection.request({ type: 'get_connection_state' }),
+    connection.request({ type: 'get_connection_state', activeSessionId: 'active-1' }),
     (error) => error instanceof NotSentError && /overflow/.test(error.message),
   );
   connection.close();
