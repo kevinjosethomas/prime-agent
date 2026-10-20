@@ -1102,11 +1102,7 @@ fn spawn_restores(
                         epoch,
                     );
                     if adopted {
-                        let _ = restore_tx.send(RestoreOutcome::Done {
-                            id,
-                            data,
-                            epoch,
-                        });
+                        let _ = restore_tx.send(RestoreOutcome::Done { id, data, epoch });
                     } else {
                         let _ = restore_tx.send(RestoreOutcome::Abandoned);
                     }
@@ -1792,9 +1788,7 @@ mod tests {
         })
         .await
         .expect("the hung connection's BOTH halves ended when the consumer dropped");
-        session.stop()
-            .await
-            .expect("the settle completed honestly");
+        session.stop().await.expect("the settle completed honestly");
     }
 
     #[tokio::test]
@@ -1922,9 +1916,7 @@ mod tests {
         })
         .await;
         assert!(took.is_ok(), "the pre-entry loss was taken at entry");
-        session.stop()
-            .await
-            .expect("the settle completed honestly");
+        session.stop().await.expect("the settle completed honestly");
     }
 
     #[tokio::test]
@@ -1982,8 +1974,6 @@ mod tests {
         })
         .await;
         assert!(saw_reattached, "only the new-epoch restore reattached");
-        session.stop()
-            .await
-            .expect("the settle completed honestly");
+        session.stop().await.expect("the settle completed honestly");
     }
 }

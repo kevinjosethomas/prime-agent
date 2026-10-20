@@ -716,9 +716,7 @@ impl DaemonClient {
                                     ));
                                 }
                                 if let Ok(text) = std::str::from_utf8(&line) {
-                                    if let Ok(value) =
-                                        serde_json::from_str::<Value>(text.trim())
-                                    {
+                                    if let Ok(value) = serde_json::from_str::<Value>(text.trim()) {
                                         if value.get("type").and_then(Value::as_str)
                                             == Some("daemon_hello")
                                         {
@@ -842,51 +840,51 @@ impl DaemonClient {
                 }
             }
             if !seed_fatal {
-            loop {
-                let buffer = match reader.fill_buf().await {
-                    // The socket closed: a trailing unterminated line still
-                    // dispatches once, like `read_line`'s last line at EOF,
-                    // before the teardown.
-                    Ok([]) => {
-                        if !partial.is_empty() {
-                            let line = std::mem::take(&mut partial);
-                            dispatch(&line);
+                loop {
+                    let buffer = match reader.fill_buf().await {
+                        // The socket closed: a trailing unterminated line still
+                        // dispatches once, like `read_line`'s last line at EOF,
+                        // before the teardown.
+                        Ok([]) => {
+                            if !partial.is_empty() {
+                                let line = std::mem::take(&mut partial);
+                                dispatch(&line);
+                            }
+                            break;
                         }
-                        break;
-                    }
-                    Ok(buffer) => buffer,
-                    Err(_) => break,
-                };
-                if let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
-                    // The cap covers the line without its newline, like the
-                    // bounded readers' byte accounting — the spill's already
-                    // accumulated bytes count toward it too, so a split line
-                    // whose head passed the cap alone still tears down.
-                    if max_frame_bytes.is_some_and(|cap| partial.len() + newline > cap) {
-                        break;
-                    }
-                    let line: Vec<u8> = if partial.is_empty() {
-                        buffer[..newline].to_vec()
-                    } else {
-                        partial.extend_from_slice(&buffer[..newline]);
-                        std::mem::take(&mut partial)
+                        Ok(buffer) => buffer,
+                        Err(_) => break,
                     };
-                    let consumed = newline + 1;
-                    reader.consume(consumed);
-                    if !dispatch(&line) {
-                        break;
+                    if let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
+                        // The cap covers the line without its newline, like the
+                        // bounded readers' byte accounting — the spill's already
+                        // accumulated bytes count toward it too, so a split line
+                        // whose head passed the cap alone still tears down.
+                        if max_frame_bytes.is_some_and(|cap| partial.len() + newline > cap) {
+                            break;
+                        }
+                        let line: Vec<u8> = if partial.is_empty() {
+                            buffer[..newline].to_vec()
+                        } else {
+                            partial.extend_from_slice(&buffer[..newline]);
+                            std::mem::take(&mut partial)
+                        };
+                        let consumed = newline + 1;
+                        reader.consume(consumed);
+                        if !dispatch(&line) {
+                            break;
+                        }
+                    } else {
+                        // No newline in the buffered bytes: the cap also bounds
+                        // the partial frame accumulating across fills.
+                        if max_frame_bytes.is_some_and(|cap| partial.len() + buffer.len() > cap) {
+                            break;
+                        }
+                        partial.extend_from_slice(buffer);
+                        let read = buffer.len();
+                        reader.consume(read);
                     }
-                } else {
-                    // No newline in the buffered bytes: the cap also bounds
-                    // the partial frame accumulating across fills.
-                    if max_frame_bytes.is_some_and(|cap| partial.len() + buffer.len() > cap) {
-                        break;
-                    }
-                    partial.extend_from_slice(buffer);
-                    let read = buffer.len();
-                    reader.consume(read);
                 }
-            }
             }
             // The supervisor socket closed: pending requests fail now and the
             // death watch wakes the reconnect driver.
