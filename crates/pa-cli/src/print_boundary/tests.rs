@@ -174,16 +174,6 @@ async fn admit(
     model: &Model,
     prompt: String,
 ) -> Result<(), String> {
-    admit_with_harness_dir(boundary, engine, model, prompt, std::path::PathBuf::new()).await
-}
-
-async fn admit_with_harness_dir(
-    boundary: &mut TurnBoundary,
-    engine: &SessionEngine,
-    model: &Model,
-    prompt: String,
-    global_harness_dir: std::path::PathBuf,
-) -> Result<(), String> {
     boundary.run_pre_turn(engine, model, None).await?;
     engine
         .session
@@ -191,9 +181,7 @@ async fn admit_with_harness_dir(
         .await
         .expect("the prompt admits");
     engine.session.agent().wait_for_idle().await;
-    boundary
-        .run_at_settled_turn(engine, model, None, global_harness_dir)
-        .await
+    boundary.run_at_settled_turn(engine, model, None).await
 }
 
 /// The mid-turn-request shape: a `compact.run` scheduled DURING a turn
@@ -211,9 +199,7 @@ async fn admit_turn_with_scheduled_request(
         .await
         .expect("the prompt admits");
     engine.session.agent().wait_for_idle().await;
-    boundary
-        .run_at_settled_turn(engine, model, None, std::path::PathBuf::new())
-        .await
+    boundary.run_at_settled_turn(engine, model, None).await
 }
 
 async fn outcome_rows(engine: &SessionEngine) -> Vec<pa_types::session::CustomMessageEntry> {
@@ -600,34 +586,6 @@ fn capture_sink() -> (EventSink, std::sync::Arc<std::sync::Mutex<Vec<Value>>>) {
     (sink, events)
 }
 
-async fn refine_rows(engine: &SessionEngine) -> Vec<pa_types::session::CustomMessage> {
-    engine
-        .session
-        .entries()
-        .await
-        .into_iter()
-        .filter_map(|entry| match entry {
-            FileEntry::CustomMessage { payload, base } => {
-                let row = pa_types::session::CustomMessage {
-                    custom_type: payload.custom_type.clone(),
-                    content: payload.content.clone(),
-                    display: payload.display,
-                    details: payload.details.clone(),
-                    timestamp: base
-                        .timestamp
-                        .as_deref()
-                        .map(pa_core::session::timestamp_to_millis)
-                        .unwrap_or_default(),
-                    rest: payload.rest,
-                };
-                (row.custom_type == "refinement_outcome" || row.custom_type == "refinement_notice")
-                    .then_some(row)
-            }
-            _ => None,
-        })
-        .collect()
-}
-
 #[tokio::test]
 async fn requested_compaction_streams_the_ts_event_pair() {
     let _faux = FAUX_TEST_LOCK.lock().await;
@@ -691,12 +649,6 @@ async fn requested_compaction_streams_the_ts_event_pair() {
     assert_eq!(events[end_at]["aborted"], false);
     assert_eq!(events[end_at]["willRetry"], false);
     assert_eq!(events[end_at]["customInstructions"], "focus on the goal");
-    assert!(
-        !events
-            .iter()
-            .any(|event| event["type"] == "refine_complete"),
-        "no refinement ran"
-    );
     assert_eq!(
         events
             .iter()
@@ -1264,17 +1216,9 @@ async fn pre_turn_abort_arm_drops_pending_requests_and_continues() {
         .turn_boundary
         .schedule_compaction(Some("stale request".to_string()))
         .await;
-    engine
-        .turn_boundary
-        .schedule_refine(pa_core::session_engine::turn_boundary::PendingRefine {
-            instructions: None,
-            global: false,
-        })
-        .await;
     events.lock().unwrap().clear();
     boundary.run_pre_turn(&engine, &model, None).await.unwrap();
     assert!(!engine.turn_boundary.compaction_scheduled().await);
-    assert!(!engine.turn_boundary.refine_pending().await);
     assert!(events.lock().unwrap().is_empty(), "no compaction events");
     assert_eq!(compaction_count(&engine).await, 0);
     assert!(outcome_rows(&engine).await.is_empty());
@@ -1284,111 +1228,6 @@ async fn pre_turn_abort_arm_drops_pending_requests_and_continues() {
     assert_eq!(compaction_count(&engine).await, 0);
     let last = last_assistant(&engine).await.expect("a settled turn");
     assert_eq!(last.stop_reason, pa_types::ai::StopReason::Stop);
-}
-
-#[tokio::test]
-async fn requested_refinement_failure_emits_the_refine_failed_event() {
-    let _faux = FAUX_TEST_LOCK.lock().await;
-    // The refiner consumes the next faux response; a non-JSON reply fails the
-    // plan parse.
-    let (engine, _dir, model) = faux_engine_with_settings(
-        json!({ "responses": [{"text": "seed reply"}, {"text": "not a plan"}] }),
-        compactable_settings(),
-        None,
-    )
-    .await;
-    let global_dir = tempfile::TempDir::new().unwrap().keep();
-    let (sink, events) = capture_sink();
-    let mut boundary = TurnBoundary::with_sink(true, sink);
-    engine
-        .turn_boundary
-        .schedule_refine(pa_core::session_engine::turn_boundary::PendingRefine {
-            instructions: None,
-            global: true,
-        })
-        .await;
-    admit_with_harness_dir(
-        &mut boundary,
-        &engine,
-        &model,
-        "seed turn".to_string(),
-        global_dir,
-    )
-    .await
-    .unwrap();
-    let events = events.lock().unwrap().clone();
-    let failed = events
-        .iter()
-        .find(|event| event["type"] == "refine_failed")
-        .expect("the refine_failed event");
-    let error = failed["error"].as_str().unwrap_or_default();
-    assert!(!error.is_empty(), "the failure message rides the event");
-    assert!(
-        events
-            .iter()
-            .all(|event| event["type"] != "compaction_start"),
-        "no compaction ran"
-    );
-}
-
-#[tokio::test]
-async fn requested_refinement_streams_rows_and_refine_complete() {
-    let _faux = FAUX_TEST_LOCK.lock().await;
-    let plan = r#"{"summary":"note it","rationale":"repeated","expectedOutcome":"recall","edits":[{"action":"create","kind":"memory","id":"m1","title":"Tactic","content":"Use tactic A"}]}"#;
-    let (engine, _dir, model) = faux_engine_with_settings(
-        json!({ "responses": [{"text": "seed reply"}, {"text": plan}] }),
-        compactable_settings(),
-        None,
-    )
-    .await;
-    let global_dir = tempfile::TempDir::new().unwrap().keep();
-    let (sink, events) = capture_sink();
-    let mut boundary = TurnBoundary::with_sink(true, sink);
-    engine
-        .turn_boundary
-        .schedule_refine(pa_core::session_engine::turn_boundary::PendingRefine {
-            instructions: None,
-            global: true,
-        })
-        .await;
-    admit_with_harness_dir(
-        &mut boundary,
-        &engine,
-        &model,
-        "seed turn".to_string(),
-        global_dir,
-    )
-    .await
-    .unwrap();
-    let events = events.lock().unwrap().clone();
-    let outcome_at = events
-        .iter()
-        .position(|event| {
-            event["type"] == "message_start"
-                && event["message"]["customType"] == "refinement_outcome"
-        })
-        .expect("the outcome row pair");
-    let notice_at = events
-        .iter()
-        .position(|event| {
-            event["type"] == "message_start"
-                && event["message"]["customType"] == "refinement_notice"
-        })
-        .expect("the notice row pair");
-    assert!(outcome_at < notice_at);
-    assert_eq!(events[outcome_at]["message"]["display"], true);
-    assert_eq!(events[notice_at]["message"]["display"], false);
-    let complete_at = events
-        .iter()
-        .position(|event| event["type"] == "refine_complete")
-        .expect("the refine_complete event");
-    assert!(notice_at < complete_at);
-    assert_eq!(events[complete_at]["result"]["summary"], "note it");
-    assert_eq!(events[complete_at]["result"]["appliedEdits"][0]["id"], "m1");
-    let rows = refine_rows(&engine).await;
-    assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].custom_type, "refinement_outcome");
-    assert_eq!(rows[1].custom_type, "refinement_notice");
 }
 
 #[tokio::test]

@@ -13,7 +13,7 @@
 // epsilon compare would weaken the assertions, not fix a lint.
 #![cfg_attr(test, allow(clippy::float_cmp))]
 
-//! Session engine: tools, skills, prompts, compaction, refinement, kernel/RLM
+//! Session engine: tools, skills, prompts, compaction, kernel/RLM
 //! manager, subagents, session manager, settings.
 //!
 //! Public API: the tool-definition contract; subsystem internals are `pub(crate)`.

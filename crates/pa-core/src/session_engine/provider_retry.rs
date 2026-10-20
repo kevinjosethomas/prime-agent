@@ -564,8 +564,8 @@ mod tests {
         assert_eq!(text.text, "Recovered on the retry.");
     }
 
-    /// The one-shot completion arms (side questions, compaction,
-    /// refinement) take the `stream_drop` class through the same retry
+    /// The one-shot completion arms (side questions, compaction)
+    /// take the `stream_drop` class through the same retry
     /// ladder: a dropped stream retries and the completion settles on the
     /// retry.
     #[tokio::test]

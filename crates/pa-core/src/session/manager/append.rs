@@ -222,7 +222,7 @@ impl SessionManager {
 
     /// Append a custom entry with the TS `_appendEntry` retained-write
     /// contract: a failed disk write keeps the entry in the live index and
-    /// surfaces the error for the caller to log (the refine audit arm).
+    /// surfaces the error for the caller to log (the audit arm).
     pub fn append_custom_entry_retained(
         &mut self,
         custom_type: &str,
@@ -251,7 +251,7 @@ impl SessionManager {
         (id, write_error)
     }
 
-    /// Append a custom message entry (compaction/refine notices, prompts).
+    /// Append a custom message entry (compaction notices, prompts).
     ///
     /// # Errors
     ///
