@@ -738,11 +738,11 @@ impl DaemonClient {
         let reader_task = tokio::spawn(async move {
             let mut reader = reader;
             let mut partial = partial;
-            let mut event_tx = event_tx;
+            let event_tx = event_tx;
             let raw_tap = raw_tap;
             let max_frame_bytes = max_frame_bytes;
             let reader_shared = reader_shared;
-            let mut reader_dead_tx = reader_dead_tx;
+            let reader_dead_tx = reader_dead_tx;
             // One decoded line: `false` only on invalid UTF-8, the teardown
             // `read_line` always produced. A malformed JSON line is skipped,
             // exactly like before.

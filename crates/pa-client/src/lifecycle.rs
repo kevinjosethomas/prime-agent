@@ -383,7 +383,7 @@ impl DaemonClientSession {
                     let result = self.state.driver.lock().await.memo.take();
                     return result
                         .map(|_| ())
-                        .unwrap_or(Ok(()))
+                        .unwrap_or(())
                         .map_err(anyhow::Error::new);
                 }
             }
@@ -1019,6 +1019,7 @@ fn spawn_restores(
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::atomic::AtomicU64;
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
     use tokio::net::UnixListener;
 
