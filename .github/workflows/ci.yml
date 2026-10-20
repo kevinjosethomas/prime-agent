@@ -73,7 +73,7 @@ name: ci
 
 on:
   push:
-    branches: [main, primer/native-release-integration]
+    branches: [main, primer/native-release-integration, fix/current-daemon-framing]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     # The integration branch is a PR target too: its stacked PRs gate the
@@ -364,7 +364,7 @@ jobs:
           fi
           reference="${RUNNER_TEMP}/lifecycle-ts-reference"
           mkdir -p "${reference}"
-          gh release download v0.9.8 --repo "${GITHUB_REPOSITORY}" \
+          gh release download v0.9.8 --repo PrimeIntellect-ai/prime-agent \
             --pattern prime-agent-0.9.8-linux-x64.tar.gz --dir "${reference}"
           archive="${reference}/prime-agent-0.9.8-linux-x64.tar.gz"
           echo "83fb09129bf78e3e60268212cd70932166591b15188caa70c1b0efbcc76235e2  ${archive}" | sha256sum --check

@@ -1,7 +1,7 @@
 name: Codex stream inactivity regression
 on:
   push:
-    branches: [fix/codex-stream-idle-deadline]
+    branches: [fix/codex-stream-idle-deadline, fix/current-daemon-framing]
   workflow_dispatch:
 permissions:
   contents: read
@@ -11,11 +11,17 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 2
       - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       - run: cargo fmt --all --check
+      - name: Prove the installed source loses the identical fragmented frame
+        run: python3 .github/scripts/current_framing_proof.py
+      - run: cargo test --locked -p pa-daemon --lib fragmented_client_frame
+      - run: cargo test --locked -p pa-client --lib
       - run: cargo test --locked -p pa-ai --lib codex_stream_inactivity
       - run: cargo test --locked -p pa-ai --lib openai_codex_responses
       - run: cargo test --locked -p pa-core --lib codex_stream_inactivity
@@ -24,3 +30,10 @@ jobs:
       - run: cargo test --locked -p pa-daemon --lib human_follow_up_runs_before_background
       - run: cargo test --locked -p pa-daemon --lib queue_priority
       - run: cargo test --locked -p pa-daemon --lib update_snapshot
+      - name: Upload framing proof
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: current-framing-proof
+          path: framing-proof
+          if-no-files-found: error

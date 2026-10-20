@@ -1,7 +1,7 @@
 name: Desktop fork runtime
 on:
   push:
-    branches: [feat/root-desktop-runtime, primer/runtime-followups-candidate, primer/runtime-prompt-metadata, primer/native-release-integration]
+    branches: [feat/root-desktop-runtime, primer/runtime-followups-candidate, primer/runtime-prompt-metadata, primer/native-release-integration, fix/current-daemon-framing]
   workflow_dispatch:
 permissions:
   contents: read
@@ -97,6 +97,8 @@ jobs:
       # no consumer (~26% of the build step, measured).
       - name: Build (release, locked)
         run: cargo build --release --locked --target ${{ env.TARGET }} -j 4 -p pa-cli --bin prime-agent
+      - name: Verify fragmented commands survive interleaved events
+        run: cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-daemon --lib fragmented_client_frame
       - name: Verify Codex inactivity, suspend and ambiguous retry recovery
         run: |
           cargo test --locked --target ${{ env.TARGET }} -j 4 -p pa-ai --lib codex_stream_inactivity

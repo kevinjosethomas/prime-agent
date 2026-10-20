@@ -142,8 +142,10 @@ impl Supervisor {
         };
         write_line(&mut writer, &serde_json::to_value(&hello)?).await?;
 
-        let mut reader = BufReader::new(reader);
-        let mut line = String::new();
+        // Events and responses can win the select while a client frame is
+        // incomplete. Lines retains that partial frame across cancellation;
+        // read_line's temporary buffer would lose its already-consumed bytes.
+        let mut reader = BufReader::new(reader).lines();
         let mut events = self.events.subscribe();
         // Session events ride this per-connection queue (the subscriber
         // registry resolves delivery at publish time, TS `handleWorkerFrame`
@@ -174,14 +176,10 @@ impl Supervisor {
         // The loop yields the connection's result; a write failure parks the
         // error and falls through the shared exit tail below.
         let served: Result<()> = 'serve: loop {
-            line.clear();
             tokio::select! {
                 biased;
-                read = reader.read_line(&mut line), if dispatch_slots.available_permits() > 0 => {
-                    let Ok(read) = read else { break 'serve Ok(()) };
-                    if read == 0 {
-                        break 'serve Ok(());
-                    }
+                read = reader.next_line(), if dispatch_slots.available_permits() > 0 => {
+                    let Ok(Some(line)) = read else { break 'serve Ok(()) };
                     let trimmed = line.trim().to_string();
                     if trimmed.is_empty() {
                         continue;
@@ -1210,6 +1208,9 @@ impl Supervisor {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+mod read_tests;
 
 #[cfg(all(test, unix))]
 mod tests {
