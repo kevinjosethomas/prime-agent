@@ -22,7 +22,7 @@ import threading
 
 from review_goal_backoff_parity import TS_ARCHIVE_SHA256, sha256
 from review_restore_notice_parity import invoke, probe_from
-from review_draft_disconnect_parity import stop
+from review_draft_disconnect_parity import kernel_env_for, stop
 
 MARKER = 'MINIMUM_REASONING_RESULT='
 
@@ -155,8 +155,10 @@ def run_case(binary, label, scenario, root, observation):
     for name in ('home', 'agent', 'sessions', 'work', 'tmp'):
         (root / name).mkdir(parents=True)
     agent, sessions, cwd = root / 'agent', root / 'sessions', root / 'work'
-    env = {key: os.environ[key] for key in ('PATH', 'LANG', 'LC_ALL', 'TZ',
-           'PRIME_AGENT_KERNEL_PYTHON', 'PA_E2E_KERNEL_PYTHON') if key in os.environ}
+    env = {key: os.environ[key] for key in ('PATH', 'LANG', 'LC_ALL', 'TZ') if key in os.environ}
+    kernel_python = kernel_env_for(label)
+    env['PRIME_AGENT_KERNEL_PYTHON'] = kernel_python
+    env['PA_E2E_KERNEL_PYTHON'] = kernel_python
     library = Path(os.environ['PI_PACKAGE_DIR']) / 'skills'
     paths = sorted(str(path) for path in library.glob('*/src') if path.is_dir())
     for skill in ('compact', 'refine'):

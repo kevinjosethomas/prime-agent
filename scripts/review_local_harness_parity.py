@@ -15,6 +15,7 @@ import sys
 import tempfile
 import threading
 
+from review_draft_disconnect_parity import kernel_env_for
 from review_restore_notice_parity import invoke, texts, Server, sha256, TS_ARCHIVE_SHA256
 
 MARKER = 'LOCAL_HARNESS_PARITY='
@@ -114,8 +115,11 @@ def run_case(binary, label, root, observation):
     for name in ('home', 'agent', 'sessions', 'work', 'tmp'):
         (root / name).mkdir(parents=True)
     cwd, agent, sessions = root / 'work', root / 'agent', root / 'sessions'
-    env = {key: os.environ[key] for key in ('PATH', 'LANG', 'LC_ALL', 'TZ',
-           'PRIME_AGENT_KERNEL_PYTHON', 'PA_E2E_KERNEL_PYTHON', 'PYTHONPATH') if key in os.environ}
+    env = {key: os.environ[key] for key in ('PATH', 'LANG', 'LC_ALL', 'TZ', 'PYTHONPATH')
+           if key in os.environ}
+    kernel_python = kernel_env_for(label)
+    env['PRIME_AGENT_KERNEL_PYTHON'] = kernel_python
+    env['PA_E2E_KERNEL_PYTHON'] = kernel_python
     library = Path(os.environ['PI_PACKAGE_DIR'])
     if label == 'ts':
         env['PI_PACKAGE_DIR'] = str(library)

@@ -56,14 +56,23 @@ def stop(process):
             process.wait(timeout=5)
 
 
+def kernel_env_for(kind):
+    """The version-owned kernel python per kind: the pinned TS reference runs
+    its own era's runtime from the checked archive; the Rust binary runs the
+    current bootstrap venv. Both fixture keys are required in CI — no ambient
+    fallback (a missing key fails the run instead of silently cross-wiring the
+    two eras)."""
+    return os.environ["PA_TS_KERNEL_PYTHON" if kind == "ts" else "PA_RUST_KERNEL_PYTHON"]
+
+
 def env_for(root, kind):
     env = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "TZ")
            if key in os.environ}
     if kind == "ts" and "PI_PACKAGE_DIR" in os.environ:
         env["PI_PACKAGE_DIR"] = os.environ["PI_PACKAGE_DIR"]
-    for key in ("PRIME_AGENT_KERNEL_PYTHON", "PA_E2E_KERNEL_PYTHON"):
-        if key in os.environ:
-            env[key] = os.environ[key]
+    kernel_python = kernel_env_for(kind)
+    env["PRIME_AGENT_KERNEL_PYTHON"] = kernel_python
+    env["PA_E2E_KERNEL_PYTHON"] = kernel_python
     for name in ("home", "tmp", "xdg", "agent/sessions"):
         (root / name).mkdir(parents=True, exist_ok=True)
     env.update(HOME=str(root / "home"), TMPDIR=str(root / "tmp"),

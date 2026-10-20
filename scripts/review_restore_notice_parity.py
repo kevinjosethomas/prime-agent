@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 
+from review_draft_disconnect_parity import kernel_env_for
 from review_goal_backoff_parity import TS_ARCHIVE_SHA256, sha256
 
 RESET = ("The working directory and environment variables were reset to the session defaults; "
@@ -141,8 +142,11 @@ def run_case(binary, label, root, observation):
     for name in ('home', 'agent', 'sessions', 'work', 'tmp'):
         (root / name).mkdir(parents=True)
     cwd, agent, sessions = root / 'work', root / 'agent', root / 'sessions'
-    env = {key: os.environ[key] for key in ('PATH', 'LANG', 'LC_ALL', 'TZ',
-           'PRIME_AGENT_KERNEL_PYTHON', 'PA_E2E_KERNEL_PYTHON', 'PYTHONPATH') if key in os.environ}
+    env = {key: os.environ[key] for key in ('PATH', 'LANG', 'LC_ALL', 'TZ', 'PYTHONPATH')
+           if key in os.environ}
+    kernel_python = kernel_env_for(label)
+    env['PRIME_AGENT_KERNEL_PYTHON'] = kernel_python
+    env['PA_E2E_KERNEL_PYTHON'] = kernel_python
     if label == 'ts' and 'PI_PACKAGE_DIR' in os.environ:
         env['PI_PACKAGE_DIR'] = os.environ['PI_PACKAGE_DIR']
     env.update(HOME=str(root / 'home'), TMPDIR=str(root / 'tmp'), DO_NOT_TRACK='1',
