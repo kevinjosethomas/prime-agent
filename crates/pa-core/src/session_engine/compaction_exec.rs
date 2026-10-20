@@ -586,7 +586,7 @@ mod tests {
         assert_eq!(result.first_kept_entry_id, "e1");
         assert_eq!(result.tokens_before, 1_000);
         let details = details_for(&messages, &entries, None);
-        let entry = compaction_entry_for(&result, &details, Some("focus"), None, None);
+        let entry = compaction_entry_for(&result, &details, Some("focus"));
         assert_eq!(entry.summary, "## Goal\nship it");
         assert_eq!(entry.custom_instructions.as_deref(), Some("focus"));
     }
