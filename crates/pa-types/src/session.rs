@@ -69,6 +69,7 @@ fn deserialize_session_id<'de, D: serde::Deserializer<'de>>(
 /// `role: "bashExecution"`: a `!`-command execution, rendered as a user turn.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct BashExecutionMessage {
     pub command: String,
     pub output: String,
@@ -89,6 +90,7 @@ pub struct BashExecutionMessage {
 /// `role: "custom"`: bookkeeping message with a `customType` tag.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct CustomMessage {
     pub custom_type: String,
     pub content: UserContent,
@@ -104,6 +106,7 @@ pub struct CustomMessage {
 /// `role: "branchSummary"`: summary of a branch the conversation returned from.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct BranchSummaryMessage {
     pub summary: String,
     pub from_id: String,
@@ -114,6 +117,7 @@ pub struct BranchSummaryMessage {
 /// `role: "compactionSummary"`: compaction result presented as a user turn.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct CompactionSummaryMessage {
     pub summary: String,
     pub tokens_before: u64,
@@ -138,6 +142,7 @@ pub struct CompactionSummaryMessage {
 /// messages from [`crate::ai`] plus the coding-agent-only roles.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "role", rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum AgentMessage {
     User(UserMessage),
     Assistant(AssistantMessage),
