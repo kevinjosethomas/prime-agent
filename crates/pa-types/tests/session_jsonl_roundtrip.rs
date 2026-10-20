@@ -65,6 +65,48 @@ fn committed_fixture_roundtrips() {
     assert!(lines > 0, "no fixture lines found to verify");
 }
 
+#[test]
+fn historical_fixture_lines_parse_and_survive_reserialization() {
+    let mut lines = 0usize;
+    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/historical"))
+        .unwrap()
+    {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let data = std::fs::read_to_string(&path).expect("read session file");
+        for (n, line) in data.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let parsed: FileEntry = serde_json::from_str(line)
+                .unwrap_or_else(|e| panic!("{}:{}: deserialize failed: {e}", path.display(), n + 1));
+            let reserialized = serde_json::to_string(&parsed).expect("serialize entry");
+            let mut original: Value = serde_json::from_str(line).unwrap();
+            if let Some(map) = original.as_object_mut() {
+                map.remove("harnessDigest");
+                map.remove("harnessStateFingerprint");
+            }
+            if let Some(message) = original.get_mut("message").and_then(Value::as_object_mut) {
+                message.remove("harnessDigest");
+                message.remove("harnessStateFingerprint");
+            }
+            let roundtripped: Value = serde_json::from_str(&reserialized).unwrap();
+            assert_eq!(
+                canonicalize_foreign_spelling(original),
+                roundtripped,
+                "{}:{}: historical line lost more than the removed fields",
+                path.display(),
+                n + 1
+            );
+            lines += 1;
+        }
+    }
+    assert!(lines > 0, "no historical fixture lines found to verify");
+}
+
 /// Live sessions are opt-in: real user data whose presence varies per machine. Set
 /// `PA_TYPES_LIVE_SESSIONS=1` (optionally `PA_TYPES_SESSIONS_DIR`) to sweep them.
 #[test]

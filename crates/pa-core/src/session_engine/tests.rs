@@ -38,6 +38,7 @@ async fn scripted_session_with_provider(provider: Arc<ScriptedProvider>) -> Agen
             model: Some(test_model()),
             ..Default::default()
         },
+        convert_to_llm: Some(crate::session_engine::messages::engine_convert_to_llm()),
         stream_fn: Some(provider.stream_fn()),
         ..Default::default()
     };
