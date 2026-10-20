@@ -1,5 +1,5 @@
-//! Print-mode session slash-command execution: `/compact`, `/refine`,
-//! `/goal`, and `/autonomous` run through the pa-core session-command
+//! Print-mode session slash-command execution: `/compact`, `/goal`, and
+//! `/autonomous` run through the pa-core session-command
 //! executor and stream the TS print-json shapes; a failed command rejects
 //! the prompt wait (stderr, exit 1, never the later prompts).
 
@@ -103,9 +103,6 @@ pub(crate) async fn execute_prompt_session_command(
         }
         goal.emit_stream_event(&event);
     }
-    // The refinement rows the executor's refine run appends (streamed in TS order
-    // ahead of `refine_complete`).
-    let entries_before = engine.session.entries().await.len();
     let execution = {
         let mut autonomous = autonomous.lock().await;
         let mut params = SessionCommandParams {
@@ -142,23 +139,6 @@ pub(crate) async fn execute_prompt_session_command(
             )
         };
         goal.emit_stream_event(&end);
-    }
-    // `/refine`: the durable refinement rows stream as message pairs, then
-    // `refine_complete` (or `refine_failed`), before the result row.
-    if command.name == "refine" {
-        for row in
-            crate::print_boundary::TurnBoundary::refinement_rows_since(engine, entries_before).await
-        {
-            goal.emit_row_pair(&row);
-        }
-        if let Some(error) = &execution.refinement_failed {
-            goal.emit_stream_event(&json!({ "type": "refine_failed", "error": error }));
-        } else if let Some(result) = &execution.refinement {
-            goal.emit_stream_event(&json!({
-                "type": "refine_complete",
-                "result": serde_json::to_value(result).unwrap_or(Value::Null),
-            }));
-        }
     }
     // `/goal`: the state change publishes unconditionally, before the queue frame of a scheduled
     // continuation.

@@ -1,5 +1,5 @@
 //! The custom-message & session-command surface: the worker arms for
-//! `append_custom_message`, `restore_next_turn`, `restore_actions`, `refine`,
+//! `append_custom_message`, `restore_next_turn`, `restore_actions`,
 //! and `reload`. Wire contracts are TS-verbatim; the durable rows and
 //! broadcasts go through the same paths the turn runner uses.
 
@@ -239,72 +239,6 @@ impl Worker {
             "restore_actions",
             Some(json!({ "restored": restored })),
         )
-    }
-
-    /// `refine { instructions?, rollbackId?, global? }` (TS `session.refine`): run the
-    /// refinement, emit the durable outcome and notice rows, and answer the `RefinementResult`.
-    pub(crate) async fn handle_refine(&self, payload: &Value) -> DaemonResponse {
-        if let Err(response) = self.require_created("refine") {
-            return response;
-        }
-        let options = pa_core::session_engine::refine::RefineOptions {
-            instructions: payload
-                .get("instructions")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            rollback_id: payload
-                .get("rollbackId")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            global: payload
-                .get("global")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-        };
-        let engine = std::sync::Arc::clone(&self.engine);
-        let result = tokio::task::spawn_blocking(move || engine.run_refinement(options))
-            .await
-            .unwrap_or_else(|error| Err(anyhow::anyhow!("refinement task failed: {error}")));
-        let result = match result {
-            Ok(result) => result,
-            Err(error) => {
-                self.emit_worker_event(json!({
-                    "type": "refine_failed",
-                    "error": format!("{error:#}"),
-                }));
-                return response_failure(None, "refine", &format!("{error:#}"), None);
-            }
-        };
-        // The refinement's durable rows: the TUI outcome, plus the model-facing
-        // notice when edits applied.
-        if let Ok(typed) =
-            serde_json::from_value::<pa_core::refinement::RefinementResult>(result.clone())
-        {
-            let outcome =
-                pa_core::session_engine::refine::create_refinement_outcome_message(&typed);
-            if let Ok(value) =
-                serde_json::to_value(pa_types::session::AgentMessage::Custom(outcome))
-            {
-                self.emit_custom_row(&value);
-            }
-            if typed.applied_edits.iter().any(|edit| edit.applied) {
-                let notice = pa_core::session_engine::refine::create_refinement_notice_message(
-                    &typed,
-                    pa_core::session_engine::refine::RefinementSource::User,
-                );
-                if let Ok(value) =
-                    serde_json::to_value(pa_types::session::AgentMessage::Custom(notice))
-                {
-                    self.emit_custom_row(&value);
-                }
-            }
-            crate::user_bash::emit_session_event_frame(
-                &self.core,
-                &self.events,
-                crate::worker::refine_complete_event(&typed),
-            );
-        }
-        response_success(None, "refine", Some(result))
     }
 
     /// `reload`: re-read the session's live inputs — the request auth
@@ -958,41 +892,6 @@ mod tests {
             assert_eq!(item.preview, None);
             assert_eq!(item.message, plain_text);
         }
-    }
-
-    /// The scripted harness has no refiner: `refine` answers the failure the engine seam
-    /// carries.
-    #[tokio::test]
-    async fn refine_surfaces_the_engine_failure() {
-        let worker = created_worker().await;
-        let mut subscription = worker.events.subscribe();
-        let response = worker
-            .dispatch(
-                "refine",
-                &json!({ "activeSessionId": "custom-session", "instructions": "tidy up" }),
-            )
-            .await;
-        assert!(!response.success);
-        assert_eq!(
-            response.error.as_deref(),
-            Some("This session does not support refinement")
-        );
-        let mut failures = Vec::new();
-        while let Ok(frame) = subscription.try_recv() {
-            if frame.outbound_type == "session_event" {
-                let event: Value = serde_json::from_slice(&frame.payload).unwrap();
-                if event["event"]["type"] == "refine_failed" {
-                    failures.push(event["event"].clone());
-                }
-            }
-        }
-        assert_eq!(
-            failures,
-            vec![json!({
-                "type": "refine_failed",
-                "error": "This session does not support refinement",
-            })]
-        );
     }
 
     #[tokio::test]

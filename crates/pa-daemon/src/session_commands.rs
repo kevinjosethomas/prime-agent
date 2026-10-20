@@ -1,4 +1,4 @@
-//! Daemon-side session slash-command execution: `run_prompt` parses the four
+//! Daemon-side session slash-command execution: `run_prompt` parses the three
 //! session commands before admission — they never reach the model loop, and
 //! a command admitted through `run_turn` would wait for an `AgentStart` that
 //! never arrives (the spin fix). `/compact` emits the echo row and
@@ -51,8 +51,6 @@ pub(crate) fn run_session_command(
                 compaction_skipped: None,
                 continuation_message: None,
                 error: Some(error),
-                refinement: None,
-                refinement_failed: None,
             };
             if !emit_compact_end(command, &execution, emit) {
                 return None;
@@ -86,20 +84,6 @@ pub(crate) fn run_session_command(
     // clear; the durable status row follows with the new state.
     if command.name == "autonomous" {
         engine.clear_autonomous_continuations();
-    }
-    if let Some(refinement) = &execution.refinement {
-        if let Ok(result) = serde_json::to_value(refinement) {
-            if !emit(EngineEvent::RefineComplete { result }) {
-                return None;
-            }
-        }
-    }
-    if let Some(error) = &execution.refinement_failed {
-        if !emit(EngineEvent::RefineFailed {
-            error: error.clone(),
-        }) {
-            return None;
-        }
     }
     // The executor's first row is the echo (already emitted); the rest of
     // the durable rows follow in order.

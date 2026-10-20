@@ -62,12 +62,11 @@ the goal/autonomous deferral behind unsettled work, and the exit
 disposal (kernels snapshotted, drivers joined; no child outlives the
 process).
 Session slash commands (`print_session_command.rs`, the #253 residue): print
-prompts that are `/compact`, `/refine`, `/goal`, or `/autonomous` execute
+prompts that are `/compact`, `/goal`, or `/autonomous` execute
 through the pa-core session-command executor (the daemon worker's seam — no
 parallel implementation), streaming the TS shapes: the
 `session_action_update` phase frames around the durable echo row, the
 per-command events (`compaction_start`/`compaction_end` for `/compact`, the
-refinement rows plus `refine_complete`/`refine_failed` for `/refine`, the
 unconditional `goal_update` publish for `/goal`), the result rows, and the
 settled queue frame. A `/goal` start (or resume) drains its scheduled
 continuation inside the same prompt wait; a failed command rejects the
@@ -81,8 +80,7 @@ the slim `assistantMessageEvent` (the daemon wire drops the nested
 `partial`), `tool_execution_update`, the harness digest's message pair at
 the first-turn boundary, the compaction `compaction_start`/`compaction_end`
 pairs with their durable outcome rows, the `goal_update`/`session_action_update`
-frames of the goal loop, and the refinement rows with
-`refine_complete`/`refine_failed`. Verifier: the `print_runtime_e2e` rows.
+frames of the goal loop. Verifier: the `print_runtime_e2e` rows.
 
 ## Daemon client
 The daemon-backed public commands (`list`, `stop`, `rename`, `send`, `schedule`) talk to the
