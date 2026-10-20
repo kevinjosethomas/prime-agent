@@ -87,7 +87,9 @@ fn state_name(state: ConnectionState) -> &'static str {
 impl From<ManagedReconnectWindow> for ReconnectWindow {
     fn from(window: ManagedReconnectWindow) -> Self {
         ReconnectWindow {
-            window: window.window_ms.map(|ms| Duration::from_millis(u64::from(ms))),
+            window: window
+                .window_ms
+                .map(|ms| Duration::from_millis(u64::from(ms))),
             initial_delay: Duration::from_millis(u64::from(window.initial_delay_ms)),
             max_delay: Duration::from_millis(u64::from(window.max_delay_ms)),
         }

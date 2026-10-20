@@ -144,7 +144,6 @@ async fn the_default_client_id_is_the_tui_identity() {
     );
 }
 
-
 #[tokio::test]
 async fn a_custom_client_id_rides_every_command_envelope() {
     let dir = tempfile::TempDir::new().unwrap();
