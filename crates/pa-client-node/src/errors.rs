@@ -115,6 +115,12 @@ pub(crate) fn napi_error(payload: ErrorPayload) -> napi::Error {
     )
 }
 
+impl From<ErrorPayload> for napi::Error {
+    fn from(payload: ErrorPayload) -> Self {
+        napi_error(payload)
+    }
+}
+
 /// Classify one `anyhow` chain from a core request per the transport rules.
 pub(crate) fn classify(error: anyhow::Error, cause: Option<&'static str>) -> ErrorPayload {
     if is_command_not_sent(&error) {
