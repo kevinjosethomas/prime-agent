@@ -1534,7 +1534,10 @@ async fn frame_cap_binds_split_lines_spilling_over_the_cap() {
     // without the spill counted, the oversized line would be accepted and
     // this request would ride its 30s budget out.
     assert!(started.elapsed() < Duration::from_secs(2));
-    assert!(is_command_result_uncertain(&error), "unexpected error: {error}");
+    assert!(
+        is_command_result_uncertain(&error),
+        "unexpected error: {error}"
+    );
     assert!(
         error.to_string().contains("the daemon connection closed"),
         "unexpected error: {error}"
