@@ -7,6 +7,7 @@ sleep, proves the initial turn is busy and the queued prompt actually drains.
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import socket
 import signal
@@ -133,6 +134,17 @@ def validate_rename_trigger(kind, data, active):
         assert isinstance(data.get('workerPid'), int), 'Rust rename summary omitted worker identity'
 
 
+def validate_prompt_admission(kind, data):
+    """Pin the stable input receipt already present in the installed Rust baseline."""
+    if kind == 'ts':
+        assert data is None, 'TS prompt admission unexpectedly returned data'
+    else:
+        assert isinstance(data, dict) and set(data) == {'accepted', 'inputId'}, data
+        assert data['accepted'] is True, data
+        assert isinstance(data['inputId'], str) and data['inputId'].startswith('qi_'), data
+        assert re.fullmatch(r'qi_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}', data['inputId']), data
+
+
 def pause_released(client, active, pause_id):
     """A non-owner cannot release this lease; success means cleanup removed it."""
     try:
@@ -211,6 +223,7 @@ def run_case(binary, kind, root, observed):
             threading.Event().wait(0.025)
         responses['enqueue_second_client'] = b.call('prompt',
             activeSessionId=active, message=SECOND, streamingBehavior='followUp')
+        validate_prompt_admission(kind, responses['enqueue_second_client'])
         observed['before_provider_release'] = b.call('get_queue', activeSessionId=active)
         queued = observed['before_provider_release']
         assert SECOND in queued['steering'] + queued['followUp'], queued
@@ -221,7 +234,9 @@ def run_case(binary, kind, root, observed):
         responses['settle_second_client'] = b.call('wait_for_idle', activeSessionId=active)
         responses['queue_after_drain'] = b.call('get_queue', activeSessionId=active)
         assert responses['queue_after_drain'] == {'steering': [], 'followUp': []}, responses
-        observed['canonical_action_responses'] = canonical(responses)
+        observed['canonical_action_responses'] = canonical({
+            key: value for key, value in responses.items() if key != 'enqueue_second_client'
+        })
         observed['hello'] = observer.hello
         observed['provider_requests'] = provider.requests
     except Exception as error:
@@ -275,8 +290,9 @@ def main():
     receipt = {'scenario': 'client_write_cleanup', 'verified': False, 'cases': {},
         'scope': 'real attached-client read-half-close, rename triggers failed write, observed detach and non-owner pause-release probe, then second-client queue drain',
         'preexisting_admission_difference': 'TS rejects new prompt admission while a pause is held; fixture submits followUp only after disconnect cleanup, without redesigning Rust policy',
-        'normalization': 'only generated pauseId in compared cleanup/pause/queued-delivery action response data; raw JSONL preserved',
+        'normalization': 'only generated pauseId in compared cleanup/pause/queued-delivery responses; preexisting prompt admission receipt asserted separately; raw JSONL and all action responses preserved',
         'fixture_trigger_response_deviation': 'Existing set_session_name returns no data in TS and a full session summary in Rust. Both expected shapes are asserted and their complete responses preserved separately; rename payload parity is outside this cleanup change.',
+        'prompt_admission_response_deviation': 'Installed Rust baseline 204cfaa71 includes stable queued input receipts from 7653da009b; TS v0.9.8 returns no data. Assert both exact admission shapes separately and retain their raw responses in action_responses. All remaining cleanup action responses and queued delivery still compare unchanged.',
         'not_covered': 'admission cancellation races or direct worker attach-state introspection'}
     try:
         archive = Path(os.environ['PA_TS_ARCHIVE'])
