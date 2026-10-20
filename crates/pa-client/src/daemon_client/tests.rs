@@ -1730,3 +1730,116 @@ async fn shutdown_aborts_direct_link_pumps() {
         .expect("direct pumps join after shutdown");
     let _ = supervisor.await;
 }
+
+#[tokio::test]
+async fn task_set_registration_after_death_aborts_new_tasks() {
+    // The shutdown-vs-registration race, deterministically: the death mark
+    // is taken under the same lock the registrations check, so a task that
+    // registers after the sweep can never escape it — it is aborted at
+    // registration, and the aborted end is observable through its held
+    // sender dropping.
+    let tasks = TaskSet::default();
+    assert!(tasks.register_connection(
+        tokio::spawn(std::future::pending::<()>()),
+        tokio::spawn(std::future::pending::<()>())
+    ));
+    assert!(tasks.abort_all());
+    // One-shot across every clone: a second shutdown reports already-dead.
+    assert!(!tasks.abort_all());
+
+    let (reader_tx, reader_rx) = oneshot::channel::<()>();
+    let reader = tokio::spawn(async move {
+        let _held = reader_tx;
+        std::future::pending::<()>().await
+    });
+    let (writer_tx, writer_rx) = oneshot::channel::<()>();
+    let writer = tokio::spawn(async move {
+        let _held = writer_tx;
+        std::future::pending::<()>().await
+    });
+    assert!(!tasks.register_connection(reader, writer));
+    for receiver in [reader_rx, writer_rx] {
+        tokio::time::timeout(Duration::from_secs(5), async move {
+            assert!(
+                receiver.await.is_err(),
+                "the escaped task must end at registration"
+            );
+        })
+        .await
+        .expect("the escaped tasks end at registration");
+    }
+
+    let (direct_tx, direct_rx) = oneshot::channel::<()>();
+    let direct = tokio::spawn(async move {
+        let _held = direct_tx;
+        std::future::pending::<()>().await
+    });
+    assert!(!tasks.register_direct(vec![direct]));
+    tokio::time::timeout(Duration::from_secs(5), async move {
+        assert!(
+            direct_rx.await.is_err(),
+            "the escaped direct pump must end at registration"
+        );
+    })
+    .await
+    .expect("the escaped direct pump ends at registration");
+}
+
+#[tokio::test]
+async fn concurrent_join_tasks_wait_for_each_other() {
+    // Before shutdown, join_tasks is a documented no-op; after shutdown,
+    // two concurrent join_tasks both complete — the second WAITS behind the
+    // first drain instead of racing it.
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    tokio::spawn(async move { spawn_mock_daemon(listener).await });
+
+    let (client, _events) = DaemonClient::connect(&socket).await.unwrap();
+    tokio::time::timeout(Duration::from_millis(200), client.join_tasks())
+        .await
+        .expect("pre-shutdown join is a no-op");
+    client.shutdown();
+    let one = client.clone();
+    let two = client.clone();
+    let (joined_one, joined_two) = tokio::join!(
+        tokio::time::timeout(Duration::from_secs(5), one.join_tasks()),
+        tokio::time::timeout(Duration::from_secs(5), two.join_tasks())
+    );
+    joined_one.expect("the first join drains");
+    joined_two.expect("the second join waits then completes");
+}
+
+#[tokio::test]
+async fn upgrade_after_shutdown_refuses() {
+    // The supervisor advertises direct peer transport, but the connection is
+    // dead: the upgrade's entry request is a provable non-delivery and the
+    // link never forms.
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let mut writer = stream;
+        let hello = json!({
+            "type": "daemon_hello",
+            "protocol": { "name": "prime-agent.daemon", "version": 7 },
+            "clientId": "srv",
+            "serverCapabilities": ["direct_peer_transport"],
+        })
+        .to_string();
+        writer
+            .write_all(format!("{hello}\n").as_bytes())
+            .await
+            .unwrap();
+        std::future::pending::<()>().await;
+    });
+
+    let (client, _events) = DaemonClient::connect(&socket).await.unwrap();
+    client.shutdown();
+    assert!(!client.upgrade_direct("s1").await.unwrap());
+    assert_eq!(client.direct_session_id(), None);
+    tokio::time::timeout(Duration::from_secs(5), client.join_tasks())
+        .await
+        .expect("nothing was left to join");
+}

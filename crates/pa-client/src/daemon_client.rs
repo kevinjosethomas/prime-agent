@@ -369,69 +369,110 @@ impl Shared {
 /// explicit owner of this set; nothing runs on `Drop`.
 #[derive(Default)]
 pub(crate) struct TaskSet {
-    /// The supervisor reader task.
-    reader: Mutex<Option<tokio::task::JoinHandle<()>>>,
-    /// The supervisor writer pump.
-    writer: Mutex<Option<tokio::task::JoinHandle<()>>>,
-    /// Every direct-link pump this connection ever spawned: an abandoned
-    /// link's reader lingers exactly as it does today (until its worker
-    /// closes); shutdown aborts and joins them all.
-    direct: Mutex<Vec<tokio::task::JoinHandle<()>>>,
-    /// Shutdown is one-shot across every clone.
-    done: std::sync::atomic::AtomicBool,
+    /// One lock guards the death mark AND every handle: registration and
+    /// teardown observe the same state, so a task registered concurrently
+    /// with a shutdown can never escape it (it is aborted at registration).
+    state: Mutex<TaskState>,
+    /// Serializes the join phase: a concurrent second `join_tasks` waits
+    /// for the first drain to finish instead of returning early.
+    join_lock: tokio::sync::Mutex<()>,
+}
+
+#[derive(Default)]
+struct TaskState {
+    /// Set under `state`'s lock before the handles are collected: the
+    /// atomic death mark comes first, the sweep second.
+    done: bool,
+    reader: Option<tokio::task::JoinHandle<()>>,
+    writer: Option<tokio::task::JoinHandle<()>>,
+    /// Direct-link pumps: finished handles are reaped at each registration
+    /// (a completed task never accumulates); an unfinished abandoned
+    /// link's reader lingers exactly as it does today until shutdown
+    /// aborts it.
+    direct: Vec<tokio::task::JoinHandle<()>>,
 }
 
 impl TaskSet {
-    /// Register the supervisor reader/writer handles once.
+    /// Register the supervisor reader/writer handles once. `false` when the
+    /// connection is already dead: the tasks are aborted here, never stored.
     pub(crate) fn register_connection(
         &self,
         reader: tokio::task::JoinHandle<()>,
         writer: tokio::task::JoinHandle<()>,
-    ) {
-        *self.reader.lock().unwrap() = Some(reader);
-        *self.writer.lock().unwrap() = Some(writer);
-    }
-
-    /// Register one direct link's pumps.
-    pub(crate) fn register_direct(&self, handles: Vec<tokio::task::JoinHandle<()>>) {
-        self.direct.lock().unwrap().extend(handles);
-    }
-
-    /// Abort every owned task. `true` when this call won the one-shot race
-    /// (an already-shutdown connection returns `false` and aborts nothing).
-    pub(crate) fn abort_all(&self) -> bool {
-        if self
-            .done
-            .swap(true, std::sync::atomic::Ordering::SeqCst)
-        {
+    ) -> bool {
+        let mut state = self.state.lock().unwrap();
+        if state.done {
+            drop(state);
+            reader.abort();
+            writer.abort();
             return false;
         }
-        if let Some(reader) = self.reader.lock().unwrap().take() {
-            reader.abort();
+        state.reader = Some(reader);
+        state.writer = Some(writer);
+        true
+    }
+
+    /// Register one direct link's pumps, reaping finished handles first.
+    /// `false` when the connection is already dead: the tasks are aborted
+    /// here, never stored.
+    pub(crate) fn register_direct(&self, handles: Vec<tokio::task::JoinHandle<()>>) -> bool {
+        let mut state = self.state.lock().unwrap();
+        if state.done {
+            drop(state);
+            for handle in handles {
+                handle.abort();
+            }
+            return false;
         }
-        if let Some(writer) = self.writer.lock().unwrap().take() {
-            writer.abort();
-        }
-        for handle in std::mem::take(&mut *self.direct.lock().unwrap()) {
+        state.direct.retain(|handle| !handle.is_finished());
+        state.direct.extend(handles);
+        true
+    }
+
+    /// Mark dead and abort every owned task. `true` when this call won the
+    /// one-shot race (an already-shutdown connection returns `false` and
+    /// aborts nothing). The mark is taken and the handles collected under
+    /// the same lock; the aborts run after it drops.
+    pub(crate) fn abort_all(&self) -> bool {
+        let handles = {
+            let mut state = self.state.lock().unwrap();
+            if state.done {
+                return false;
+            }
+            state.done = true;
+            let mut handles = Vec::new();
+            handles.extend(state.reader.take());
+            handles.extend(state.writer.take());
+            handles.extend(std::mem::take(&mut state.direct));
+            handles
+        };
+        for handle in handles {
             handle.abort();
         }
         true
     }
 
-    /// Await the aborted tasks' ends; a second call no-ops.
-    pub(crate) async fn join_all(&self) {
-        let mut handles = Vec::new();
-        if let Some(reader) = self.reader.lock().unwrap().take() {
-            handles.push(reader);
-        }
-        if let Some(writer) = self.writer.lock().unwrap().take() {
-            handles.push(writer);
-        }
-        handles.extend(std::mem::take(&mut *self.direct.lock().unwrap()));
+    /// Await the drained tasks' ends. `false` before shutdown (nothing is
+    /// drainable yet). Handles are taken under the lock; the awaits run
+    /// outside it. A second call finds the set already drained — the
+    /// `join_lock` in [`TaskSet`] is what makes the second caller WAIT.
+    pub(crate) async fn join_drained(&self) -> bool {
+        let handles = {
+            let mut state = self.state.lock().unwrap();
+            if !state.done {
+                return false;
+            }
+            let mut handles = Vec::new();
+            handles.extend(state.reader.take());
+            handles.extend(state.writer.take());
+            handles.extend(std::mem::take(&mut state.direct));
+            handles
+        };
         for handle in handles {
             // An aborted task ends with a cancelled join error: ended is ended.
             let _ = handle.await;
         }
+        true
     }
 }
 
@@ -656,6 +697,7 @@ impl DaemonClient {
             .await
             .map_err(|_| {
                 reader_task.abort();
+                writer_task.abort();
                 anyhow!(
                     "Timed out after {HELLO_TIMEOUT_MS}ms waiting for the Prime Agent daemon handshake. Socket: {}.",
                     socket_path.display()
@@ -663,6 +705,7 @@ impl DaemonClient {
             })?
             .map_err(|_| {
                 reader_task.abort();
+                writer_task.abort();
                 anyhow!("the daemon connection closed before the handshake")
             })?;
         let protocol = hello
@@ -675,6 +718,7 @@ impl DaemonClient {
             });
         if protocol.name != DAEMON_PROTOCOL_NAME {
             reader_task.abort();
+            writer_task.abort();
             return Err(anyhow!(
                 "the daemon on {} speaks an unknown protocol \"{}\"",
                 socket_path.display(),
@@ -1185,6 +1229,9 @@ impl DaemonClient {
     ///
     /// Never returns `Err`: a cancelled task's join error is the expected end.
     pub async fn join_tasks(&self) {
-        self.tasks.join_all().await;
+        // Serialized: a concurrent second caller waits for the first drain
+        // to finish (and then drains nothing — the set is already empty).
+        let _serial = self.tasks.join_lock.lock().await;
+        self.tasks.join_drained().await;
     }
 }
