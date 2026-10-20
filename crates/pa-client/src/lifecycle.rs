@@ -1249,19 +1249,24 @@ mod tests {
             .await
             .unwrap();
         drop_first.notify_one();
+        eprintln!("DEBUG notified conn1 drop");
         // The reconnect's restore is HELD; the frame streams meanwhile.
         let mut saw_begin = false;
         let saw_frame = tokio::time::timeout(Duration::from_secs(20), async {
             loop {
                 match next_event(&mut events).await {
                     ConnectionEvent::ReattachBegin { .. } => {
+                        eprintln!("DEBUG begin");
                         saw_begin = true;
                     }
                     ConnectionEvent::Frame(frame) if frame == event => {
+                        eprintln!("DEBUG frame");
                         assert!(saw_begin, "the begin precedes the streamed frame");
                         return;
                     }
-                    _ => {}
+                    other => {
+                        eprintln!("DEBUG other {other:?}");
+                    }
                 }
             }
         })
