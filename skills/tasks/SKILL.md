@@ -23,8 +23,9 @@ second store.
   update to install or a PR to review), `done` finished and verified, `backlog`
   deferred. Age alone does not prove activity.
 - There are no steps, checklists or progress percentages.
-- Each chat message belongs to at most one task or subtask (the most specific one
-  known) or to none when it is general.
+- Threads exist only for top-level tasks. Each chat message belongs to at most
+  one top-level task, or to none when it is general. Subtasks have status, details,
+  links and agent associations, but no thread or message membership.
 
 ## Create a task, a subtask, or update?
 
@@ -127,7 +128,14 @@ A message is placed by Kevin's choice (a focused-thread send in Primer, or a mov
 he asks for) or else by Clef, which places every other message, including yours.
 Do not classify or tag messages yourself. When Kevin explicitly asks to move
 messages, record it with `await tasks.assign_messages(message_ids, task_id)`;
-Clef never overrides it. `task_id=None` means no task.
+Clef never overrides it. Use the top-level task ID, never a subtask ID;
+`task_id=None` means no task. Clef chooses among top-level tasks only.
+
+Focused sends and right-click attachment use the top-level task. Clicking a
+subtask focuses its parent's thread and shows the subtask's details in the side
+panel. Existing message placements on subtasks roll up to their top-level parent
+without changing their source. Backfilling subtasks creates only metadata and
+agent associations, never message placements or thread memberships.
 
 ## Agents
 
