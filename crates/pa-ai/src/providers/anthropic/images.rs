@@ -57,17 +57,27 @@ fn tool_bounds(model: &str) -> (u32, u64) {
 }
 
 fn dimensions(width: u32, height: u32, edge: u32, patches: Option<u64>) -> (u32, u32) {
-    let scale = (f64::from(edge) / f64::from(width.max(height))).min(1.0);
-    let mut w = (f64::from(width) * scale).floor().max(1.0) as u32;
-    let mut h = (f64::from(height) * scale).floor().max(1.0) as u32;
+    let longest = width.max(height).max(1);
+    let numerator = edge.min(longest);
+    let scaled = |dimension: u32| {
+        u32::try_from(u64::from(dimension) * u64::from(numerator) / u64::from(longest))
+            .unwrap_or(edge)
+            .max(1)
+    };
+    let mut w = scaled(width);
+    let mut h = scaled(height);
     while patches.is_some_and(|limit| u64::from(w.div_ceil(28)) * u64::from(h.div_ceil(28)) > limit)
     {
         if width >= height {
             w = w.saturating_sub(1).max(1);
-            h = ((u64::from(height) * u64::from(w)) / u64::from(width)).max(1) as u32;
+            h = u32::try_from((u64::from(height) * u64::from(w)) / u64::from(width.max(1)))
+                .unwrap_or(height)
+                .max(1);
         } else {
             h = h.saturating_sub(1).max(1);
-            w = ((u64::from(width) * u64::from(h)) / u64::from(height)).max(1) as u32;
+            w = u32::try_from((u64::from(width) * u64::from(h)) / u64::from(height.max(1)))
+                .unwrap_or(width)
+                .max(1);
         }
     }
     (w, h)

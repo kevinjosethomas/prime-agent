@@ -25,7 +25,7 @@ fn size(block: &Value) -> (u32, u32) {
 fn historical_images_are_resized_when_a_follow_up_crosses_the_many_image_limit() {
     let large = picture(4000, 2000);
     let small = picture(2, 2);
-    let mut blocks = vec![large.clone()];
+    let mut blocks = vec![large];
     blocks.extend(std::iter::repeat_n(small.clone(), 19));
     let before = json!({"messages":[{"role":"user","content":blocks},
         {"role":"user","content":[small,{"type":"text","text":"A new follow-up"}]}]});
