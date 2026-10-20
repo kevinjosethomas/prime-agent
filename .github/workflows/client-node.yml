@@ -1,0 +1,83 @@
+name: Client node adapter
+
+# The native Node adapter's own gate: builds the darwin-arm64 addon, runs
+# the full Node 22 battery against the real addon, and proves the Electron
+# 44 main-process LOAD (app.quit lifecycle; not an exit proof). Push
+# triggers on this branch work where workflow_dispatch cannot (the file
+# is absent from the default branch until merge).
+on:
+  push:
+    branches: [primer/client-node]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: client-node-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # Pinned external runtimes: exact version + sha256, verified before use.
+  NODE_VERSION: "22.11.0"
+  NODE_SHA256_ARM64: "2e89afe6f4e3aa6c7e21c560d8a0453d84807e97850bbb819b998531a22bdfde"
+  ELECTRON_VERSION: "44.9.1"
+  ELECTRON_SHA256_ARM64: "3b928b2851ad1ee21bf72401b3a161e826389408985c7256324781dad33b54cf"
+
+jobs:
+  darwin-arm64:
+    runs-on: macos-14
+    timeout-minutes: 60
+    env:
+      TARGET: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      # The pinned SHA is the toolchain pin: this action version hard-codes
+      # 1.98.1. Change the compiler by changing the SHA.
+      - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e
+        with:
+          targets: ${{ env.TARGET }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: client-node-${{ env.TARGET }}
+      - name: Install pinned Node 22
+        run: |
+          curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-darwin-arm64.tar.gz" -o /tmp/node.tar.gz
+          echo "${NODE_SHA256_ARM64}  /tmp/node.tar.gz" | shasum -a 256 -c -
+          sudo tar -xzf /tmp/node.tar.gz -C /usr/local --strip-components=1
+          node --version && npm --version
+      - name: Build the addon (release, locked)
+        run: cargo build --release --locked -p pa-client-node
+        working-directory: crates/pa-client-node
+      - name: Stage the addon and provenance
+        run: |
+          cp ../../crates/pa-client-node/target/release/libpa_client_node.dylib native/darwin-arm64.node
+          npm install --no-audit --no-fund
+          npm run gen:provenance
+          cat provenance.json
+        working-directory: packages/client
+      - name: TypeScript build
+        run: npm run build
+        working-directory: packages/client
+      - name: Node 22 battery against the real addon
+        run: node --test tests/*.test.mjs
+        working-directory: packages/client
+      - name: Electron 44 main-process load proof
+        run: |
+          curl -fsSL "https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/electron-v${ELECTRON_VERSION}-darwin-arm64.zip" -o /tmp/electron.zip
+          echo "${ELECTRON_SHA256_ARM64}  /tmp/electron.zip" | shasum -a 256 -c -
+          unzip -q /tmp/electron.zip -d /tmp/electron-dist
+          /tmp/electron-dist/Electron.app/Contents/MacOS/Electron e2e/electron-main.cjs
+        working-directory: packages/client
+      - name: Upload the addon artifact with provenance
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: pa-client-node-${{ github.sha }}-aarch64-apple-darwin
+          path: |
+            packages/client/native/darwin-arm64.node
+            packages/client/provenance.json
+          if-no-files-found: error
