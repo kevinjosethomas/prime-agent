@@ -10,10 +10,20 @@
 const { app } = require('electron');
 const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { appendFileSync } = require('node:fs');
+
+// Line-flushed progress log: every stage marker hits the file BEFORE its
+// awaits, so a hang leaves the last completed marker on disk.
+const LOG = join(__dirname, 'electron-leg.log');
+const mark = (m) => {
+  appendFileSync(LOG, `${new Date().toISOString()} ${m}\n`);
+};
+const SECTION = process.env.E2E_SECTION || 'all';
 
 async function main() {
   const { spawn } = require('node:child_process');
   const { join } = require('node:path');
+  mark('main-start');
   const dist = pathToFileURL(join(__dirname, '..', 'dist', 'index.js')).href;
   const helpers = pathToFileURL(join(__dirname, '..', 'tests', 'helpers.mjs')).href;
   const { DaemonConnection, NotSentError, OverflowError, UncertainError } = await import(dist);

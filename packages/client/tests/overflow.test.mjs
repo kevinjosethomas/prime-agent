@@ -36,13 +36,20 @@ test('a full frame queue tears the connection down with a sticky Overflow', asyn
 
 test('a PARKED nextFrame pull observes the sticky overflow branch', async () => {
   const socketPath = tmpSocket('overflow-parked');
-  const stop = await startMock(socketPath, 'flood');
-  // frameBuffer 1: the parked pull takes the one queued frame, then parks
-  // awaiting more; the flood keeps coming and the queue refuses - the
-  // PARKED pull (not a fresh one) must reject with the terminal Overflow.
+  const stop = await startMock(socketPath, 'flood-trigger');
   const connection = await DaemonConnection.connect(socketPath, { frameBuffer: 1 });
-  await connection.nextFrame();
+  // No frames exist yet: the pull parks INSIDE the select with the queue
+  // empty — provably pending before any overflow mark.
   const parked = connection.nextFrame();
+  // The readiness barrier: the trigger command is answered AND the flood
+  // starts only now, so the parked pull was pending pre-mark.
+  await connection.request({
+    type: 'get_connection_state',
+    activeSessionId: 'wire',
+    floodTrigger: true,
+  });
+  // The flood fills the one-slot queue and tears the connection down:
+  // the PARKED pull settles through the sticky terminal branch.
   await assert.rejects(parked, (error) => error instanceof OverflowError);
   // Sticky thereafter.
   await assert.rejects(connection.nextFrame(), (error) => error instanceof OverflowError);
@@ -71,7 +78,7 @@ test('new requests after overflow are NotSent with the overflow cause surfaced',
   await assert.rejects(connection.nextFrame(), (error) => error instanceof OverflowError);
   await assert.rejects(
     connection.request(GET_CONNECTION_STATE),
-    (error) => error instanceof NotSentError && /overflow/.test(error.message),
+    (error) => error instanceof NotSentError && error.cause === 'overflow',
   );
   connection.close();
   await stop();

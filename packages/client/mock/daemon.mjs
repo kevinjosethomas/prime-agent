@@ -12,6 +12,9 @@
  *  silent — hello; read commands but never respond (client timeouts).
  *  refuse — hello; answer success:false with a typed errorInfo.
  *  flood  — hello; answer commands, then push session_event frames fast.
+ *  flood-trigger — hello; NO frames until a command envelope carries
+ *           floodTrigger (answered normally, then the flood starts): the
+ *           readiness barrier for parked-pull overflow tests.
  *  die    — hello; close the socket after reading one command envelope.
  */
 import net from 'node:net';
@@ -54,7 +57,7 @@ const server = net.createServer((socket) => {
       socket.write(JSON.stringify(frame) + '\n');
     }
   }
-  if (mode === 'flood') {
+  const floodNow = (socket) => {
     let seq = 0;
     const timer = setInterval(() => {
       for (let i = 0; i < 64; i += 1) {
@@ -70,6 +73,9 @@ const server = net.createServer((socket) => {
       if (seq > 100000) clearInterval(timer);
     }, 5);
     socket.on('close', () => clearInterval(timer));
+  };
+  if (mode === 'flood') {
+    floodNow(socket);
   }
   socket.on('data', (chunk) => {
     buffer += chunk;
@@ -101,6 +107,9 @@ const server = net.createServer((socket) => {
           }) + '\n',
         );
         continue;
+      }
+      if (mode === 'flood-trigger' && frame.command.floodTrigger) {
+        floodNow(socket);
       }
       if (mode === 'echo' || mode === 'events') {
         socket.write(
