@@ -29,9 +29,45 @@ mod tests;
 
 use errors::{command_type_debug, response_data_or_error, DirectRequestError};
 pub use errors::{
-    is_daemon_rejection, is_daemon_timeout, is_daemon_unreachable, is_kernel_not_running,
-    is_update_restarting_rejection, rejected_provider_unauthenticated, RequestRejected,
+    is_command_not_sent, is_command_result_uncertain, is_daemon_rejection, is_daemon_timeout,
+    is_daemon_unreachable, is_kernel_not_running, is_update_restarting_rejection,
+    rejected_provider_unauthenticated, CommandNotSent, CommandResultUncertain, RequestRejected,
 };
+
+/// Optional transport configuration for
+/// [`DaemonClient::connect_with_options`]: the lossless raw outbound tap
+/// and the opt-in wire bounds. Defaults preserve the existing
+/// [`DaemonClient::connect`] behavior exactly — no tap, unbounded frames,
+/// unbounded pending requests.
+#[derive(Clone, Default)]
+pub struct DaemonClientOptions {
+    /// The raw outbound tap: a separate channel carrying every decoded
+    /// application frame after the `daemon_hello` handshake — supervisor
+    /// reader and direct reader pumps alike — verbatim as the raw JSON
+    /// value, in per-socket wire order (no cross-socket ordering is
+    /// claimed). Handshake and auth frames (`daemon_hello`, direct
+    /// `peer_auth`) and id-correlated `response` frames never appear;
+    /// unknown frame types and the full event meta (including absent
+    /// fields, exactly as the daemon sent them) always do. Pre-handshake
+    /// frames keep their legacy typed-only behavior and never reach the
+    /// tap. The channel is unbounded like the event channel: the receiver
+    /// must drain it, or memory grows without bound.
+    pub raw_tap: Option<mpsc::UnboundedSender<Value>>,
+    /// The inbound supervisor line byte cap: a frame beyond it tears the
+    /// transport down and fails every pending request as an uncertain
+    /// delivery. `None` (the default) keeps the unbounded reader this
+    /// crate has always shipped. Inbound only — the size of outbound
+    /// command envelopes is not bounded here; that is future command-shape
+    /// work. The cap is also not the desktop's invalid-frame policy:
+    /// invalid UTF-8 still tears the transport down (legacy), while a
+    /// malformed JSON line is still skipped (legacy tolerant behavior);
+    /// strict invalid-frame teardown is a separate future policy.
+    pub max_frame_bytes: Option<usize>,
+    /// The pending-request cap: a request at or beyond it refuses the
+    /// send before any bytes are queued (a provable non-delivery).
+    /// `None` (the default) keeps the unbounded pending map.
+    pub max_pending: Option<usize>,
+}
 
 pub const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30_000;
 /// Requests whose completion is bounded by the turn itself
@@ -244,22 +280,35 @@ pub(crate) struct Shared {
     /// (including a refusal); `Err` is a transport failure — a refusal is
     /// recoverable UI data, a dead connection is fatal.
     pending: Mutex<HashMap<String, PendingRequest>>,
+    /// The opt-in pending-request bound: registration at or beyond it
+    /// refuses the send before any bytes are queued. `None` (the default)
+    /// keeps the unbounded map this crate has always shipped.
+    max_pending: Option<usize>,
 }
 
 impl Shared {
+    /// Register one pending reply; `false` when the opt-in pending cap
+    /// refused the send — the request provably never reached the wire.
     pub(crate) fn register_pending(
         &self,
         id: String,
         reply: oneshot::Sender<Result<DaemonResponse, anyhow::Error>>,
         direct_owner: Option<Arc<()>>,
-    ) {
-        self.pending.lock().unwrap().insert(
+    ) -> bool {
+        let mut pending = self.pending.lock().unwrap();
+        if let Some(max_pending) = self.max_pending {
+            if pending.len() >= max_pending {
+                return false;
+            }
+        }
+        pending.insert(
             id,
             PendingRequest {
                 reply,
                 direct_owner,
             },
         );
+        true
     }
 
     pub(crate) fn resolve(&self, id: &str, response: DaemonResponse) -> bool {
@@ -271,7 +320,9 @@ impl Shared {
 
     /// Fail every pending request whose id starts with `prefix` with a
     /// transport error: the connection that carried them died. The failure
-    /// resolves on the `Err` half — never a synthetic response.
+    /// resolves on the `Err` half — never a synthetic response. Every sweep
+    /// is conservatively uncertain: once a line was queued to the writer,
+    /// delivery cannot be disproven from the reader side.
     pub(crate) fn fail_pending(&self, prefix: &str, error: &str) {
         let mut pending = self.pending.lock().unwrap();
         let dead: Vec<String> = pending
@@ -281,7 +332,11 @@ impl Shared {
             .collect();
         for id in dead {
             if let Some(request) = pending.remove(&id) {
-                let _ = request.reply.send(Err(anyhow!(error.to_string())));
+                let _ = request
+                    .reply
+                    .send(Err(anyhow::Error::new(CommandResultUncertain {
+                        message: error.to_string(),
+                    })));
             }
         }
     }
@@ -301,7 +356,11 @@ impl Shared {
             .collect();
         for id in dead {
             if let Some(request) = pending.remove(&id) {
-                let _ = request.reply.send(Err(anyhow!(error.to_string())));
+                let _ = request
+                    .reply
+                    .send(Err(anyhow::Error::new(CommandResultUncertain {
+                        message: error.to_string(),
+                    })));
             }
         }
     }
@@ -324,6 +383,9 @@ pub struct DaemonClient {
     direct: std::sync::Arc<crate::direct_transport::DirectState>,
     /// The supervisor reader's death watch (see `reader_dead`).
     reader_dead_rx: tokio::sync::watch::Receiver<bool>,
+    /// The transport options this connection was established with (the
+    /// raw outbound tap rides the direct reader pumps on upgrade).
+    options: DaemonClientOptions,
 }
 
 impl DaemonClient {
@@ -339,6 +401,21 @@ impl DaemonClient {
     #[allow(clippy::too_many_lines)]
     pub async fn connect(
         socket_path: &Path,
+    ) -> Result<(Self, mpsc::UnboundedReceiver<DaemonClientEvent>)> {
+        Self::connect_with_options(socket_path, DaemonClientOptions::default()).await
+    }
+
+    /// [`Self::connect`] with [`DaemonClientOptions`]: the raw outbound tap
+    /// and the opt-in frame/pending caps. The defaults reproduce
+    /// [`Self::connect`]'s behavior exactly.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` on a connect or hello failure, timeout, or unknown protocol.
+    #[allow(clippy::too_many_lines)]
+    pub async fn connect_with_options(
+        socket_path: &Path,
+        options: DaemonClientOptions,
     ) -> Result<(Self, mpsc::UnboundedReceiver<DaemonClientEvent>)> {
         let connect = tokio::time::timeout(
             Duration::from_millis(CONNECT_TIMEOUT_MS),
@@ -369,6 +446,7 @@ impl DaemonClient {
         let (hello_tx, hello_rx) = oneshot::channel::<Value>();
         let shared = Arc::new(Shared {
             pending: Mutex::new(HashMap::new()),
+            max_pending: options.max_pending,
         });
         let reader_shared = Arc::clone(&shared);
 
@@ -386,19 +464,28 @@ impl DaemonClient {
         });
 
         // Reader task: dispatch every inbound line; the handle is kept so
-        // handshake-failure paths can abort it.
+        // handshake-failure paths can abort it. The line assembly is
+        // byte-accurate so the opt-in frame cap can be enforced on the
+        // accumulated bytes; the default `None` keeps the unbounded reader
+        // this crate has always shipped.
+        let raw_tap = options.raw_tap.clone();
+        let max_frame_bytes = options.max_frame_bytes;
         let reader_task = tokio::spawn(async move {
-            let mut reader = BufReader::new(reader_half);
-            let mut line = String::new();
+            let mut reader = BufReader::with_capacity(64 * 1024, reader_half);
+            // The spill of a line longer than the buffer: filled only when
+            // no newline sits in the buffered bytes, so every byte is scanned
+            // once and copied at most once beyond its buffer residency.
+            let mut partial: Vec<u8> = Vec::new();
             let mut hello_tx = Some(hello_tx);
-            loop {
-                line.clear();
-                match reader.read_line(&mut line).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(_) => {}
-                }
-                let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
-                    continue;
+            // One decoded line: `false` only on invalid UTF-8, the teardown
+            // `read_line` always produced. A malformed JSON line is skipped,
+            // exactly like before.
+            let mut dispatch = |line: &[u8]| -> bool {
+                let Ok(text) = std::str::from_utf8(line) else {
+                    return false;
+                };
+                let Ok(value) = serde_json::from_str::<Value>(text.trim()) else {
+                    return true;
                 };
                 let frame_type = value
                     .get("type")
@@ -406,8 +493,9 @@ impl DaemonClient {
                     .unwrap_or_default();
                 match frame_type {
                     "daemon_hello" => {
-                        let Some(tx) = hello_tx.take() else { continue };
-                        let _ = tx.send(value);
+                        if let Some(tx) = hello_tx.take() {
+                            let _ = tx.send(value);
+                        }
                     }
                     "response" => {
                         if let Ok(response) = serde_json::from_value::<DaemonResponse>(value) {
@@ -416,10 +504,67 @@ impl DaemonClient {
                         }
                     }
                     _ => {
+                        // The lossless tap first: every decoded application
+                        // frame AFTER the handshake, verbatim and in wire
+                        // order, before any typed conversion. A frame before
+                        // the handshake keeps its legacy typed-only behavior,
+                        // so the tap's ordering guarantee holds without
+                        // touching the default event stream.
+                        if hello_tx.is_none() {
+                            if let Some(tap) = raw_tap.as_ref() {
+                                let _ = tap.send(value.clone());
+                            }
+                        }
                         if let Some(event) = client_event_from_value(&value) {
                             let _ = event_tx.send(event);
                         }
                     }
+                }
+                true
+            };
+            loop {
+                let buffer = match reader.fill_buf().await {
+                    // The socket closed: a trailing unterminated line still
+                    // dispatches once, like `read_line`'s last line at EOF,
+                    // before the teardown.
+                    Ok([]) => {
+                        if !partial.is_empty() {
+                            let line = std::mem::take(&mut partial);
+                            dispatch(&line);
+                        }
+                        break;
+                    }
+                    Ok(buffer) => buffer,
+                    Err(_) => break,
+                };
+                if let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
+                    // The cap covers the line without its newline, like the
+                    // bounded readers' byte accounting — the spill's already
+                    // accumulated bytes count toward it too, so a split line
+                    // whose head passed the cap alone still tears down.
+                    if max_frame_bytes.is_some_and(|cap| partial.len() + newline > cap) {
+                        break;
+                    }
+                    let line: Vec<u8> = if partial.is_empty() {
+                        buffer[..newline].to_vec()
+                    } else {
+                        partial.extend_from_slice(&buffer[..newline]);
+                        std::mem::take(&mut partial)
+                    };
+                    reader.consume(newline + 1);
+                    if !dispatch(&line) {
+                        break;
+                    }
+                } else {
+                    // No newline in the buffered bytes: the cap also
+                    // bounds the partial frame accumulating across
+                    // fills.
+                    if max_frame_bytes.is_some_and(|cap| partial.len() + buffer.len() > cap) {
+                        break;
+                    }
+                    partial.extend_from_slice(buffer);
+                    let read = buffer.len();
+                    reader.consume(read);
                 }
             }
             // The supervisor socket closed: pending requests fail now and the death watch wakes the
@@ -478,6 +623,7 @@ impl DaemonClient {
                     retained_event_tx,
                 )),
                 reader_dead_rx,
+                options,
             },
             event_rx,
         ))
@@ -504,9 +650,22 @@ impl DaemonClient {
     pub async fn connect_with_retry(
         socket_path: &Path,
     ) -> Result<(Self, mpsc::UnboundedReceiver<DaemonClientEvent>)> {
+        Self::connect_with_retry_with_options(socket_path, DaemonClientOptions::default()).await
+    }
+
+    /// [`Self::connect_with_retry`] carrying [`DaemonClientOptions`]: the
+    /// tap and caps apply to every attempt unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns the last attempt's [`Self::connect_with_options`] error.
+    pub async fn connect_with_retry_with_options(
+        socket_path: &Path,
+        options: DaemonClientOptions,
+    ) -> Result<(Self, mpsc::UnboundedReceiver<DaemonClientEvent>)> {
         let mut delay = CONNECT_RETRY_BACKOFF_MS;
         for attempt in 1..=CONNECT_ATTEMPTS {
-            match DaemonClient::connect(socket_path).await {
+            match DaemonClient::connect_with_options(socket_path, options.clone()).await {
                 Ok(pair) => return Ok(pair),
                 Err(error) => {
                     if attempt == CONNECT_ATTEMPTS {
@@ -588,6 +747,9 @@ impl DaemonClient {
                     // supervisor routing is safe.
                     self.direct.drop_link();
                 }
+                // The pending cap refused before queuing: supervisor routing
+                // stays safe, and the live link keeps serving.
+                Err(DirectRequestError::Capped) => {}
                 Err(DirectRequestError::Wait(error)) => return Err(error),
             }
         }
@@ -626,12 +788,15 @@ impl DaemonClient {
     }
 
     /// The refusal for a supervisor reader that already ended: nothing can
-    /// ever answer a request registered now.
+    /// ever answer a request registered now. A provable non-delivery — the
+    /// request was never queued to the writer.
     fn dead_reader_error(&self) -> anyhow::Error {
-        anyhow!(
-            "the daemon connection is closed. Socket: {}.",
-            self.socket_path.display()
-        )
+        anyhow::Error::new(CommandNotSent {
+            message: format!(
+                "the daemon connection is closed. Socket: {}.",
+                self.socket_path.display()
+            ),
+        })
     }
 
     /// One JSONL envelope on the supervisor connection, under the caller's
@@ -666,31 +831,49 @@ impl DaemonClient {
         };
         let line = serde_json::to_string(&envelope)?;
         let (tx, rx) = oneshot::channel::<Result<DaemonResponse>>();
-        self.shared.register_pending(id.clone(), tx, None);
+        // The opt-in pending cap refuses before any bytes are queued: a
+        // provable non-delivery.
+        if !self.shared.register_pending(id.clone(), tx, None) {
+            return Err(anyhow::Error::new(CommandNotSent {
+                message: "too many pending daemon requests".to_string(),
+            }));
+        }
         // The reader runs on another worker: it can die (and run its failure
         // sweep) between the entry check and this registration. Re-check after
-        // inserting — a death it missed is caught here.
+        // inserting — a death it missed is caught here. The request was never
+        // queued to the writer, so it stays a provable non-delivery.
         if *self.reader_dead_rx.borrow() {
             self.shared.pending.lock().unwrap().remove(&id);
             return Err(self.dead_reader_error());
         }
-        self.writer
-            .send(line)
-            .map_err(|_| anyhow!("the daemon connection is closed"))?;
+        if self.writer.send(line).is_err() {
+            // The writer had already exited: the line was never queued, and
+            // the registered slot must not linger for the death sweep.
+            self.shared.pending.lock().unwrap().remove(&id);
+            return Err(anyhow::Error::new(CommandNotSent {
+                message: "the daemon connection is closed".to_string(),
+            }));
+        }
         match tokio::time::timeout(Duration::from_millis(timeout_ms), rx).await {
             Ok(Ok(result)) => result,
-            // The reader task died before resolving this request: the
-            // connection was already gone.
-            Ok(Err(_)) => Err(anyhow!(
-                "Connection to the Prime Agent daemon closed. Socket: {}.",
-                self.socket_path.display()
-            )),
+            // The reader task died before resolving this request: the line
+            // was queued, so delivery is uncertain — never a refusal.
+            Ok(Err(_)) => Err(anyhow::Error::new(CommandResultUncertain {
+                message: format!(
+                    "Connection to the Prime Agent daemon closed. Socket: {}.",
+                    self.socket_path.display()
+                ),
+            })),
             Err(_) => {
                 self.shared.pending.lock().unwrap().remove(&id);
-                Err(anyhow!(
-                    "Timed out after {timeout_ms}ms waiting for the Prime Agent daemon response. Socket: {}.",
-                    self.socket_path.display()
-                ))
+                // The line was queued and may have been written: the timeout
+                // is an uncertain delivery, never a clean failure.
+                Err(anyhow::Error::new(CommandResultUncertain {
+                    message: format!(
+                        "Timed out after {timeout_ms}ms waiting for the Prime Agent daemon response. Socket: {}.",
+                        self.socket_path.display()
+                    ),
+                }))
             }
         }
     }
@@ -746,8 +929,15 @@ impl DaemonClient {
         )
         .map_err(|_| DirectRequestError::NotSent)?;
         let (reply_tx, reply_rx) = oneshot::channel::<Result<DaemonResponse>>();
-        self.shared
-            .register_pending(id.to_string(), reply_tx, Some(Arc::clone(&link.owner)));
+        // The opt-in pending cap refuses before the frame is queued: a
+        // provable non-delivery, safe for the supervisor fallback — the live
+        // link itself stays untouched.
+        if !self
+            .shared
+            .register_pending(id.to_string(), reply_tx, Some(Arc::clone(&link.owner)))
+        {
+            return Err(DirectRequestError::Capped);
+        }
         if !link.send(frame) {
             self.shared.pending.lock().unwrap().remove(id);
             return Err(DirectRequestError::NotSent);
@@ -756,15 +946,23 @@ impl DaemonClient {
             Ok(Ok(Ok(response))) => Ok(response),
             // The worker link died: a transport failure, never a refusal.
             Ok(Ok(Err(error))) => Err(DirectRequestError::Wait(error)),
-            Ok(Err(_)) => Err(DirectRequestError::Wait(anyhow!(
-                "the direct session connection closed. Socket: {}.",
-                link.socket_path
+            Ok(Err(_)) => Err(DirectRequestError::Wait(anyhow::Error::new(
+                CommandResultUncertain {
+                    message: format!(
+                        "the direct session connection closed. Socket: {}.",
+                        link.socket_path
+                    ),
+                },
             ))),
             Err(_) => {
                 self.shared.pending.lock().unwrap().remove(id);
-                Err(DirectRequestError::Wait(anyhow!(
-                    "Timed out after {timeout_ms}ms waiting for the session response. Socket: {}.",
-                    link.socket_path
+                Err(DirectRequestError::Wait(anyhow::Error::new(
+                    CommandResultUncertain {
+                        message: format!(
+                            "Timed out after {timeout_ms}ms waiting for the session response. Socket: {}.",
+                            link.socket_path
+                        ),
+                    },
                 )))
             }
         }
@@ -838,7 +1036,14 @@ impl DaemonClient {
         let Some(event_tx) = self.direct.event_sender() else {
             return Ok(false);
         };
-        match connect_direct(&ticket, Arc::clone(&self.shared), event_tx).await {
+        match connect_direct(
+            &ticket,
+            Arc::clone(&self.shared),
+            event_tx,
+            self.options.raw_tap.clone(),
+        )
+        .await
+        {
             Ok(link) => {
                 self.direct.set_link(link);
                 Ok(true)

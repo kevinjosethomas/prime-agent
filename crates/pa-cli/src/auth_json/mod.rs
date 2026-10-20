@@ -40,7 +40,7 @@ where
     R: AsyncBufRead + Unpin + Send + 'static,
     W: AsyncWrite + Unpin,
 {
-    emit(&mut writer,json!({"type":"ready","protocolVersion":1,"capabilities":["providers","provider_login","provider_auth_methods","provider_logout","mcp_login","mcp_logout","mcp_paste","mcp_key","traces_login","traces_logout","reply","cancel"]})).await?;
+    emit(&mut writer,json!({"type":"ready","protocolVersion":1,"capabilities":["providers","provider_login","provider_auth_methods","provider_logout","mcp_login","mcp_logout","mcp_paste","mcp_key","mcp_add_account","traces_login","traces_logout","reply","cancel"]})).await?;
     let (tx, mut input) = mpsc::channel(8);
     let reader_task = tokio::spawn(protocol::pump(reader, tx));
     let request = tokio::time::timeout(Duration::from_secs(30), input.recv()).await;
@@ -49,9 +49,9 @@ where
             let mut value=native::options(cwd,agent_dir).await;
             value["type"]=json!("options");value["id"]=json!(id);emit(&mut writer,value).await
         }
-        Ok(Some(Input::Request(Request::Begin {id,target,key,action,method_id})))=>{
+        Ok(Some(Input::Request(Request::Begin {id,target,key,action,method_id,add_account})))=>{
             let (tx,events)=mpsc::unbounded_channel();let panel=AuthPanelHandle::new(tx);
-            let flow=native::flow(cwd,agent_dir,target,action,key,method_id,panel.clone());
+            let flow=native::flow(cwd,agent_dir,native::FlowRequest{target,action,key,method_id,add_account:add_account.unwrap_or(false)},panel.clone());
             driver::drive(&mut input,&mut writer,&id,panel,events,flow).await
         }
         Ok(Some(Input::End)|None)=>Ok(()),

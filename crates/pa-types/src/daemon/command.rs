@@ -769,6 +769,16 @@ pub enum DaemonCommand {
         #[serde(flatten)]
         rest: JsonMap,
     },
+    /// Rename one MCP account's identity label (the inline rename surface).
+    SetMcpConnectionLabel {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        active_session_id: String,
+        connection_id: String,
+        label: String,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
     ReplaceAcpMcpServers {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,

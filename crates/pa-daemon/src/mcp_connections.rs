@@ -100,6 +100,10 @@ impl Worker {
                 None,
             );
         };
+        let add_account = payload
+            .get("addAccount")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let Some(token) = payload.get("token").and_then(Value::as_str) else {
             return response_failure(
                 None,
@@ -117,11 +121,17 @@ impl Worker {
             );
         };
         // Gather under a short manager lock; the install (credential store +
-        // handshake probe) awaits without holding it.
+        // handshake probe) awaits without holding it. `addAccount` installs
+        // under the next free per-account id instead of the service id.
         let inputs = {
             let manager = manager.lock().unwrap();
-            manager.paste_install_inputs(server)
+            if add_account {
+                manager.add_paste_account_inputs(server)
+            } else {
+                manager.paste_install_inputs(server)
+            }
         };
+        let connection_id = inputs.as_ref().ok().map(|inputs| inputs.server.clone());
         let install = match inputs {
             Ok(inputs) => pa_core::mcp::install_static_token(inputs, token).await,
             Err(message) => Err(message),
@@ -136,6 +146,7 @@ impl Worker {
                 "set_mcp_static_token",
                 Some(json!({
                     "server": server,
+                    "connectionId": connection_id.unwrap_or_else(|| server.to_string()),
                     "endpoint": outcome.endpoint,
                     "verified": outcome.verified,
                     "toolCount": outcome.tool_count,
@@ -179,6 +190,61 @@ impl Worker {
                 Some(json!({ "server": server, "removed": removed })),
             ),
             Err(message) => response_failure(None, "remove_mcp_connection", &message, None),
+        }
+    }
+
+    /// `set_mcp_connection_label`: rename one account's identity label (an
+    /// inline rename in the settings surface). The label is bounded, trimmed,
+    /// and control-character-free; unknown accounts fail closed.
+    pub(crate) fn handle_set_mcp_connection_label(&self, payload: &Value) -> DaemonResponse {
+        if let Err(response) = self.require_created("set_mcp_connection_label") {
+            return response;
+        }
+        let Some(connection_id) = payload.get("connectionId").and_then(Value::as_str) else {
+            return response_failure(
+                None,
+                "set_mcp_connection_label",
+                "set_mcp_connection_label requires a connectionId",
+                None,
+            );
+        };
+        let Some(label) = payload.get("label").and_then(Value::as_str) else {
+            return response_failure(
+                None,
+                "set_mcp_connection_label",
+                "set_mcp_connection_label requires a label",
+                None,
+            );
+        };
+        let label = label.trim();
+        if label.is_empty() || label.len() > 200 || label.contains(|c: char| c.is_control()) {
+            return response_failure(
+                None,
+                "set_mcp_connection_label",
+                "the label must be 1-200 characters without control characters",
+                None,
+            );
+        }
+        let Some(manager) = self.engine.acp_mcp_manager() else {
+            return response_failure(
+                None,
+                "set_mcp_connection_label",
+                "MCP connections are not available in this session",
+                None,
+            );
+        };
+        let result = {
+            let manager = manager.lock().unwrap();
+            let handles = manager.connection_handles();
+            handles.renamed(connection_id, label)
+        };
+        match result {
+            Ok(()) => response_success(
+                None,
+                "set_mcp_connection_label",
+                Some(json!({ "connectionId": connection_id, "label": label })),
+            ),
+            Err(message) => response_failure(None, "set_mcp_connection_label", &message, None),
         }
     }
 }

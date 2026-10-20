@@ -4,10 +4,76 @@ use pa_types::daemon::{
 };
 use serde_json::Value;
 /// Why a direct request failed: `NotSent` never reached the worker (safe to
-/// fall back to the supervisor), `Wait` did and must not be retried.
+/// fall back to the supervisor), `Capped` was refused by the opt-in pending
+/// cap before queuing (also safe to fall back, without touching the link),
+/// `Wait` did reach it and must not be retried.
 pub(super) enum DirectRequestError {
     NotSent,
+    Capped,
     Wait(anyhow::Error),
+}
+
+/// A request that provably never reached the wire: the reader was already
+/// dead, the writer had already exited, or the opt-in pending cap refused
+/// the send before any bytes were queued. The command was NOT executed —
+/// the caller may re-route by its own policy, never an automatic resend.
+///
+/// Distinct from the daemon-side `DaemonErrorInfo::CommandResultUncertain`,
+/// which the daemon itself reports for an outcome it could not determine and
+/// which arrives inside [`RequestRejected::error_info`]: the two uncertain
+/// classes never merge.
+#[derive(Debug, PartialEq)]
+pub struct CommandNotSent {
+    /// The transport-refusal message (the existing dead-reader/writer text).
+    pub message: String,
+}
+
+/// A request whose delivery is uncertain: its line was queued to a live
+/// writer (or the transport died under it) and no answer ever arrived, so
+/// the command may or may not have executed. Never retried automatically;
+/// the uncertain-mutation rule renders it as a check-activity state, never
+/// a resend.
+#[derive(Debug, PartialEq)]
+pub struct CommandResultUncertain {
+    /// The transport-failure message (the existing sweep/timeout text).
+    pub message: String,
+}
+
+impl std::fmt::Display for CommandNotSent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for CommandNotSent {}
+
+impl std::fmt::Display for CommandResultUncertain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for CommandResultUncertain {}
+
+/// Whether the error is (or wraps) a provable non-delivery: the command
+/// never reached the wire, so its outcome is definitively not-executed.
+#[must_use]
+pub fn is_command_not_sent(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.downcast_ref::<CommandNotSent>().is_some())
+}
+
+/// Whether the error is (or wraps) an uncertain delivery: the command was
+/// queued to the transport and no answer arrived, so its outcome may have
+/// executed. The daemon's own `CommandResultUncertain` error info (a
+/// refusal the daemon could not classify) stays a separate
+/// [`RequestRejected`] class and never matches here.
+#[must_use]
+pub fn is_command_result_uncertain(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.downcast_ref::<CommandResultUncertain>().is_some())
 }
 
 /// The daemon answered with `success: false` for one request: the daemon

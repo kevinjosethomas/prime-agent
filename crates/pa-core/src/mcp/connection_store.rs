@@ -36,6 +36,22 @@ pub struct McpConnectionRecord {
     /// Fixed, safe failure category (never URLs or server-controlled text).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    /// The account's real identity label (workspace/org name or the user's
+    /// name), fetched once at connect or renamed by the user. Never the
+    /// internal connection id.
+    #[serde(
+        rename = "accountLabel",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub account_label: Option<String>,
+    /// The account's email identity when the connect flow could fetch one.
+    #[serde(
+        rename = "accountEmail",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub account_email: Option<String>,
     /// Opaque one-time ownership nonce for a pending login attempt.
     #[serde(rename = "attemptId", default, skip_serializing_if = "Option::is_none")]
     pub attempt_id: Option<String>,
@@ -150,6 +166,30 @@ impl McpConnectionStore {
         })
     }
 
+    /// Rename one account (an inline rename in the settings surface): set
+    /// its identity label, optionally its email. Fails when the account has
+    /// no record. A rename never touches verification state.
+    pub fn set_account_label(
+        &mut self,
+        connection_id: &str,
+        label: &str,
+        email: Option<&str>,
+    ) -> Result<bool, anyhow::Error> {
+        let now = now_ms();
+        let mut found = false;
+        self.with_disk_state(|records| {
+            if let Some(record) = records.get_mut(connection_id) {
+                record.account_label = Some(label.to_string());
+                if email.is_some() {
+                    record.account_email = email.map(str::to_string);
+                }
+                record.updated_at = now;
+                found = true;
+            }
+        })?;
+        Ok(found)
+    }
+
     /// Apply one verification outcome under the shared guard: a stale probe never marks a newer
     /// grant or a logged-out connection verified — the result is discarded.
     pub fn apply_verify_result(
@@ -258,6 +298,8 @@ pub fn new_pending_record(
         verified_at: None,
         tool_count: None,
         last_error: None,
+        account_label: None,
+        account_email: None,
         attempt_id: None,
     }
 }
@@ -268,6 +310,34 @@ mod tests {
 
     /// Per-call-site served-path oracle: the registry write goes through the real
     /// `write_records` writer and takes exactly one fsync branch.
+    #[test]
+    fn account_identity_round_trips_and_rename_writes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("connections.json");
+        let mut store = McpConnectionStore::open(&path);
+        let record =
+            new_pending_record("linear-2", "linear", "Linear", "https://mcp.linear.app/mcp");
+        store.upsert(&record).unwrap();
+        assert!(store.get("linear-2").unwrap().account_label.is_none());
+        assert!(store
+            .set_account_label("linear-2", "Acme workspace", Some("dev@acme.io"))
+            .unwrap());
+        let label = store.get("linear-2").unwrap().account_label.clone();
+        assert_eq!(label.as_deref(), Some("Acme workspace"));
+        assert_eq!(
+            store.get("linear-2").unwrap().account_email.as_deref(),
+            Some("dev@acme.io")
+        );
+        // An unknown account fails closed, never invents a record.
+        assert!(!store.set_account_label("linear-9", "Ghost", None).unwrap());
+        // The fields survive a re-read from disk.
+        let store = McpConnectionStore::open(&path);
+        assert_eq!(
+            store.get("linear-2").unwrap().account_label.as_deref(),
+            Some("Acme workspace")
+        );
+    }
+
     #[test]
     fn registry_write_takes_exactly_one_fsync() {
         let dir = tempfile::tempdir().unwrap();
@@ -283,6 +353,8 @@ mod tests {
             verified_at: Some(2),
             tool_count: Some(3),
             last_error: None,
+            account_label: None,
+            account_email: None,
             attempt_id: None,
         };
         let mut records = HashMap::new();
