@@ -2179,6 +2179,7 @@ async fn shutdown_during_in_flight_upgrade_loses_the_registration_race() {
     let _ = supervisor.await;
 }
 
+#[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn dropped_mid_flight_upgrade_leaves_no_residual_tasks() {
     // §5's caller-owned proof, deterministic: the worker accepts and HOLDS
