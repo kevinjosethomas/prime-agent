@@ -577,10 +577,11 @@ pub fn build_connection_views(
         // (credential binding) — never a raw record.status that could claim a stale Connected.
         for account in account_states_for(service, inputs.credentials, inputs.records) {
             connected.insert(account.connection_id.clone());
-            let label = if account.connection_id == service.service_id {
-                service.label.clone()
-            } else {
-                format!("{} ({})", service.label, account.connection_id)
+            let label = match inputs.records.get(&account.connection_id) {
+                Some(record) if account.connection_id != service.service_id => {
+                    super::catalog_views::alias_account_label(inputs.records, service, record)
+                }
+                _ => service.label.clone(),
             };
             views.push(McpConnectionView {
                 connection_id: account.connection_id.clone(),
@@ -881,7 +882,10 @@ mod connection_view_tests {
         assert_eq!(alpha.source, ViewSource::Catalog);
         assert_eq!(alpha.service_id.as_deref(), Some("alpha"));
         let alpha_two = &views[1];
-        assert_eq!(alpha_two.label, "alpha (alpha-2)");
+        assert_eq!(
+            alpha_two.label, "alpha account 2",
+            "the label is the ordinal fallback, never the internal id"
+        );
         assert_eq!(alpha_two.status, McpConnectionStatus::Connected);
         let shadow = views.iter().find(|v| v.connection_id == "linear").unwrap();
         assert_eq!(shadow.status, McpConnectionStatus::Error);

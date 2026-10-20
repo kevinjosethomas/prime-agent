@@ -57,6 +57,7 @@ pub(super) async fn flow(
     action: Action,
     key: String,
     method_id: Option<Method>,
+    add_account: bool,
     panel: AuthPanelHandle,
 ) -> ProviderAuthOutcome {
     match target {
@@ -121,6 +122,7 @@ pub(super) async fn flow(
         Target::Mcp => {
             let auth = crate::mcp_login::TerminalMcpAuth::new(cwd, agent_dir);
             let result = match action {
+                Action::Login if add_account => auth.login_add_account(&key, panel.clone()).await,
                 Action::Login => auth.login(&key, panel.clone()).await,
                 Action::Logout => auth.logout(&key).await,
                 Action::Paste => auth.paste_token(&key, panel.clone()).await,

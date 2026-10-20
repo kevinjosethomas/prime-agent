@@ -9,20 +9,41 @@ use anyhow::{anyhow, Context as _, Result};
 use crate::auth::types::AuthCredential;
 use crate::auth::{AuthStorage, OAuthIntegration};
 
-use super::oauth::{mcp_login, McpLoginUi, McpOAuthConfig};
+use super::connection_store::{new_pending_record, McpConnectionStatus};
+use super::oauth::{mcp_login_with_identity, McpLoginIdentity, McpLoginUi, McpOAuthConfig};
 use super::oauth_http::OAuthHttp;
+use super::probe::McpEndpointProbe;
 use super::{McpManager, McpServerConfig};
 
 /// One server's login execution: the resolved OAuth config plus the auth store. Detached from the
 /// manager on purpose — the flow awaits UI input, so no manager lock may be held across it.
 pub struct McpLoginContext {
     server: String,
+    /// The catalog service the account belongs to; an alias account keeps
+    /// its parent's service id, never its own connection id.
+    service_id: String,
     config: McpOAuthConfig,
     auth_storage: Arc<tokio::sync::Mutex<AuthStorage>>,
+    store: Arc<Mutex<super::connection_store::McpConnectionStore>>,
+    probe: McpEndpointProbe,
+    /// Catalog accounts get a connection record with their identity; user-declared OAuth servers
+    /// keep their settings-managed lifecycle.
+    account: bool,
 }
 
 impl McpLoginContext {
-    /// Run the flow and persist the credential under `mcp:<server>`.
+    /// The connection id the flow persists under (the minted alias for an
+    /// add-account login).
+    #[must_use]
+    pub fn server(&self) -> &str {
+        &self.server
+    }
+
+    /// Run the flow and persist the credential under `mcp:<server>`; a catalog
+    /// account also gains its connection record — verified with a real handshake
+    /// against the pinned endpoint and labelled with the identity the connect
+    /// could read once. The identity never overwrites an existing label (a
+    /// rename survives re-logins).
     ///
     /// # Errors
     ///
@@ -30,7 +51,7 @@ impl McpLoginContext {
     /// credential fails.
     pub async fn run(self, ui: &dyn McpLoginUi, http: &dyn OAuthHttp) -> Result<AuthCredential> {
         let provider_id = format!("mcp:{}", self.server);
-        let credential = mcp_login(http, &self.config, ui).await?;
+        let (credential, identity) = mcp_login_with_identity(http, &self.config, ui).await?;
         let mut auth = self.auth_storage.lock().await;
         if auth.load_error().is_some() {
             return Err(anyhow!("auth storage failed to load; login was not saved"));
@@ -39,8 +60,90 @@ impl McpLoginContext {
         if let Some(error) = auth.drain_errors().pop() {
             return Err(anyhow!(error)).context("could not save login credentials");
         }
+        drop(auth);
+        if self.account {
+            self.persist_account_record(&credential, identity.as_ref())
+                .await;
+        }
         Ok(credential)
     }
+
+    /// Verify the fresh grant with a real handshake and write the account's
+    /// record: status, tool count, and the identity read at connect. Best
+    /// effort after the credential is saved — a failed write keeps the login
+    /// but the account reports the record's last durable state.
+    async fn persist_account_record(
+        &self,
+        credential: &AuthCredential,
+        identity: Option<&McpLoginIdentity>,
+    ) {
+        let AuthCredential::Oauth { access, .. } = credential else {
+            return;
+        };
+        let existing = {
+            let mut store = self.store.lock().unwrap();
+            store.load();
+            store.get(&self.server).cloned()
+        };
+        let outcome = self.probe.probe(&self.config.url, access).await;
+        let mut record = new_pending_record(
+            &self.server,
+            &self.service_id,
+            &self.config.label,
+            &self.config.url,
+        );
+        match outcome {
+            Ok(tool_count) => {
+                record.status = McpConnectionStatus::Connected;
+                record.verified_at = Some(now_ms());
+                record.tool_count = Some(tool_count);
+            }
+            Err(category) => {
+                record.last_error = Some(category.to_string());
+            }
+        }
+        // The identity read lands only on an unlabelled account; a rename is
+        // the user's word for it and survives re-logins.
+        if let Some(identity) = identity {
+            if existing
+                .as_ref()
+                .and_then(|record| record.account_label.clone())
+                .is_none()
+            {
+                record.account_label = identity.label.clone();
+                record.account_email = identity.email.clone();
+            } else if let Some(existing) = &existing {
+                record.account_label = existing.account_label.clone();
+                record.account_email = existing
+                    .account_email
+                    .clone()
+                    .or_else(|| identity.email.clone());
+            }
+        } else if let Some(existing) = &existing {
+            record.account_label = existing.account_label.clone();
+            record.account_email = existing.account_email.clone();
+        }
+        // The guard: the stored grant must still be exactly the token that was
+        // probed; a logout between reads discards the result.
+        let stored = {
+            let auth = self.auth_storage.lock().await;
+            auth.get_all().get(&format!("mcp:{}", self.server)).cloned()
+        };
+        let still_current = stored
+            .and_then(|value| serde_json::from_value::<AuthCredential>(value).ok())
+            .is_some_and(|stored| {
+                matches!(&stored, AuthCredential::Oauth { access: token, .. } if token == access)
+            });
+        let mut store = self.store.lock().unwrap();
+        let _ = store.apply_verify_result(&record, still_current);
+    }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_millis() as u64)
+        .unwrap_or_default()
 }
 
 impl McpManager {
@@ -85,11 +188,97 @@ impl McpManager {
         let Some(config) = self.oauth_config(server) else {
             return Err(anyhow!("Unknown MCP integration: {server}"));
         };
+        let account = self
+            .integrations()
+            .get(server)
+            .and_then(|integration| integration.catalog_service_id.clone());
         Ok(McpLoginContext {
             server: server.to_string(),
+            service_id: account.clone().unwrap_or_else(|| server.to_string()),
             config,
             auth_storage: self.auth_storage_handle(),
+            store: self.connection_store_handle(),
+            probe: self.probe(),
+            account: account.is_some(),
         })
+    }
+
+    /// The next free per-account connection id for one service (`linear`,
+    /// `linear-2`, `linear-3`, …): never an existing record's id. Alias
+    /// accounts only ever exist through the record-writing flows, so the
+    /// records are the id registry; this never touches the async auth store
+    /// (callers may run it on a runtime thread).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the connection store mutex is poisoned.
+    pub fn next_account_connection_id(&self, service_id: &str) -> Option<String> {
+        let records = self.records_by_id();
+        for index in 2..1000u32 {
+            let candidate = format!("{service_id}-{index}");
+            if !records.contains_key(&candidate) {
+                return Some(candidate);
+            }
+        }
+        None
+    }
+
+    /// The execution context for one ADD-account login of a catalog service:
+    /// like [`McpManager::login_context`] but the credential and record land
+    /// under the next free per-account id, keeping the service's endpoint and
+    /// label. The connection id is minted here; callers never pick it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the service is not a connectable OAuth catalog
+    /// service or no free account id exists.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the connection store mutex is poisoned.
+    pub fn add_account_context(&self, service_id: &str) -> Result<McpLoginContext> {
+        let service = self
+            .service_descriptor(service_id)
+            .ok_or_else(|| anyhow!("Unknown MCP service: {service_id}"))?;
+        let url = service
+            .transport
+            .endpoint()
+            .ok_or_else(|| anyhow!("{service_id} has no endpoint to connect an account to."))?
+            .to_string();
+        if !super::catalog_views::fresh_mcp_login_allowed(service) {
+            return Err(anyhow!("{service_id} does not use automatic OAuth login."));
+        }
+        let server = self
+            .next_account_connection_id(service_id)
+            .ok_or_else(|| anyhow!("{service_id} has no free account id left."))?;
+        let label = service.label.clone();
+        let (client_id, callback_port) = endpoint_login_defaults(&url);
+        Ok(McpLoginContext {
+            server,
+            service_id: service_id.to_string(),
+            config: McpOAuthConfig {
+                server: service_id.to_string(),
+                label,
+                url,
+                client_id,
+                callback_port,
+                scopes: None,
+            },
+            auth_storage: self.auth_storage_handle(),
+            store: self.connection_store_handle(),
+            probe: self.probe(),
+            account: true,
+        })
+    }
+}
+
+/// Endpoint-level OAuth defaults (Slack's published client today): applied
+/// when the settings carry none.
+fn endpoint_login_defaults(url: &str) -> (Option<String>, Option<u16>) {
+    if url == "https://mcp.slack.com/mcp" {
+        (Some("1601185624273.8899143856786".to_string()), Some(3118))
+    } else {
+        (None, None)
     }
 }
 
