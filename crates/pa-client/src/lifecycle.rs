@@ -225,6 +225,10 @@ impl DaemonClientSession {
 
     /// Register an attachment (idempotent per id) for restore-attach and
     /// dedupe.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the registry lock is poisoned.
     pub fn register_attachment(&self, id: &str, capabilities: Option<Vec<String>>) {
         self.state
             .registry
@@ -234,6 +238,10 @@ impl DaemonClientSession {
     }
 
     /// Drop an attachment and every marker it owns.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the registry lock is poisoned.
     pub fn forget_attachment(&self, id: &str) {
         self.state.registry.lock().unwrap().forget(id);
     }
@@ -416,7 +424,7 @@ struct BackoffState {
 
 /// The driver. Holds only a WEAK session reference: no Arc cycle — when the
 /// handles and the consumer are gone, the driver tears itself down via the
-/// receiver-closed signal; stop() is the explicit settle path.
+/// receiver-closed signal; `stop()` is the explicit settle path.
 async fn driver_run(
     session: std::sync::Weak<SessionState>,
     config: LifecycleConfig,
@@ -542,7 +550,7 @@ async fn backoff_tick(
     tokio::select! {
         () = sleep => {}
         _ = cancel.changed() => return false,
-        _ = &mut gone => return false,
+        () = &mut gone => return false,
     }
     // Window expiry: a typed event, then the driver stops. No exit.
     let expired = backoff
@@ -611,7 +619,7 @@ async fn service(
         tokio::pin!(gone);
         tokio::select! {
             _ = cancel.changed() => return ServiceEnd::Stop,
-            _ = &mut gone => return ServiceEnd::Stop,
+            () = &mut gone => return ServiceEnd::Stop,
             _ = dead.changed() => {
                 if *dead.borrow() {
                     // The old connection's registered tasks are joined NOW:
