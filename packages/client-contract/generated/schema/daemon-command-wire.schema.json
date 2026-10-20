@@ -4948,20 +4948,6 @@
             "null"
           ]
         },
-        "harnessDigest": {
-          "description": "Harness digest snapshot attached mechanically at compaction.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "harnessStateFingerprint": {
-          "description": "Fingerprint of the harness state behind `harness_digest`; lets cold\nboundaries skip re-delivery (TS #2400).",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "timestamp": {
           "description": "Unix timestamp in milliseconds.",
           "type": "integer",
