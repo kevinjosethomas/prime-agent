@@ -66,14 +66,7 @@ class Client:
             description=description, owner="/root", links=links)
         if parent_id is not None:
             value["parentId"] = parent_id
-        try:
-            await self._deliver(Report.create("create", task=validate_task(value)))
-        except DeliveryError as error:
-            # A raced duplicate loses at the host (one transaction, atomic
-            # rejection); surface it as the same clean duplicate error.
-            if any(item["id"] == id for item in (await self._context())["tasks"]):
-                raise ValueError(f"Task already exists: {id}") from error
-            raise
+        await self._deliver(Report.create("create", task=validate_task(value)))
         return await self.get(id)
 
     async def update(self, id: str, *, status: Any = UNSET, summary: Any = UNSET,
