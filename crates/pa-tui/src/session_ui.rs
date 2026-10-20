@@ -195,6 +195,7 @@ pub(crate) struct SessionUi {
     /// `None` until the first sample, a rebind restarts it.
     speed_stats: Option<SpeedStats>,
     service_tier: Option<String>,
+    pending_model_fallback_message: Option<String>,
     client_settings: Option<std::sync::Arc<dyn crate::client_settings::ClientSettings>>,
     /// The ban-risk warning's view-local dedup (TS
     /// `anthropicSubscriptionWarningShown`): this VIEW's own
@@ -328,6 +329,9 @@ pub(crate) struct SessionUi {
     /// Whether this run may hand the terminal back to the agents view:
     /// false only for `--no-session` runs.
     pub(crate) return_to_agents_view: bool,
+    /// The open panel was mounted by an agents-view activity line: its close hands the pane back
+    /// to the agents view instead of the dock.
+    panel_returns_to_agents_view: bool,
     client_auth: Option<crate::client_auth::ClientAuthCommandsHandle>,
     keybindings: crate::keybindings::KeybindingsManager,
     prompt_stash: std::sync::Arc<std::sync::Mutex<crate::prompt_stash::PromptStashStore>>,
