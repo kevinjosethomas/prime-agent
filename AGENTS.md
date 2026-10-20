@@ -194,7 +194,8 @@ The table summarizes each crate's current direct workspace dependencies:
 | `pa-models` | Live model catalog and transport | `pa-ai`, `pa-types` |
 | `pa-core` | Session engine, tools, skills, kernel, settings | `pa-types`, `pa-ai`, `pa-models`, `pa-agent`, `pa-telemetry` |
 | `pa-daemon` | Supervisor, workers, wire protocol | `pa-types`, `pa-core`, `pa-agent`, `pa-ai`, `pa-telemetry`, `pa-models` |
-| `pa-tui` | Terminal UI, daemon-wire client | `pa-types` |
+| `pa-client` | Shared daemon transport: JSONL supervisor client + direct worker link | `pa-types` |
+| `pa-tui` | Terminal UI, daemon-wire client | `pa-types`, `pa-client` |
 | `pa-cli` | `prime-agent` binary, composition root | `pa-types`, `pa-core`, `pa-ai`, `pa-agent`, `pa-daemon`, `pa-tui`, `pa-telemetry` |
 | `pa-perf` | Performance corpora + pty bench harness (dev/CI tooling, never shipped) | `pa-types`, `pa-core`, `pa-daemon` |
 

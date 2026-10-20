@@ -96,11 +96,20 @@ class TheMappingTestCase(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertEqual(outputs["crates"], "pa-cli,pa-tui")
 
+    def test_pa_client_only_runs_the_client_closure(self):
+        # The shared transport crate: a client-only PR must test both
+        # frontends that consume it through pa-tui.
+        rc, out, outputs = run_mapper(["crates/pa-client/src/daemon_client.rs"])
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(outputs["crates"], "pa-cli,pa-client,pa-tui")
+
     def test_pa_telemetry_only_runs_all_dependents(self):
+        # pa-tui no longer sits behind pa-core (its deps are pa-types and
+        # pa-client only), so the telemetry wave stops at the engine crates.
         rc, out, outputs = run_mapper(["crates/pa-telemetry/src/lib.rs"])
         self.assertEqual(rc, 0, out)
         self.assertEqual(outputs["crates"],
-                         "pa-cli,pa-core,pa-daemon,pa-telemetry,pa-tui")
+                         "pa-cli,pa-core,pa-daemon,pa-telemetry")
 
     def test_an_unknown_crate_fails_safe(self):
         rc, out, outputs = run_mapper(["crates/pa-future/src/lib.rs"])

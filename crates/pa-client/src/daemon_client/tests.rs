@@ -503,6 +503,9 @@ async fn spawn_mock_worker(listener: tokio::net::UnixListener) {
     }
 }
 
+// One scripted end-to-end upgrade scenario (supervisor + worker + event flow);
+// splitting would add indirection without changing the flow.
+#[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn direct_upgrade_routes_attach_and_streams_events() {
     let dir = tempfile::TempDir::new().unwrap();

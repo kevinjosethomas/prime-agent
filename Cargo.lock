@@ -1602,6 +1602,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pa-client"
+version = "0.10.0"
+dependencies = [
+ "anyhow",
+ "pa-types",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "pa-core"
 version = "0.10.0"
 dependencies = [
@@ -1730,6 +1741,7 @@ dependencies = [
  "fancy-regex",
  "ignore",
  "notify",
+ "pa-client",
  "pa-types",
  "proptest",
  "ratatui",
