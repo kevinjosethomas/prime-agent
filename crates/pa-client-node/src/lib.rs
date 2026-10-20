@@ -9,8 +9,24 @@
 //! for macro output.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
+
+/// The binding's own tokio runtime: a sync napi fn thread has no ambient
+/// reactor, and napi-rs keeps its shared runtime module private. Detached
+/// pumps (and, in the real adapter, every pa-client future bridged here so
+/// its internal task spawns land on the same reactor) run on this runtime;
+/// its parked worker threads never hold the Node event loop.
+fn runtime() -> &'static tokio::runtime::Runtime {
+    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("the client-node runtime builds")
+    })
+}
 
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
@@ -67,9 +83,7 @@ impl SpikeTicker {
         // Runs on the napi-rs tokio_rt runtime; the loop exits on the stop
         // flag and drops its TSFN clone, so a stopped ticker leaves nothing
         // holding the Node event loop.
-        // The shared napi-rs tokio runtime (not a bare tokio::spawn, which
-        // has no ambient reactor on this thread).
-        napi::tokio_runtime::spawn(async move {
+        runtime().spawn(async move {
             let mut tick = 0_u32;
             while !task_stop.load(Ordering::SeqCst) {
                 task_tsfn.call(Ok(tick), ThreadsafeFunctionCallMode::NonBlocking);
