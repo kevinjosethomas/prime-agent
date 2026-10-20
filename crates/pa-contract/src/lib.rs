@@ -557,9 +557,7 @@ fn collect_union_replacements(
                     .and_then(Value::as_str)
                     == Some(tag)
                 {
-                    collect_union_replacements(
-                        branch, witness, defs, prefix, depth + 1, out,
-                    );
+                    collect_union_replacements(branch, witness, defs, prefix, depth + 1, out);
                     return;
                 }
             }
@@ -569,7 +567,9 @@ fn collect_union_replacements(
     let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
         return;
     };
-    let Some(object) = witness.as_object() else { return };
+    let Some(object) = witness.as_object() else {
+        return;
+    };
     for (name, prop) in properties {
         let mut path = prefix.to_vec();
         path.push(name.clone());
@@ -595,7 +595,12 @@ fn collect_union_replacements(
                             let mut element_path = path.clone();
                             element_path.push(index.to_string());
                             collect_union_replacements(
-                                items, element, defs, &element_path, depth + 1, out,
+                                items,
+                                element,
+                                defs,
+                                &element_path,
+                                depth + 1,
+                                out,
                             );
                         }
                     }
@@ -652,10 +657,7 @@ pub fn tagged_object_field_drops(witness: &Value) -> Vec<(String, Value)> {
                     _ => json!("wrong-type"),
                 };
                 mistyped.insert(name.clone(), wrong_value);
-                out.push((
-                    format!("nested-wrong-type-{name}"),
-                    Value::Object(mistyped),
-                ));
+                out.push((format!("nested-wrong-type-{name}"), Value::Object(mistyped)));
                 if out.len() >= 64 {
                     return out;
                 }
