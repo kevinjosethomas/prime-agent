@@ -867,18 +867,6 @@ impl Worker {
 
 /// The turn runner: drains the queue one turn at a time, running the session
 /// engine and emitting the agent-loop event lifecycle.
-/// Sequence and broadcast one `session_event` frame at the worker
-/// level: sequence + meta under the core lock, then one broadcast (the
-/// free-standing form of `Worker::emit_worker_event`, shared with the
-/// goal admission sink).
-pub(crate) fn refine_complete_event(
-    result: &pa_core::refinement::RefinementResult,
-) -> serde_json::Value {
-    json!({
-        "type": "refine_complete",
-        "result": serde_json::to_value(result).unwrap_or(Value::Null),
-    })
-}
 
 struct CoreUsageStore(Arc<Mutex<SessionCore>>);
 
