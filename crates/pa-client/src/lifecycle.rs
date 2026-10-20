@@ -800,7 +800,9 @@ async fn driver_run(
             let mut status = state.status.write().unwrap();
             if status.state != ConnectionState::Expired {
                 status.state = ConnectionState::Disconnected;
-                status.error.get_or_insert_with(|| "the session stopped".to_string());
+                status
+                    .error
+                    .get_or_insert_with(|| "the session stopped".to_string());
             }
             let _ = state.events.send(ConnectionEvent::Status(status.clone()));
         }

@@ -641,61 +641,61 @@ impl DaemonClient {
             let deadline = tokio::time::sleep(Duration::from_millis(HELLO_TIMEOUT_MS));
             tokio::pin!(deadline);
             let hello = {
-            loop {
-                if let Some(newline) = partial.iter().position(|byte| *byte == b'\n') {
-                    let line: Vec<u8> = partial.drain(..=newline).collect();
-                    // The legacy teardown class: invalid UTF-8 before the
-                    // handshake failed the connect, too.
-                    let Ok(text) = std::str::from_utf8(&line) else {
-                        return Err(anyhow!(
+                loop {
+                    if let Some(newline) = partial.iter().position(|byte| *byte == b'\n') {
+                        let line: Vec<u8> = partial.drain(..=newline).collect();
+                        // The legacy teardown class: invalid UTF-8 before the
+                        // handshake failed the connect, too.
+                        let Ok(text) = std::str::from_utf8(&line) else {
+                            return Err(anyhow!(
                             "the daemon sent an invalid frame before the handshake. Socket: {}.",
                             socket_path.display()
                         ));
-                    };
-                    let Ok(value) = serde_json::from_str::<Value>(text.trim()) else {
+                        };
+                        let Ok(value) = serde_json::from_str::<Value>(text.trim()) else {
+                            continue;
+                        };
+                        if value.get("type").and_then(Value::as_str) == Some("daemon_hello") {
+                            break Some(value);
+                        }
+                        // The legacy pre-hello behavior, verbatim: a known frame
+                        // dispatches to the typed channel only — the tap stays
+                        // post-handshake-only, and unknown frames stay silent.
+                        if let Some(event) = client_event_from_value(&value) {
+                            let _ = event_tx.send(event);
+                        }
+                        // More buffered lines may hold the hello: re-scan the
+                        // remaining partial BEFORE refilling from the socket.
                         continue;
-                    };
-                    if value.get("type").and_then(Value::as_str) == Some("daemon_hello") {
-                        break Some(value);
-                    }
-                    // The legacy pre-hello behavior, verbatim: a known frame
-                    // dispatches to the typed channel only — the tap stays
-                    // post-handshake-only, and unknown frames stay silent.
-                    if let Some(event) = client_event_from_value(&value) {
-                        let _ = event_tx.send(event);
-                    }
-                    // More buffered lines may hold the hello: re-scan the
-                    // remaining partial BEFORE refilling from the socket.
-                    continue;
-                } else if max_frame_bytes.is_some_and(|cap| partial.len() > cap) {
-                    return Err(anyhow!(
+                    } else if max_frame_bytes.is_some_and(|cap| partial.len() > cap) {
+                        return Err(anyhow!(
                         "a frame exceeded the limit before the Prime Agent daemon handshake. Socket: {}.",
                         socket_path.display()
                     ));
+                    }
+                    let resolved = tokio::select! {
+                        // The socket closed before the hello: the teardown error.
+                        resolved = reader.fill_buf() => resolved,
+                        () = &mut deadline => {
+                            return Err(anyhow!(
+                                "Timed out after {HELLO_TIMEOUT_MS}ms waiting for the Prime Agent daemon handshake. Socket: {}.",
+                                socket_path.display()
+                            ));
+                        }
+                    };
+                    let buffer = match resolved {
+                        Ok([]) | Err(_) => {
+                            return Err(anyhow!(
+                                "the daemon connection closed before the handshake. Socket: {}.",
+                                socket_path.display()
+                            ));
+                        }
+                        Ok(buffer) => buffer,
+                    };
+                    let read = buffer.len();
+                    partial.extend_from_slice(buffer);
+                    reader.consume(read);
                 }
-                let resolved = tokio::select! {
-                    // The socket closed before the hello: the teardown error.
-                    resolved = reader.fill_buf() => resolved,
-                    () = &mut deadline => {
-                        return Err(anyhow!(
-                            "Timed out after {HELLO_TIMEOUT_MS}ms waiting for the Prime Agent daemon handshake. Socket: {}.",
-                            socket_path.display()
-                        ));
-                    }
-                };
-                let buffer = match resolved {
-                    Ok([]) | Err(_) => {
-                        return Err(anyhow!(
-                            "the daemon connection closed before the handshake. Socket: {}.",
-                            socket_path.display()
-                        ));
-                    }
-                    Ok(buffer) => buffer,
-                };
-                let read = buffer.len();
-                partial.extend_from_slice(buffer);
-                reader.consume(read);
-            }
             };
             (reader, partial, hello)
         };
