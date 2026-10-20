@@ -18,7 +18,7 @@ use crate::kernel::manager::{KernelStartOptions, ReplKernelManager};
 use crate::kernel::shared::ExecuteStatus;
 use crate::kernel::shared::{
     ExecuteOptions, HostRequestHandlers, KernelManagerOptions, KernelShutdownOptions,
-    KernelSnapshotConfig, BOOTSTRAP_EXECUTION_TIMEOUT_MS,
+    KernelSnapshotConfig, BASH_COMPLETED_REQUEST_TYPE, BOOTSTRAP_EXECUTION_TIMEOUT_MS,
 };
 use crate::kernel::state_snapshot::RestoreResult;
 use crate::kernel::state_snapshot::{manifest_path_in, snapshot_path_in};
@@ -276,6 +276,13 @@ impl IpythonKernelProvisioner {
     #[must_use]
     pub fn manager(&self) -> Option<ReplKernelManager> {
         self.lock_state().manager.clone()
+    }
+
+    /// The Python skills pre-imported at kernel bootstrap.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn python_skills(&self) -> &[KernelPythonSkill] {
+        &self.inner.options.python_skills
     }
 
     /// Result of reviving a prior session's namespace on the last kernel start.
@@ -1035,7 +1042,15 @@ async fn start_kernel_impl(
         gate().await;
     }
     let snapshot_dir = options.snapshot_dir.clone();
-    let bootstrap_code = build_rlm_bootstrap_code(&options.python_skills);
+    // The bounded-await default keys on the bash.completed host handler:
+    // one source of truth (the registry the daemon registers the notice in).
+    let bootstrap_code = build_rlm_bootstrap_code(
+        &options.python_skills,
+        options
+            .host_handlers
+            .get(BASH_COMPLETED_REQUEST_TYPE)
+            .is_some(),
+    );
     let mut env = options.env.clone();
     if let Some(shell_path) = &options.shell_path {
         env.insert(
@@ -1407,6 +1422,27 @@ mod tests {
         } else {
             assert_eq!(injected, Some("key-from-cmd"));
         }
+    }
+
+    #[tokio::test]
+    async fn an_unsaved_session_blanks_the_kernel_session_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let agent_dir = dir.path().join("agent");
+        let cwd = dir.path().join("project");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        std::fs::create_dir_all(cwd.join(".prime/agent")).unwrap();
+        let engine = shell_test_session(cwd, agent_dir).await.unwrap();
+        assert_eq!(
+            engine
+                .provisioner
+                .inner
+                .options
+                .env
+                .get("RLM_SESSION_ID")
+                .map(String::as_str),
+            Some(""),
+            "an inherited RLM_SESSION_ID must not reach an unsaved session's kernel"
+        );
     }
 
     #[tokio::test]
