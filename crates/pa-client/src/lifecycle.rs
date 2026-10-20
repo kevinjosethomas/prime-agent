@@ -2221,7 +2221,11 @@ mod tests {
         session.after(Some(&new_bookkeeping), &new_response);
         {
             let entries = session.state.registry.lock().unwrap().restore_entries();
-            let cursor = entries[0].1.cursor.as_ref().expect("the current capture adopts");
+            let cursor = entries[0]
+                .1
+                .cursor
+                .as_ref()
+                .expect("the current capture adopts");
             assert_eq!(cursor.generation.as_deref(), Some("gnew"));
             assert_eq!(cursor.sequence, Some(2));
         }
@@ -2294,12 +2298,11 @@ mod tests {
         // tokio's RwLock hands the lock to the first queued waiter at
         // unlock, so the install future must keep being polled or it would
         // orphan the lock.
-        let (stop_result, installed) =
-            tokio::time::timeout(Duration::from_secs(10), async {
-                tokio::join!(stop_task, install)
-            })
-            .await
-            .expect("the stop and the install both settle");
+        let (stop_result, installed) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(stop_task, install)
+        })
+        .await
+        .expect("the stop and the install both settle");
         stop_result
             .expect("the stop task lives")
             .expect("the stop completed honestly");
@@ -2329,7 +2332,10 @@ mod tests {
             })
             .await
             .unwrap_err();
-        assert!(crate::daemon_client::is_command_not_sent(&error), "unexpected: {error}");
+        assert!(
+            crate::daemon_client::is_command_not_sent(&error),
+            "unexpected: {error}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
