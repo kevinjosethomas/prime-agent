@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "client-inbound-frame.schema.json",
+  "title": "ClientInboundFrame",
+  "description": "Open receive envelope: every supervisor line is an object with a string `type`. Unknown kinds pass through raw; known kinds are additionally shape-validated against daemon-outbound.",
+  "type": "object",
+  "required": [
+    "type"
+  ],
+  "properties": {
+    "type": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}

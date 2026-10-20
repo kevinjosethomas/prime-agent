@@ -4,6 +4,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum HarnessQueueMode {
     All,
     OneAtATime,
@@ -39,30 +40,35 @@ pub struct GlobalHarnessDefaults {
 /// Omitted fields stay unchanged. Explicit null is not a reset operation.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct GlobalHarnessDefaultsPatch {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present_value"
     )]
+    #[cfg_attr(feature = "contract", schemars(with = "bool"))]
     pub auto_compaction_enabled: Option<bool>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present_value"
     )]
+    #[cfg_attr(feature = "contract", schemars(with = "HarnessQueueMode"))]
     pub steering_mode: Option<HarnessQueueMode>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present_value"
     )]
+    #[cfg_attr(feature = "contract", schemars(with = "HarnessQueueMode"))]
     pub follow_up_mode: Option<HarnessQueueMode>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present_value"
     )]
+    #[cfg_attr(feature = "contract", schemars(with = "u64"))]
     pub max_depth: Option<u64>,
 }
 

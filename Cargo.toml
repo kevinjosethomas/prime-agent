@@ -9,6 +9,7 @@ members = [
     "crates/pa-core",
     "crates/pa-daemon",
     "crates/pa-client",
+    "crates/pa-contract",
     "crates/pa-tui",
     "crates/pa-cli",
     "crates/pa-perf",

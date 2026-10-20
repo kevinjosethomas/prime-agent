@@ -26,6 +26,7 @@ pub type DaemonServerCapability = String;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct DaemonProtocolInfo {
     pub name: String,
     pub version: u64,
@@ -33,6 +34,7 @@ pub struct DaemonProtocolInfo {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct DaemonEventCursor {
     pub generation: String,
     pub sequence: DaemonEventSequence,
@@ -43,6 +45,7 @@ pub struct DaemonEventCursor {
 /// forms and serializes each back to its original shape.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct DaemonResumeCursor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_session_id: Option<String>,
@@ -56,6 +59,7 @@ pub struct DaemonResumeCursor {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum DaemonReplayStatus {
     Complete,
     Partial,
@@ -64,6 +68,7 @@ pub enum DaemonReplayStatus {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct DaemonReplayInfo {
     pub status: DaemonReplayStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -79,6 +84,7 @@ pub struct DaemonReplayInfo {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct DaemonEventMeta {
     pub id: DaemonEventId,
     pub protocol: DaemonProtocolInfo,

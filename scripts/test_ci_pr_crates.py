@@ -49,6 +49,34 @@ def run_mapper(rows: list[str]) -> tuple[int, str, dict[str, str]]:
 
 class TheMappingTestCase(unittest.TestCase):
 
+    def test_the_contract_generator_maps_to_its_battery(self):
+        rc, out, outputs = run_mapper([
+            "crates/pa-contract/src/lib.rs",
+            "crates/pa-contract/tests/corpus.rs",
+        ])
+        self.assertEqual(rc, 0, out)
+        # The dependents walk selects pa-contract (nothing depends on it) —
+        # the DAG narrows upward only, like every other leaf crate.
+        self.assertEqual(outputs["crates"], "pa-contract")
+
+    def test_the_contract_package_paths_select_pa_contract(self):
+        rc, out, outputs = run_mapper([
+            "packages/client-contract/generated/schema/daemon-command.schema.json",
+            "packages/client-contract/src/validators.ts",
+        ])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("pa-contract", outputs["crates"].split(","))
+        self.assertIn("contract package path", out)
+
+    def test_other_package_paths_still_fail_safe(self):
+        rc, out, outputs = run_mapper([
+            "crates/pa-tui/src/lib.rs",
+            "packages/something-else/package.json",
+        ])
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(outputs["crates"], "")
+        self.assertEqual(outputs["scope"], "all")
+
     def test_a_crate_only_pr_narrows_to_those_crates(self):
         rc, out, outputs = run_mapper([
             "crates/pa-daemon/src/main.rs",
@@ -56,8 +84,8 @@ class TheMappingTestCase(unittest.TestCase):
             "crates/pa-tui/src/view/runs.rs",
         ])
         self.assertEqual(rc, 0, out)
-        self.assertEqual(outputs["crates"], "pa-cli,pa-daemon,pa-tui")
-        self.assertIn("crates (3: pa-cli, pa-daemon, pa-tui)", outputs["scope"])
+        self.assertEqual(outputs["crates"], "pa-cli,pa-contract,pa-daemon,pa-tui")
+        self.assertIn("crates (4: pa-cli, pa-contract, pa-daemon, pa-tui)", outputs["scope"])
 
     def test_any_non_crate_path_fails_safe_to_the_full_selection(self):
         rc, out, outputs = run_mapper([
@@ -101,7 +129,7 @@ class TheMappingTestCase(unittest.TestCase):
         # frontends that consume it through pa-tui.
         rc, out, outputs = run_mapper(["crates/pa-client/src/daemon_client.rs"])
         self.assertEqual(rc, 0, out)
-        self.assertEqual(outputs["crates"], "pa-cli,pa-client,pa-tui")
+        self.assertEqual(outputs["crates"], "pa-cli,pa-client,pa-contract,pa-tui")
 
     def test_pa_telemetry_only_runs_all_dependents(self):
         # pa-tui no longer sits behind pa-core (its deps are pa-types and
@@ -109,7 +137,7 @@ class TheMappingTestCase(unittest.TestCase):
         rc, out, outputs = run_mapper(["crates/pa-telemetry/src/lib.rs"])
         self.assertEqual(rc, 0, out)
         self.assertEqual(outputs["crates"],
-                         "pa-cli,pa-core,pa-daemon,pa-telemetry")
+                         "pa-cli,pa-contract,pa-core,pa-daemon,pa-telemetry")
 
     def test_an_unknown_crate_fails_safe(self):
         rc, out, outputs = run_mapper(["crates/pa-future/src/lib.rs"])

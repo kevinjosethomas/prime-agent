@@ -1,0 +1,2 @@
+{"schemaRoot":"client-inbound-frame","sample":{"type":"wire"}}
+{"schemaRoot":"client-inbound-frame","sample":{"type":"wire","__contractUnknownExtra":{"kept":true}}}

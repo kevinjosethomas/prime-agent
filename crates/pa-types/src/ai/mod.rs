@@ -162,6 +162,7 @@ pub enum CacheRetention {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum Transport {
     Sse,
     Websocket,
@@ -174,6 +175,7 @@ pub enum Transport {
 /// The wire value can be absent or an explicit null, both mapping to `None`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum ServiceTier {
     Auto,
     Default,
@@ -193,6 +195,7 @@ pub struct ProviderResponse {
 /// Text content block (`type: "text"`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct TextContent {
     pub text: String,
     /// `OpenAI` Responses metadata: a legacy id string or a [`TextSignatureV1`] JSON payload (TS
@@ -224,6 +227,7 @@ pub enum TextSignaturePhase {
 /// Thinking content block (`type: "thinking"`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct ThinkingContent {
     pub thinking: String,
     /// Provider reasoning item id, or the encoded reasoning-details payload for redacted blocks (TS
@@ -240,6 +244,7 @@ pub struct ThinkingContent {
 
 /// Image content block (`type: "image"`); data is base64.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct ImageContent {
     pub data: String,
     #[serde(rename = "mimeType")]
@@ -258,6 +263,7 @@ pub fn is_python_tool_name(name: &str) -> bool {
 /// Tool call content block (`type: "toolCall"`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
@@ -280,6 +286,78 @@ pub enum UserContentBlock {
     Image(ImageContent),
     /// Un-modeled block (missing/unknown `type` tag or other JSON shape); serialized verbatim.
     Raw(Value),
+}
+
+// The serde impl below is hand-written: known blocks are flat wire objects
+// tagged `text`/`image`, everything else is [`UserContentBlock::Raw`]
+// verbatim. The schema mirrors THAT wire shape — not the enum's external
+// form. The JsonSchema impl must be updated together with the serde impl.
+#[cfg(feature = "contract")]
+impl schemars::JsonSchema for UserContentBlock {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("UserContentBlock")
+    }
+
+    fn json_schema(gen: &mut schemars::generate::SchemaGenerator) -> schemars::Schema {
+        // Known blocks reuse the CONTENT types' own schemas (single truth:
+        // no field list is mirrored here) merged with the flat `type` tag.
+        // A known tag with a malformed payload is a parse ERROR in serde —
+        // never a Raw fallback — so the Raw branch must exclude known-tag
+        // objects entirely; only unknown kinds / missing tags (any other
+        // JSON) stay verbatim.
+        let text = tagged_block_schema::<TextContent>(gen, "text");
+        let image = tagged_block_schema::<ImageContent>(gen, "image");
+        schemars::json_schema!({
+            "description": "Content blocks in user/tool-result messages: a `text` block, an `image` block, or any other JSON shape (unknown kinds preserved verbatim).",
+            "anyOf": [
+                text,
+                image,
+                {
+                    "not": {
+                        "anyOf": [
+                            {
+                                "type": "object",
+                                "required": ["type"],
+                                "properties": { "type": { "const": "text" } }
+                            },
+                            {
+                                "type": "object",
+                                "required": ["type"],
+                                "properties": { "type": { "const": "image" } }
+                            }
+                        ]
+                    }
+                }
+            ]
+        })
+    }
+}
+
+/// The schema of one known block kind: the content type's own schema
+/// (`$defs` reference — the single truth for its fields) merged with the
+/// flat wire `type` tag.
+#[cfg(feature = "contract")]
+fn tagged_block_schema<T: schemars::JsonSchema>(
+    gen: &mut schemars::generate::SchemaGenerator,
+    tag: &str,
+) -> schemars::Schema {
+    let mut branch = schemars::json_schema!({
+        "properties": { "type": { "const": tag } },
+        "required": ["type"]
+    });
+    // The content type's schema as a `$defs` reference on the same branch
+    // (draft 2020-12 allows `$ref` siblings) — the single truth for its
+    // fields, collected into the root's `$defs` by the generator.
+    let subschema = gen.subschema_for::<T>();
+    if let Some(reference) = serde_json::to_value(&subschema)
+        .ok()
+        .and_then(|value| value.get("$ref").cloned())
+    {
+        if let Some(object) = branch.as_object_mut() {
+            object.insert("$ref".to_string(), reference);
+        }
+    }
+    branch
 }
 
 impl Serialize for UserContentBlock {
@@ -370,6 +448,7 @@ impl UserContentBlock {
 /// Content blocks allowed in assistant messages.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum AssistantContentBlock {
     Text(TextContent),
     Thinking(ThinkingContent),
@@ -379,6 +458,7 @@ pub enum AssistantContentBlock {
 /// User/tool-result content: a plain string or a list of text/image blocks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum UserContent {
     Text(String),
     Blocks(Vec<UserContentBlock>),
@@ -406,6 +486,7 @@ impl UserContent {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct UsageCost {
     pub input: JsNumber,
     pub output: JsNumber,
@@ -418,6 +499,7 @@ pub struct UsageCost {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct Usage {
     pub input: u64,
     pub output: u64,
@@ -432,6 +514,7 @@ pub struct Usage {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum StopReason {
     Stop,
     Length,
@@ -471,6 +554,7 @@ pub enum Message {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct UserMessage {
     pub content: UserContent,
     /// Unix timestamp in milliseconds.
@@ -482,6 +566,7 @@ pub struct UserMessage {
 /// One redacted provider/runtime diagnostic attached to an assistant message.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct AssistantMessageDiagnostic {
     #[serde(rename = "type")]
     pub type_: String,
@@ -495,6 +580,7 @@ pub struct AssistantMessageDiagnostic {
 /// Error info captured inside a diagnostic.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct DiagnosticErrorInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -510,6 +596,7 @@ pub struct DiagnosticErrorInfo {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum DiagnosticCode {
     Str(String),
     Num(JsNumber),
@@ -517,6 +604,7 @@ pub enum DiagnosticCode {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct AssistantMessage {
     pub content: Vec<AssistantContentBlock>,
     pub api: Api,
@@ -546,6 +634,7 @@ pub struct AssistantMessage {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct ToolResultMessage {
     pub tool_call_id: String,
     /// The tool's name. A session file from a foreign tool or older build

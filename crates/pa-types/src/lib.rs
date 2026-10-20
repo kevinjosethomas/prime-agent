@@ -33,6 +33,7 @@ pub type JsonMap = serde_json::Map<String, serde_json::Value>;
 /// TS-produced files. This newtype prints integral values as integers, everything else via the
 /// shortest f64 representation.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub struct JsNumber(pub f64);
 
 impl JsNumber {
