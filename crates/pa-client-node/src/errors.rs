@@ -15,7 +15,9 @@
 //!   torn down; the frame stream is terminal.
 //! - `Transport` — anything else.
 
-use pa_client::RequestRejected;
+use pa_client::daemon_client::{
+    is_command_not_sent, is_command_result_uncertain, is_daemon_rejection, RequestRejected,
+};
 use serde::{Deserialize, Serialize};
 
 /// The wire-encoded error shape crossing the napi boundary.
@@ -94,11 +96,11 @@ fn payload(payload: ErrorPayload) -> napi::Error {
 
 /// Classify one `anyhow` chain from a core request per the transport rules.
 pub(crate) fn classify(error: anyhow::Error, cause: Option<&'static str>) -> napi::Error {
-    if pa_client::is_command_not_sent(&error) {
+    if is_command_not_sent(&error) {
         not_sent(error.to_string())
-    } else if pa_client::is_command_result_uncertain(&error) {
+    } else if is_command_result_uncertain(&error) {
         uncertain(error.to_string(), cause)
-    } else if pa_client::is_daemon_rejection(&error) {
+    } else if is_daemon_rejection(&error) {
         let info = error
             .chain()
             .filter_map(|cause| cause.downcast_ref::<RequestRejected>())

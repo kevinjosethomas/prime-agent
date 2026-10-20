@@ -1,6 +1,5 @@
 //! Build-boundary metadata, all derived — no hand-maintained tables.
 
-use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use pa_types::daemon::{
     DAEMON_PROTOCOL_NAME, DAEMON_PROTOCOL_VERSION, DAEMON_SCHEMA_ID, DAEMON_SCHEMA_REVISION,

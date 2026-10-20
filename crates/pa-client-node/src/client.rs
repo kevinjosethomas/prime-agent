@@ -254,6 +254,9 @@ impl PrimeDaemonClient {
         let client = self.inner.client_arc()?;
         bridge(async move { client.upgrade_direct(&active_session_id).await })
             .await
+            .map_err(|join_error| {
+                transport(format!("the direct upgrade task failed: {join_error}"))
+            })?
             .map_err(|error| classify(error, None))
     }
 
@@ -344,6 +347,9 @@ impl PrimeDaemonClient {
             }
         })
         .await
+        .map_err(|join_error| {
+            transport(format!("the request task failed: {join_error}"))
+        })?
     }
 
     #[napi]
@@ -378,6 +384,9 @@ impl PrimeDaemonClient {
             }
         })
         .await
+        .map_err(|join_error| {
+            transport(format!("the request task failed: {join_error}"))
+        })?
     }
 
     #[napi]
@@ -433,6 +442,7 @@ pub async fn connect(
         DaemonClient::connect_with_options(&path, core_options).await
     })
     .await
+    .map_err(|join_error| transport(format!("the connect task failed: {join_error}")))?
     .map_err(|error| classify(error, None))?;
     let client = Arc::new(client);
 
