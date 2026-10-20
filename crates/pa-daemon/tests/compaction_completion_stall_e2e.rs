@@ -1,0 +1,668 @@
+//! The compaction completion contract: an interrupted threshold
+//! compaction settles consistently — the abort is acked without waiting
+//! on the mocked-slow summarizer, the aborted run commits no entry, and
+//! the next prompt serves against a consistent context (the seeded bulk
+//! or a legitimate summary), with the session chain intact.
+#![allow(clippy::large_futures)]
+// 64-bit-only targets; the narrowing casts sit at bounded OS boundaries.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
+// Fn length is a style gate, not correctness.
+#![allow(clippy::too_many_lines)]
+// API-shape opinions, not defects; the surfaces are deliberate.
+#![allow(
+    clippy::unnecessary_wraps,
+    clippy::zero_sized_map_values,
+    clippy::struct_excessive_bools,
+    clippy::struct_field_names
+)]
+#![cfg(unix)]
+
+use std::fmt::Write as _;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use serde_json::{json, Value};
+
+const FATTENING_TURNS: usize = 3;
+const FATTEN_REPLY_CHARS: usize = 4 * 1024 * 1024;
+
+/// The mocked-slow summarizer's reply delay (the interrupted-compaction
+/// window the ctrl+c lands in).
+const SUMMARIZER_DELAY_MS: u64 = 6_000;
+
+/// The fixed compaction summary the mock answers the summarizer with
+/// (the marker the compacted context must carry on the next request).
+const CHECKPOINT_SUMMARY: &str = "the checkpoint summary";
+
+struct Supervisor {
+    child: Child,
+    // Spawn bookkeeping only: the test drives the daemon through the client port, never this field.
+    #[allow(dead_code)]
+    socket: PathBuf,
+}
+
+impl Drop for Supervisor {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// An OpenAI-compatible SSE mock with per-request-type behavior: turns answer the
+/// scripted reply, the summarizer the fixed summary (optionally delayed — the in-flight
+/// compaction the ctrl+c interrupts).
+struct StallMock {
+    turn_requests: Arc<Mutex<Vec<Instant>>>,
+    turn_bodies: Arc<Mutex<Vec<Value>>>,
+    summarizer_delay_ms: Arc<AtomicU64>,
+    port: u16,
+}
+
+impl StallMock {
+    fn start() -> StallMock {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let turn_requests = Arc::new(Mutex::new(Vec::new()));
+        let turn_bodies = Arc::new(Mutex::new(Vec::new()));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock");
+        let port = listener.local_addr().expect("mock addr").port();
+        let requests_for_thread = Arc::clone(&requests);
+        let turn_requests_for_thread = Arc::clone(&turn_requests);
+        let turn_bodies_for_thread = Arc::clone(&turn_bodies);
+        let summarizer_delay = Arc::new(AtomicU64::new(0));
+        let summarizer_delay_thread = Arc::clone(&summarizer_delay);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else { continue };
+                let requests = Arc::clone(&requests_for_thread);
+                let turn_requests = Arc::clone(&turn_requests_for_thread);
+                let turn_bodies = Arc::clone(&turn_bodies_for_thread);
+                let summarizer_delay = Arc::clone(&summarizer_delay_thread);
+                std::thread::spawn(move || {
+                    let _ = serve(
+                        stream,
+                        &requests,
+                        &turn_requests,
+                        &turn_bodies,
+                        &summarizer_delay,
+                    );
+                });
+            }
+        });
+        StallMock {
+            turn_requests,
+            turn_bodies,
+            summarizer_delay_ms: summarizer_delay,
+            port,
+        }
+    }
+
+    fn url(&self) -> String {
+        format!("http://127.0.0.1:{}/v1", self.port)
+    }
+
+    fn turn_request_count(&self) -> usize {
+        self.turn_requests.lock().expect("turn lock").len()
+    }
+}
+
+fn chunk(delta: &Value, finish_reason: Option<&str>, usage: &Value) -> String {
+    json!({
+        "id": "chatcmpl-test",
+        "object": "chat.completion.chunk",
+        "created": 1_750_000_000,
+        "model": "mock-1",
+        "choices": [{
+            "index": 0,
+            "delta": delta,
+            "finish_reason": finish_reason,
+        }],
+        "usage": usage,
+    })
+    .to_string()
+}
+
+fn small_usage() -> Value {
+    json!({
+        "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15,
+        "prompt_tokens_details": {"cached_tokens": 0},
+    })
+}
+
+fn crossing_usage() -> Value {
+    json!({
+        "prompt_tokens": 126_000, "completion_tokens": 10, "total_tokens": 126_010,
+        "prompt_tokens_details": {"cached_tokens": 80},
+    })
+}
+
+fn is_status_line_request(body: &Value) -> bool {
+    body["messages"].as_array().is_some_and(|messages| {
+        messages.iter().any(|message| {
+            message["role"] == "system"
+                && message["content"]
+                    .as_str()
+                    .is_some_and(|text| text.starts_with("You generate a status line"))
+        })
+    })
+}
+
+fn message_text(message: &Value) -> String {
+    let content = &message["content"];
+    content
+        .as_str()
+        .map(str::to_string)
+        .or_else(|| {
+            content
+                .as_array()
+                .and_then(|blocks| blocks.first())
+                .and_then(|block| block.get("text"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_default()
+}
+
+fn is_summarizer_request(body: &Value) -> bool {
+    body["messages"].as_array().is_some_and(|messages| {
+        messages
+            .iter()
+            .any(|message| message_text(message).contains("context summarization assistant"))
+    })
+}
+
+fn read_body(reader: &mut BufReader<TcpStream>) -> std::io::Result<Value> {
+    let mut head = String::new();
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line)? == 0 {
+            return Ok(Value::Null);
+        }
+        head.push_str(&line);
+        if line == "\r\n" {
+            break;
+        }
+    }
+    let mut content_length = 0usize;
+    for line in head.lines() {
+        let lower = line.to_ascii_lowercase();
+        if let Some(value) = lower.strip_prefix("content-length:") {
+            content_length = value.trim().parse().unwrap_or_default();
+        }
+    }
+    let mut body_bytes = vec![0u8; content_length];
+    if content_length > 0 {
+        reader.read_exact(&mut body_bytes)?;
+    }
+    serde_json::from_slice(&body_bytes).map_err(|_| std::io::Error::other("bad body"))
+}
+
+fn write_sse(stream: &mut TcpStream, reply: &str, usage: &Value) -> std::io::Result<()> {
+    let mut payload = String::new();
+    for data in [
+        chunk(
+            &json!({"role": "assistant", "content": reply}),
+            None,
+            &small_usage(),
+        ),
+        chunk(&json!({}), Some("stop"), usage),
+        json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1_750_000_000,
+            "model": "mock-1",
+            "choices": [],
+            "usage": usage,
+        })
+        .to_string(),
+    ] {
+        let _ = write!(payload, "data: {data}\n\n");
+    }
+    payload.push_str("data: [DONE]\n\n");
+    stream.write_all(
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{payload}"
+        )
+        .as_bytes(),
+    )
+}
+
+// One Arc per captured concern keeps the mock's handlers independent.
+fn serve(
+    mut stream: TcpStream,
+    requests: &Arc<Mutex<Vec<Value>>>,
+    turn_requests: &Arc<Mutex<Vec<Instant>>>,
+    turn_bodies: &Arc<Mutex<Vec<Value>>>,
+    summarizer_delay_ms: &Arc<AtomicU64>,
+) -> std::io::Result<()> {
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let body = read_body(&mut reader)?;
+    requests.lock().expect("mock lock").push(body.clone());
+    if is_summarizer_request(&body) {
+        let delay = summarizer_delay_ms.load(Ordering::SeqCst);
+        if delay > 0 {
+            std::thread::sleep(Duration::from_millis(delay));
+        }
+        return write_sse(&mut stream, CHECKPOINT_SUMMARY, &small_usage());
+    }
+    if is_status_line_request(&body) {
+        return write_sse(&mut stream, "idle", &small_usage());
+    }
+    let index = {
+        let mut turns = turn_requests.lock().expect("turn lock");
+        turns.push(Instant::now());
+        turn_bodies.lock().expect("turn lock").push(body);
+        turns.len() - 1
+    };
+    let crossing_index = FATTENING_TURNS + 1;
+    let (reply, usage) = match index {
+        0 => ("seed reply".to_string(), small_usage()),
+        // Each fattening reply carries its own marker: the last rides the cut's kept tail;
+        // the earlier ones are the compacted-away bulk the context assertions read.
+        index if (1..=FATTENING_TURNS).contains(&index) => (
+            format!("fatten-{}-{}", index - 1, "a".repeat(FATTEN_REPLY_CHARS)),
+            small_usage(),
+        ),
+        index if index == crossing_index => ("crossing reply".to_string(), crossing_usage()),
+        _ => ("later reply".to_string(), small_usage()),
+    };
+    write_sse(&mut stream, &reply, &usage)
+}
+
+fn daemon_stderr_path(trace_path: &Path) -> std::path::PathBuf {
+    trace_path.with_file_name("daemon-stderr.log")
+}
+
+// The child is reaped in Supervisor::drop (kill + wait); the lint cannot see the Drop guard.
+#[allow(clippy::zombie_processes)]
+fn spawn_supervisor(socket: &Path, agent_dir: &Path, trace_path: &Path) -> Supervisor {
+    std::fs::create_dir_all(agent_dir).expect("agent dir");
+    let stderr_path = daemon_stderr_path(trace_path);
+    let stderr_file = std::fs::File::create(&stderr_path).expect("daemon stderr file");
+    let child = Command::new(env!("CARGO_BIN_EXE_pa-daemon"))
+        .arg("supervisor")
+        .arg("--socket")
+        .arg(socket)
+        .arg("--agent-dir")
+        .arg(agent_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(stderr_file))
+        .env_remove("PRIME_API_KEY")
+        .env_remove("PRIME_AGENT_CODING_AGENT_DIR")
+        .env("PA_COMPACTION_TRACE", trace_path)
+        .env(
+            pa_daemon::worker::WORKER_SUPERVISOR_LOST_EXIT_MS_ENV,
+            "15000",
+        )
+        .spawn()
+        .expect("spawn pa-daemon supervisor");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if socket.exists() {
+            return Supervisor {
+                child,
+                socket: socket.to_path_buf(),
+            };
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    panic!("supervisor socket never appeared");
+}
+
+struct TimedClient {
+    reader: BufReader<std::os::unix::net::UnixStream>,
+    writer: std::os::unix::net::UnixStream,
+    events: Vec<(Value, Instant)>,
+}
+
+impl TimedClient {
+    fn connect(socket: &Path) -> TimedClient {
+        let stream = std::os::unix::net::UnixStream::connect(socket).expect("connect");
+        let writer = stream.try_clone().expect("clone");
+        let mut client = TimedClient {
+            reader: BufReader::new(stream),
+            writer,
+            events: Vec::new(),
+        };
+        let hello = client.read_line();
+        assert_eq!(hello["type"], "daemon_hello");
+        client
+    }
+
+    fn send_command(&mut self, id: &str, command: &Value) {
+        let envelope = json!({
+            "type": "command",
+            "id": id,
+            "protocol": { "name": "prime-agent.daemon", "version": 7 },
+            "command": command,
+        });
+        let mut line = serde_json::to_string(&envelope).expect("serialize");
+        line.push('\n');
+        self.writer.write_all(line.as_bytes()).expect("send");
+        self.writer.flush().expect("flush");
+    }
+
+    fn read_line(&mut self) -> Value {
+        let mut line = String::new();
+        let deadline = Instant::now() + Duration::from_secs(120);
+        self.reader
+            .get_mut()
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .expect("timeout");
+        loop {
+            match self.reader.read_line(&mut line) {
+                Ok(0) => panic!("supervisor closed the connection"),
+                Ok(_) if line.trim().is_empty() => line.clear(),
+                Ok(_) => return serde_json::from_str(line.trim()).expect("parse line"),
+                Err(error) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "timed out waiting for supervisor line: {error}"
+                    );
+                }
+            }
+        }
+    }
+
+    fn read_response(&mut self, id: &str) -> Value {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            assert!(Instant::now() < deadline, "no response for id {id}");
+            let line = self.read_line();
+            if line.get("id").and_then(Value::as_str) == Some(id) {
+                return line;
+            }
+            if line.get("type").and_then(Value::as_str) == Some("session_event") {
+                self.events.push((line["event"].clone(), Instant::now()));
+            }
+        }
+    }
+
+    fn drain_events(&mut self, quiet_ms: u64) {
+        let deadline = Instant::now() + Duration::from_millis(quiet_ms);
+        self.reader
+            .get_mut()
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .expect("timeout");
+        let mut line = String::new();
+        loop {
+            match self.reader.read_line(&mut line) {
+                Ok(0) => return,
+                Ok(_) if line.trim().is_empty() => line.clear(),
+                Ok(_) => {
+                    if let Ok(event) = serde_json::from_str::<Value>(line.trim()) {
+                        if event.get("type").and_then(Value::as_str) == Some("session_event") {
+                            self.events.push((event["event"].clone(), Instant::now()));
+                        }
+                    }
+                    line.clear();
+                }
+                Err(_) => {}
+            }
+            if Instant::now() >= deadline {
+                return;
+            }
+        }
+    }
+}
+
+fn session_chain(session_dir: &Path) -> (bool, Vec<(String, String)>) {
+    let session_file = session_dir
+        .read_dir()
+        .expect("session dir read")
+        .filter_map(std::result::Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "jsonl"))
+        .expect("session file");
+    let content = std::fs::read_to_string(&session_file).expect("session file read");
+    let mut has_compaction = false;
+    let mut ids = std::collections::HashSet::new();
+    let mut chain = Vec::new();
+    for line in content.lines() {
+        let entry: Value = serde_json::from_str(line)
+            .unwrap_or_else(|error| panic!("unparsable session line ({error}): {line}"));
+        if entry["type"] == "compaction" {
+            has_compaction = true;
+        }
+        if let Some(id) = entry["id"].as_str() {
+            ids.insert(id.to_string());
+            let parent = entry["parentId"].as_str().unwrap_or_default().to_string();
+            chain.push((id.to_string(), parent));
+        }
+    }
+    for (id, parent) in &chain {
+        assert!(
+            parent.is_empty() || ids.contains(parent),
+            "entry {id} references a missing parent {parent}"
+        );
+    }
+    (has_compaction, chain)
+}
+
+fn write_fixture(agent_dir: &Path, session_dir: &Path, mock_url: &str) {
+    std::fs::create_dir_all(session_dir).expect("session dir");
+    std::fs::write(
+        agent_dir.join("models.json"),
+        json!({
+            "providers": {
+                "prime-inference": {
+                    "api": "openai-completions",
+                    "baseUrl": mock_url,
+                    "apiKey": "sk-battery",
+                    "models": [
+                        {
+                            "id": "mock-1",
+                            "name": "Mock 1",
+                            "api": "openai-completions",
+                            "contextWindow": 128_000,
+                            "maxTokens": 4096,
+                        }
+                    ]
+                }
+            }
+        })
+        .to_string(),
+    )
+    .expect("write models.json");
+    std::fs::write(
+        agent_dir.join("settings.json"),
+        json!({ "compaction": {"enabled": true, "reserveTokens": 500, "keepRecentTokens": 10} })
+            .to_string(),
+    )
+    .expect("write settings.json");
+}
+
+fn create_and_attach(client: &mut TimedClient, session_dir: &Path) -> String {
+    client.send_command(
+        "c1",
+        &json!({
+            "type": "create",
+            "config": {
+                "cwd": session_dir.to_string_lossy(),
+                "sessionDir": session_dir.to_string_lossy(),
+                "provider": "prime-inference",
+                "model": "mock-1",
+            },
+        }),
+    );
+    let created = client.read_response("c1");
+    assert_eq!(created["success"], true, "create failed: {created}");
+    let session_id = created["data"]["id"]
+        .as_str()
+        .or_else(|| created["data"]["sessionId"].as_str())
+        .or_else(|| created["data"]["activeSessionId"].as_str())
+        .expect("session id")
+        .to_string();
+    client.send_command(
+        "a1",
+        &json!({ "type": "attach", "activeSessionId": session_id }),
+    );
+    let attached = client.read_response("a1");
+    assert_eq!(attached["success"], true, "attach failed: {attached}");
+    session_id
+}
+
+fn prompt_and_wait(client: &mut TimedClient, id: &str, session_id: &str, message: &str) -> Value {
+    client.send_command(
+        id,
+        &json!({"type": "prompt_and_wait", "activeSessionId": session_id, "message": message}),
+    );
+    let response = client.read_response(id);
+    assert_eq!(response["success"], true, "prompt {id} failed: {response}");
+    response
+}
+
+/// The seeded mega session (~12MB): seed and fattening turns, then the crossing turn whose usage
+/// fires the threshold arm.
+fn seed_mega_session(client: &mut TimedClient, session_id: &str, mock: &StallMock) {
+    prompt_and_wait(client, "p0", session_id, "seed turn");
+    for turn in 0..FATTENING_TURNS {
+        prompt_and_wait(
+            client,
+            &format!("f{turn}"),
+            session_id,
+            &format!("fattening turn {turn}"),
+        );
+    }
+    // Every fattening turn reached the mock before the crossing turn admits (the seeded bulk is on
+    // the wire).
+    let expected_turns = 1 + FATTENING_TURNS;
+    assert!(
+        mock.turn_request_count() >= expected_turns,
+        "the seeding turns never all ran: {}",
+        mock.turn_request_count()
+    );
+}
+
+#[test]
+#[ignore = "seeds ~12MB; asserts the interrupted-compaction contract"]
+fn interrupted_threshold_compaction_settles_consistent() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let agent_dir = dir.path().join("agent");
+    let session_dir = agent_dir.join("sessions");
+    let mock = StallMock::start();
+    write_fixture(&agent_dir, &session_dir, &mock.url());
+    // The summarizer's reply is held in flight: the ctrl+c lands in the loader window.
+    mock.summarizer_delay_ms
+        .store(SUMMARIZER_DELAY_MS, Ordering::SeqCst);
+    let trace_path = dir.path().join("compaction-trace.jsonl");
+    let socket = dir.path().join("daemon.sock");
+    let _supervisor = spawn_supervisor(&socket, &agent_dir, &trace_path);
+    let mut client = TimedClient::connect(&socket);
+    let session_id = create_and_attach(&mut client, &session_dir);
+    seed_mega_session(&mut client, &session_id, &mock);
+
+    client.send_command(
+        "px",
+        &json!({"type": "prompt_and_wait", "activeSessionId": session_id, "message": "crossing turn"}),
+    );
+
+    // The compaction_start broadcast arrives, then the ctrl+c (`abort_compaction` on the wire) from
+    // a second client.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if client
+            .events
+            .iter()
+            .any(|(event, _)| event["type"] == "compaction_start")
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the threshold compaction_start never broadcast"
+        );
+        let line = client.read_line();
+        if line.get("type").and_then(Value::as_str) == Some("session_event") {
+            client.events.push((line["event"].clone(), Instant::now()));
+        }
+    }
+    let mut second = TimedClient::connect(&socket);
+    second.send_command(
+        "a2",
+        &json!({ "type": "attach", "activeSessionId": session_id }),
+    );
+    let attached = second.read_response("a2");
+    assert_eq!(attached["success"], true, "second attach: {attached}");
+    second.send_command(
+        "ab1",
+        &json!({ "type": "abort_compaction", "activeSessionId": session_id }),
+    );
+    let aborted = second.read_response("ab1");
+    assert_eq!(aborted["success"], true, "abort failed: {aborted}");
+    let abort_ack = Instant::now();
+
+    let crossed = client.read_response("px");
+    let settled_at = Instant::now();
+    assert_eq!(
+        crossed["success"], true,
+        "crossing prompt failed: {crossed}"
+    );
+    assert!(
+        settled_at - abort_ack < Duration::from_millis(SUMMARIZER_DELAY_MS),
+        "the interrupted compaction took {:?} to settle after the abort ack",
+        settled_at - abort_ack
+    );
+    client.drain_events(500);
+
+    assert!(
+        client.events.iter().any(|(event, _)| {
+            event["type"] == "compaction_end"
+                && event["reason"] == "threshold"
+                && event["aborted"] == json!(true)
+        }),
+        "the aborted compaction_end never broadcast; events: {:?}",
+        client
+            .events
+            .iter()
+            .map(|(event, _)| event["type"].clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        client.events.iter().any(|(event, _)| {
+            event["type"] == "message_start"
+                && event["message"]["customType"] == "compaction_outcome"
+                && event["message"]["details"]["outcome"] == "cancelled"
+        }),
+        "the cancelled outcome row never broadcast"
+    );
+
+    let (has_compaction, _) = session_chain(&session_dir);
+    assert!(!has_compaction, "an aborted compaction committed an entry");
+
+    prompt_and_wait(
+        &mut client,
+        "pn",
+        &session_id,
+        "next turn after the interrupt",
+    );
+    let last_turn_request = mock
+        .turn_bodies
+        .lock()
+        .expect("turn lock")
+        .last()
+        .cloned()
+        .unwrap_or(Value::Null);
+    let request_text = serde_json::to_string(&last_turn_request).unwrap_or_default();
+    // The interrupted run left the session usable: the next prompt served
+    // against a consistent context, either the un-compacted or the compacted one.
+    let un_compacted =
+        (0..FATTENING_TURNS).all(|kept| request_text.contains(&format!("fatten-{kept}-")));
+    let legitimately_compacted = request_text.contains(CHECKPOINT_SUMMARY);
+    assert!(
+        un_compacted || legitimately_compacted,
+        "the post-interrupt context neither kept the seeded bulk nor carried a \
+         legitimate compaction summary: {}",
+        request_text.chars().take(2_000).collect::<String>()
+    );
+}
