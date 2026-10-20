@@ -541,7 +541,7 @@ mod tests {
         tokio::spawn(async move { spawn_mock_worker(listener, None).await });
         let shared = Arc::new(crate::daemon_client::Shared::default());
         let (event_tx, event_rx) = mpsc::unbounded_channel();
-        let link = connect_direct(&ticket, shared, event_tx)
+        let link = connect_direct(&ticket, shared, event_tx, None)
             .await
             .expect("direct link");
         (link, event_rx, dir)
@@ -607,7 +607,9 @@ mod tests {
             let (close_tx, close_rx) = tokio::sync::oneshot::channel();
             tokio::spawn(async move { spawn_mock_worker(listener, Some(close_rx)).await });
             let (event_tx, _) = mpsc::unbounded_channel();
-            let link = connect_direct(&ticket, shared, event_tx).await.unwrap();
+            let link = connect_direct(&ticket, shared, event_tx, None)
+                .await
+                .unwrap();
             (link, close_tx, dir)
         }
 

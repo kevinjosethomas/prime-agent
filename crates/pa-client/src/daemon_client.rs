@@ -15,7 +15,7 @@ use pa_types::daemon::{
     DaemonProtocolInfo, DaemonResponse, DAEMON_PROTOCOL_NAME, DAEMON_PROTOCOL_VERSION,
 };
 use serde_json::{Map, Value};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::direct_transport::{
@@ -42,19 +42,26 @@ pub use errors::{
 #[derive(Clone, Default)]
 pub struct DaemonClientOptions {
     /// The raw outbound tap: a separate channel carrying every decoded
-    /// post-handshake application frame — supervisor reader and direct
-    /// reader pumps alike — verbatim as the raw JSON value, in per-socket
-    /// wire order (no cross-socket ordering is claimed). Handshake and
-    /// auth frames (`daemon_hello`, direct `peer_auth`) and id-correlated
-    /// `response` frames never appear; unknown frame types and the full
-    /// event meta (including absent fields, exactly as the daemon sent
-    /// them) always do. The channel is unbounded like the event channel:
-    /// the receiver must drain it, or memory grows without bound.
+    /// application frame after the `daemon_hello` handshake — supervisor
+    /// reader and direct reader pumps alike — verbatim as the raw JSON
+    /// value, in per-socket wire order (no cross-socket ordering is
+    /// claimed). Handshake and auth frames (`daemon_hello`, direct
+    /// `peer_auth`) and id-correlated `response` frames never appear;
+    /// unknown frame types and the full event meta (including absent
+    /// fields, exactly as the daemon sent them) always do. Pre-handshake
+    /// frames keep their legacy typed-only behavior and never reach the
+    /// tap. The channel is unbounded like the event channel: the receiver
+    /// must drain it, or memory grows without bound.
     pub raw_tap: Option<mpsc::UnboundedSender<Value>>,
     /// The inbound supervisor line byte cap: a frame beyond it tears the
     /// transport down and fails every pending request as an uncertain
     /// delivery. `None` (the default) keeps the unbounded reader this
-    /// crate has always shipped.
+    /// crate has always shipped. Inbound only — the size of outbound
+    /// command envelopes is not bounded here; that is future command-shape
+    /// work. The cap is also not the desktop's invalid-frame policy:
+    /// invalid UTF-8 still tears the transport down (legacy), while a
+    /// malformed JSON line is still skipped (legacy tolerant behavior);
+    /// strict invalid-frame teardown is a separate future policy.
     pub max_frame_bytes: Option<usize>,
     /// The pending-request cap: a request at or beyond it refuses the
     /// send before any bytes are queued (a provable non-delivery).
@@ -461,9 +468,11 @@ impl DaemonClient {
         let raw_tap = options.raw_tap.clone();
         let max_frame_bytes = options.max_frame_bytes;
         let reader_task = tokio::spawn(async move {
-            let mut reader = reader_half;
-            let mut carry: Vec<u8> = Vec::new();
-            let mut chunk = [0u8; 8 * 1024];
+            let mut reader = BufReader::with_capacity(64 * 1024, reader_half);
+            // The spill of a line longer than the buffer: filled only when
+            // no newline sits in the buffered bytes, so every byte is scanned
+            // once and copied at most once beyond its buffer residency.
+            let mut partial: Vec<u8> = Vec::new();
             let mut hello_tx = Some(hello_tx);
             // One decoded line: `false` only on invalid UTF-8, the teardown
             // `read_line` always produced. A malformed JSON line is skipped,
@@ -492,11 +501,16 @@ impl DaemonClient {
                         }
                     }
                     _ => {
-                        // The lossless tap first: every decoded
-                        // post-handshake application frame, verbatim and in
-                        // wire order, before any typed conversion.
-                        if let Some(tap) = raw_tap.as_ref() {
-                            let _ = tap.send(value.clone());
+                        // The lossless tap first: every decoded application
+                        // frame AFTER the handshake, verbatim and in wire
+                        // order, before any typed conversion. A frame before
+                        // the handshake keeps its legacy typed-only behavior,
+                        // so the tap's ordering guarantee holds without
+                        // touching the default event stream.
+                        if hello_tx.is_none() {
+                            if let Some(tap) = raw_tap.as_ref() {
+                                let _ = tap.send(value.clone());
+                            }
                         }
                         if let Some(event) = client_event_from_value(&value) {
                             let _ = event_tx.send(event);
@@ -505,42 +519,51 @@ impl DaemonClient {
                 }
                 true
             };
-            let mut dead = false;
             loop {
-                while let Some(newline) = carry.iter().position(|byte| *byte == b'\n') {
-                    // The cap covers the line without its newline, like the
-                    // bounded readers' byte accounting.
-                    if max_frame_bytes.is_some_and(|cap| newline > cap) {
-                        dead = true;
-                        break;
-                    }
-                    let line: Vec<u8> = carry.drain(..=newline).collect();
-                    if !dispatch(&line) {
-                        dead = true;
-                        break;
-                    }
-                }
-                if dead {
-                    break;
-                }
-                // No complete line yet: the cap also bounds the partial
-                // frame accumulating without a newline.
-                if max_frame_bytes.is_some_and(|cap| carry.len() > cap) {
-                    dead = true;
-                    break;
-                }
-                match reader.read(&mut chunk).await {
-                    Ok(0) | Err(_) => {
-                        // The socket closed: a trailing unterminated line
-                        // still dispatches once, like `read_line`'s last
-                        // line at EOF, before the teardown.
-                        if !carry.is_empty() {
-                            let line = std::mem::take(&mut carry);
+                let buffer = match reader.fill_buf().await {
+                    // The socket closed: a trailing unterminated line still
+                    // dispatches once, like `read_line`'s last line at EOF,
+                    // before the teardown.
+                    Ok(buffer) if buffer.is_empty() => {
+                        if !partial.is_empty() {
+                            let line = std::mem::take(&mut partial);
                             dispatch(&line);
                         }
                         break;
                     }
-                    Ok(read) => carry.extend_from_slice(&chunk[..read]),
+                    Ok(buffer) => buffer,
+                    Err(_) => break,
+                };
+                match buffer.iter().position(|byte| *byte == b'\n') {
+                    Some(newline) => {
+                        // The cap covers the line without its newline, like
+                        // the bounded readers' byte accounting.
+                        if max_frame_bytes.is_some_and(|cap| newline > cap) {
+                            break;
+                        }
+                        let line: Vec<u8> = if partial.is_empty() {
+                            buffer[..newline].to_vec()
+                        } else {
+                            partial.extend_from_slice(&buffer[..newline]);
+                            std::mem::take(&mut partial)
+                        };
+                        reader.consume(newline + 1);
+                        if !dispatch(&line) {
+                            break;
+                        }
+                    }
+                    None => {
+                        // No newline in the buffered bytes: the cap also
+                        // bounds the partial frame accumulating across
+                        // fills.
+                        if max_frame_bytes.is_some_and(|cap| partial.len() + buffer.len() > cap)
+                        {
+                            break;
+                        }
+                        partial.extend_from_slice(buffer);
+                        let read = buffer.len();
+                        reader.consume(read);
+                    }
                 }
             }
             // The supervisor socket closed: pending requests fail now and the death watch wakes the
@@ -822,11 +845,14 @@ impl DaemonClient {
             self.shared.pending.lock().unwrap().remove(&id);
             return Err(self.dead_reader_error());
         }
-        self.writer.send(line).map_err(|_| {
-            anyhow::Error::new(CommandNotSent {
+        if self.writer.send(line).is_err() {
+            // The writer had already exited: the line was never queued, and
+            // the registered slot must not linger for the death sweep.
+            self.shared.pending.lock().unwrap().remove(&id);
+            return Err(anyhow::Error::new(CommandNotSent {
                 message: "the daemon connection is closed".to_string(),
-            })
-        })?;
+            }));
+        }
         match tokio::time::timeout(Duration::from_millis(timeout_ms), rx).await {
             Ok(Ok(result)) => result,
             // The reader task died before resolving this request: the line

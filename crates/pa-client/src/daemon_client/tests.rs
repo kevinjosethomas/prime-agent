@@ -803,7 +803,7 @@ async fn raw_tap_receives_every_application_frame_verbatim() {
     // handshake and id-correlated response frames never appear.
     let (event, future) = tap_test_frames();
     let mut tapped = Vec::new();
-    while let Ok(frame) =
+    while let Ok(Some(frame)) =
         tokio::time::timeout(Duration::from_millis(200), tap_rx.recv()).await
     {
         tapped.push(frame);
@@ -813,7 +813,7 @@ async fn raw_tap_receives_every_application_frame_verbatim() {
     // The typed channel is unchanged: the known event parses, the unknown
     // frame type stays silent (its fidelity lives on the tap).
     let mut typed = Vec::new();
-    while let Ok(event) =
+    while let Ok(Some(event)) =
         tokio::time::timeout(Duration::from_millis(200), events.recv()).await
     {
         typed.push(event);
@@ -1212,7 +1212,7 @@ async fn direct_reader_streams_application_frames_to_the_tap() {
         "event": { "type": "turn_end" },
     });
     let mut tapped = Vec::new();
-    while let Ok(frame) =
+    while let Ok(Some(frame)) =
         tokio::time::timeout(Duration::from_millis(200), tap_rx.recv()).await
     {
         tapped.push(frame);

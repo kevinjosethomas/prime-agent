@@ -13,11 +13,6 @@ pub(super) enum DirectRequestError {
     Wait(anyhow::Error),
 }
 
-/// The daemon answered with `success: false` for one request: the daemon
-/// is alive and healthy — it refused THIS request. Rejections carry data
-/// about the request, never about the connection: the interactive loop
-/// renders them inline and keeps running, while transport failures (dead
-/// socket, timeout, closed connection) stay fatal.
 /// A request that provably never reached the wire: the reader was already
 /// dead, the writer had already exited, or the opt-in pending cap refused
 /// the send before any bytes were queued. The command was NOT executed —
@@ -81,6 +76,11 @@ pub fn is_command_result_uncertain(error: &anyhow::Error) -> bool {
         .any(|cause| cause.downcast_ref::<CommandResultUncertain>().is_some())
 }
 
+/// The daemon answered with `success: false` for one request: the daemon
+/// is alive and healthy — it refused THIS request. Rejections carry data
+/// about the request, never about the connection: the interactive loop
+/// renders them inline and keeps running, while transport failures (dead
+/// socket, timeout, closed connection) stay fatal.
 #[derive(Debug, PartialEq)]
 pub struct RequestRejected {
     /// Wire `type` of the refused command, for the rendered message.
