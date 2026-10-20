@@ -38,6 +38,7 @@ version 3 rebuilds old prefixes once before resuming cached metadata.
 
 The control-plane `set_prompt_guidelines` command stages appended prompt sources
 for the next compaction and persists them in the worker's create descriptor.
+The `prompt_guidelines` server capability advertises this command to desktop clients.
 
 ## Scope
 ACP stdio transport (`acp`): the JSON-RPC serve surface for Agent

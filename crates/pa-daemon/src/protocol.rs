@@ -345,6 +345,7 @@ pub fn default_server_capabilities() -> Vec<DaemonServerCapability> {
                 "model_catalog",
                 "subagent_model_defaults",
                 "global_harness_defaults",
+                "prompt_guidelines",
                 "workstream_classification",
                 "side_question_transcript",
                 "transient_bash",
