@@ -14,10 +14,7 @@ pub(crate) const BRANCH_GUTTER: &str = "\u{2570}\u{2500} ";
 pub(crate) const BRANCH_CONTINUATION: &str = "   ";
 
 /// The full continuation prefix: four plain spaces a continuation row
-/// (or a full-width diff block) starts its content at. The production
-/// tree builds rows through the gutter/continuation constants above;
-/// the indent remains the shared reference for the tests that assert
-/// continuation-row content.
+/// (or a full-width diff block) starts its content at.
 #[cfg(test)]
 pub(crate) const BRANCH_INDENT: &str = "    ";
 
