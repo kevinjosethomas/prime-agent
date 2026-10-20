@@ -1221,3 +1221,238 @@ async fn direct_reader_streams_application_frames_to_the_tap() {
     client.close();
     let _ = supervisor.await;
 }
+
+#[tokio::test]
+async fn writer_send_failure_cleans_its_pending_slot() {
+    // `hard_close` swaps the writer for a dead channel while the reader is
+    // still mounted: every send fails as a provable non-delivery, and the
+    // registered slot must not linger — a ghost entry would fill the
+    // pending cap and turn later refusals into cap refusals.
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    tokio::spawn(async move { spawn_mock_daemon(listener).await });
+
+    let (mut client, _events) = DaemonClient::connect_with_options(
+        &socket,
+        DaemonClientOptions {
+            max_pending: Some(1),
+            ..DaemonClientOptions::default()
+        },
+    )
+    .await
+    .unwrap();
+    client.hard_close();
+    for _ in 0..2 {
+        let error = client
+            .request_with_timeout(
+                DaemonCommand::List {
+                    id: None,
+                    all: None,
+                    cwd: None,
+                    session_dir: None,
+                    include_client_owned: None,
+                    rest: Map::default(),
+                },
+                30_000,
+            )
+            .await
+            .unwrap_err();
+        assert!(is_command_not_sent(&error), "unexpected error: {error}");
+        assert!(!is_command_result_uncertain(&error));
+        // The writer refusal, never the pending-cap refusal a leaked slot
+        // would produce.
+        assert!(
+            error.to_string().contains("the daemon connection is closed"),
+            "unexpected error: {error}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn pre_handshake_frames_stay_off_the_tap() {
+    // A daemon that misbehaves by streaming an application frame before its
+    // hello: the tap (ordering guaranteed only post-handshake) stays empty
+    // of it, while the typed channel keeps its legacy behavior of
+    // dispatching it.
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let (reader, mut writer) = stream.into_split();
+        let mut reader = BufReader::new(reader);
+        let early = json!({
+            "type": "session_event",
+            "activeSessionId": "s1",
+            "event": { "type": "early" },
+        });
+        writer
+            .write_all(format!("{early}\n").as_bytes())
+            .await
+            .unwrap();
+        let hello = json!({
+            "type": "daemon_hello",
+            "protocol": { "name": "prime-agent.daemon", "version": 7 },
+            "clientId": "srv",
+            "serverCapabilities": [],
+        });
+        writer
+            .write_all(format!("{hello}\n").as_bytes())
+            .await
+            .unwrap();
+        let late = json!({
+            "type": "session_event",
+            "activeSessionId": "s1",
+            "event": { "type": "late" },
+        });
+        writer
+            .write_all(format!("{late}\n").as_bytes())
+            .await
+            .unwrap();
+        let mut seen = String::new();
+        loop {
+            seen.clear();
+            match reader.read_line(&mut seen).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            let envelope: Value = serde_json::from_str(seen.trim()).unwrap();
+            let response = json!({
+                "type": "response",
+                "id": envelope["id"].as_str().unwrap_or_default(),
+                "command": envelope["command"]["type"].as_str().unwrap_or_default(),
+                "success": true,
+                "data": { "ok": true },
+            });
+            writer
+                .write_all(format!("{response}\n").as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+
+    let (tap_tx, mut tap_rx) = mpsc::unbounded_channel::<Value>();
+    let (client, mut events) = DaemonClient::connect_with_options(
+        &socket,
+        DaemonClientOptions {
+            raw_tap: Some(tap_tx),
+            ..DaemonClientOptions::default()
+        },
+    )
+    .await
+    .unwrap();
+    let data = client
+        .request_ok(DaemonCommand::List {
+            id: None,
+            all: None,
+            cwd: None,
+            session_dir: None,
+            include_client_owned: None,
+            rest: Map::default(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(data["ok"], true);
+
+    // Only the post-handshake frame reaches the tap.
+    let late = json!({
+        "type": "session_event",
+        "activeSessionId": "s1",
+        "event": { "type": "late" },
+    });
+    let mut tapped = Vec::new();
+    while let Ok(Some(frame)) =
+        tokio::time::timeout(Duration::from_millis(200), tap_rx.recv()).await
+    {
+        tapped.push(frame);
+    }
+    assert_eq!(tapped, vec![late]);
+
+    // The typed channel keeps its legacy pre-handshake dispatch: both
+    // frames arrive as session events.
+    let mut early_and_late = Vec::new();
+    while let Ok(Some(event)) =
+        tokio::time::timeout(Duration::from_millis(200), events.recv()).await
+    {
+        early_and_late.push(event);
+    }
+    let kinds: Vec<&str> = early_and_late
+        .iter()
+        .filter_map(|event| match event {
+            DaemonClientEvent::SessionEvent { event, .. } => {
+                event["type"].as_str()
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(kinds, vec!["early", "late"]);
+    client.close();
+}
+
+#[tokio::test]
+async fn frame_cap_binds_partial_lines_across_fills() {
+    // The oversized frame arrives in paced chunks without a newline: the
+    // partial accumulation trips the cap before any complete line forms.
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let (reader, mut writer) = stream.into_split();
+        let mut reader = BufReader::new(reader);
+        let hello = json!({
+            "type": "daemon_hello",
+            "protocol": { "name": "prime-agent.daemon", "version": 7 },
+            "clientId": "srv",
+            "serverCapabilities": [],
+        });
+        writer
+            .write_all(format!("{hello}\n").as_bytes())
+            .await
+            .unwrap();
+        let mut seen = String::new();
+        match reader.read_line(&mut seen).await {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {}
+        }
+        for _ in 0..3 {
+            writer.write_all("x".repeat(50).as_bytes()).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+        std::future::pending::<()>().await;
+    });
+
+    let (client, _events) = DaemonClient::connect_with_options(
+        &socket,
+        DaemonClientOptions {
+            max_frame_bytes: Some(100),
+            ..DaemonClientOptions::default()
+        },
+    )
+    .await
+    .unwrap();
+    let started = std::time::Instant::now();
+    let error = client
+        .request_with_timeout(
+            DaemonCommand::List {
+                id: None,
+                all: None,
+                cwd: None,
+                session_dir: None,
+                include_client_owned: None,
+                rest: Map::default(),
+            },
+            30_000,
+        )
+        .await
+        .unwrap_err();
+    // The teardown's sweep resolves the in-flight request as uncertain.
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(is_command_result_uncertain(&error), "unexpected error: {error}");
+    assert!(
+        error.to_string().contains("the daemon connection closed"),
+        "unexpected error: {error}"
+    );
+    client.close();
+}
