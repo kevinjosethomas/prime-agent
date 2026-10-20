@@ -383,7 +383,7 @@ impl PrimeDaemonClient {
                     // The sticky overflow error precedes ANY buffered frame:
                     // the consumer never continues on a partial stream.
                     if self.inner.overflow.load(Ordering::SeqCst) {
-                        Err(overflow())
+                        Err(napi_error(overflow()))
                     } else {
                         Ok(Some(frame))
                     }
