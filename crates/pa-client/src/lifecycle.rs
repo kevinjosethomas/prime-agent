@@ -381,8 +381,14 @@ impl DaemonClientSession {
                             .to_string(),
                     );
                     let result = self.state.driver.lock().await.memo.take();
-                    return match result.flatten() {
-                        Some(join_error) => Err(anyhow::Error::new(join_error)),
+                    return match result {
+                        // The driver ended in a panic: the honest error, never
+                        // a faked clean completion.
+                        Some(Err(join_error)) => Err(anyhow::Error::new(join_error)),
+                        // The driver ended cleanly but the mark never flipped.
+                        Some(Ok(())) => Err(anyhow!(
+                            "the session driver ended without completing its settle"
+                        )),
                         // Never memoized and never started: the honest answer
                         // for a session with no driver to fail.
                         None => Ok(()),
