@@ -439,7 +439,7 @@ impl TaskSet {
     /// Mark dead and abort every owned task IN PLACE. `true` when this call
     /// won the one-shot race. The aborted handles STAY in the set — the
     /// join drains them; dropping them here would detach the tasks and
-    /// leave join_tasks with nothing to await.
+    /// leave `join_tasks` with nothing to await.
     pub(crate) fn abort_all(&self) -> bool {
         let mut state = self.state.lock().unwrap();
         if state.done {

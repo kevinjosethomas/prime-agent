@@ -1938,7 +1938,11 @@ async fn concurrent_joins_wait_for_each_other_behind_the_barrier() {
         tokio::time::timeout(Duration::from_secs(30), async { tokio::join!(one, two) })
             .await
             .expect("both joins complete");
-    assert_eq!(drained_one + drained_two, 2, "each handle joined once");
+    assert_eq!(
+        drained_one.unwrap() + drained_two.unwrap(),
+        2,
+        "each handle joined once"
+    );
     assert!(
         flag.load(std::sync::atomic::Ordering::SeqCst),
         "completion observed before the joins returned"
@@ -2129,6 +2133,7 @@ async fn shutdown_during_in_flight_upgrade_loses_the_registration_race() {
     let upgraded = tokio::time::timeout(Duration::from_secs(5), upgrade)
         .await
         .expect("the upgrade settles")
+        .unwrap()
         .unwrap();
     assert!(!upgraded, "the lost registration race reports no upgrade");
     assert_eq!(client.direct_session_id(), None, "no link installed");
