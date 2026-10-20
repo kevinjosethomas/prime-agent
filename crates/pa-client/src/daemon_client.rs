@@ -397,9 +397,7 @@ struct TaskState {
 impl TaskSet {
     /// Whether shutdown already marked the set dead.
     fn is_dead(&self) -> bool {
-        let dead = self.state.lock().unwrap().done;
-        eprintln!("DBG is_dead: set = {:p} = {dead}", self);
-        dead
+        self.state.lock().unwrap().done
     }
 
     /// Register the supervisor reader/writer handles once. `false` when the

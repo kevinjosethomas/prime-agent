@@ -2307,24 +2307,11 @@ mod tests {
             installed.is_none(),
             "the install REFUSED on the stop mark — no epoch, no install"
         );
-        // The refused fresh connection is joined.
-        eprintln!(
-            "DBG test: fresh tasks ptr = {:p}",
-            std::sync::Arc::as_ptr(&fresh.tasks)
-        );
-        {
-            let slot = session.state.client.read().await;
-            if let Some(slot_client) = slot.as_ref() {
-                eprintln!(
-                    "DBG test: slot tasks ptr = {:p}",
-                    std::sync::Arc::as_ptr(&slot_client.tasks)
-                );
-            } else {
-                eprintln!("DBG test: slot empty");
-            }
-        }
+        // The refused install leaves the fresh uninstalled: the test
+        // performs the same settle the driver performs for a refused
+        // fresh — shutdown, then the JOIN (the tasks' real end observed).
+        fresh.shutdown();
         let joined = fresh.join_tasks().await;
-        eprintln!("DBG test: fresh join count = {joined}");
         assert_eq!(joined, 2, "the fresh connection's tasks joined");
         assert_ne!(
             session.status().state,
