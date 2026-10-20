@@ -115,10 +115,12 @@ async function main() {
     const gcPath = tmpSocket('electron-gc');
     const gcMock = await startMockReporting(gcPath, 'echo');
     mark('gc-mock-up');
-    {
+    // FUNCTION scope: the wrapper dies on return; V8 retains module-level
+    // bindings, which would keep the finalizer from ever running.
+    await (async () => {
       const scoped = await DaemonConnection.connect(gcPath);
       await scoped.request({ type: 'get_connection_state', activeSessionId: 'wire' });
-    }
+    })();
     mark('gc-scope-exited');
     let gcDisconnected = false;
     for (let attempt = 0; attempt < 5 && !gcDisconnected; attempt += 1) {
@@ -154,10 +156,10 @@ async function main() {
           ? `const connection = await DaemonConnection.connect(socketPath);
              await connection.request({ type: 'get_connection_state', activeSessionId: 'wire' });
              await connection.close();`
-          : `{
+          : `await (async () => {
                const scoped = await DaemonConnection.connect(socketPath);
                await scoped.request({ type: 'get_connection_state', activeSessionId: 'wire' });
-             }
+             })();
              globalThis.gc();`
       }
       await mock.waitForDisconnect();

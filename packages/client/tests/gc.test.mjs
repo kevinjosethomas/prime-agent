@@ -15,10 +15,12 @@ const childScript = `
   // alive: the GC-driven finalizer cleanup is proven client-driven,
   // never masked by a daemon kill. Bounded repeated GC passes.
   const mock = await startMockReporting(socketPath, 'echo');
-  {
+  // FUNCTION scope: V8 retains module-level bindings, so the wrapper must
+  // die on function return for the napi finalizer to ever run.
+  await (async () => {
     const connection = await DaemonConnection.connect(socketPath);
     await connection.request({ type: 'get_connection_state', activeSessionId: 'wire' });
-  }
+  })();
   let disconnected = false;
   for (let attempt = 0; attempt < 5 && !disconnected; attempt += 1) {
     globalThis.gc();
