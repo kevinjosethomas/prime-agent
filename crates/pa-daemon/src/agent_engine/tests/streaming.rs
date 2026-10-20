@@ -340,7 +340,7 @@ fn lazy_build_restores_only_the_pre_admission_prompt_context() {
                 .filter(|message| matches!(message, pa_types::session::AgentMessage::User(_)))
                 .count(),
             prompt_index + 1,
-            "compact/refine context must retain each repeated prompt once"
+            "compact context must retain each repeated prompt once"
         );
         assert_eq!(
             store.branch_file_entries().iter().filter(is_user).count(),

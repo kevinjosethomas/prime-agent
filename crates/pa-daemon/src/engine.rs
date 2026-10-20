@@ -437,21 +437,6 @@ pub trait SessionEngine: Send + Sync {
         Box::pin(async { None })
     }
 
-    /// Run one refinement (the daemon `refine` command): plan, apply, and
-    /// persist the harness state.
-    ///
-    /// # Errors
-    ///
-    /// Errors when the engine does not support refinement, or model
-    /// resolution, the session build, or the round fails.
-    fn run_refinement(
-        &self,
-        options: pa_core::session_engine::refine::RefineOptions,
-    ) -> Result<Value> {
-        let _ = options;
-        anyhow::bail!("This session does not support refinement")
-    }
-
     /// The session's RLM max-depth status `{ maxDepth, source }`, with the
     /// TS source vocabulary (`default` | `env` | `global` | `inherited` | `chat`).
     fn rlm_max_depth_status(&self) -> Value {

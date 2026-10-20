@@ -1,6 +1,5 @@
 //! Custom-message row rendering: each component's row geometry and theme
-//! colors. The refinement components live in the sibling `refinement`
-//! module; compaction outcomes render through the chat status rows.
+//! colors; compaction outcomes render through the chat status rows.
 
 use super::{
     AgentMessageDirection, AgentMessageRow, CustomPanelRow, ShellCompletionRow, AGENT_MESSAGE_LABEL,

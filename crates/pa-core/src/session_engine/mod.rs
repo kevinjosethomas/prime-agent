@@ -25,8 +25,6 @@ pub mod provider_adapter;
 pub mod provider_failover;
 pub mod provider_park;
 pub mod provider_retry;
-pub mod refine;
-mod refinement_gate;
 pub mod request_timing;
 pub mod response_timing;
 pub mod rlm_host;
@@ -129,7 +127,6 @@ pub struct AgentSession {
     /// Auxiliary-model routing for compaction summaries; `None` keeps
     /// every summarizer on the session model.
     auxiliary_model: Option<auxiliary_model::AuxiliaryModelContext>,
-    refinement_settings: Option<crate::settings::SettingsManager>,
     /// The kernel-state probe behind the post-compaction
     /// `ipython_state` notice; `None` without a kernel.
     kernel_state: Option<std::sync::Arc<dyn ipython_state::CompactionKernelProbe>>,
@@ -163,14 +160,6 @@ pub struct AgentSession {
     /// a side question on an unwired session fails with the model-selection
     /// error (no fallback to the agent's id-carrying fn).
     side_question_stream_fn: std::sync::Mutex<Option<pa_agent::stream::StreamFn>>,
-    /// The session's agent dir (the settings root): the refine flow
-    /// resolves the `factory.enabled` opt-in from its settings.json on
-    /// every run, immediately before the plan applies, mirroring the
-    /// kernel-side factory gate that reads the same file through
-    /// `PRIME_AGENT_CODING_AGENT_DIR`. `None` until the engine wiring
-    /// resolves it (verification harnesses building the session directly
-    /// keep `None`, which reads as the fail-closed disabled default).
-    agent_dir: Option<std::path::PathBuf>,
     prompt_sources: Option<Arc<prompt_refresh::PromptSources>>,
     pinned_prompt: std::sync::RwLock<Option<String>>,
     prompt_guidelines: std::sync::RwLock<Option<Vec<String>>>,
@@ -225,7 +214,6 @@ impl AgentSession {
             slash_commands: SlashCommandRegistry::builtin(),
             compaction: std::sync::RwLock::new(compaction::CompactionSettings::default()),
             auxiliary_model: None,
-            refinement_settings: None,
             kernel_state: None,
             pending_next_turn_rows: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             skills: Vec::new(),
@@ -234,7 +222,6 @@ impl AgentSession {
             compaction_summary_sink: std::sync::Mutex::new(None),
             semantic_edges: std::sync::Mutex::new(None),
             side_question_stream_fn: std::sync::Mutex::new(None),
-            agent_dir: None,
             prompt_sources: None,
             pinned_prompt: std::sync::RwLock::new(None),
             prompt_guidelines: std::sync::RwLock::new(None),

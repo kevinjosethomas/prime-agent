@@ -33,7 +33,7 @@ protocol replacement; existing TUI login behavior remains owned by those service
 The headless print/json modes (`print_runtime.rs`) drive the in-process
 session engine directly: prompt admission, the turn-boundary compaction
 checks (`print_boundary.rs` — the overflow compact-and-retry arm, the
-model-requested compaction/refinement consumption, and the threshold arm,
+model-requested compaction consumption, and the threshold arm,
 the TS `_checkCompaction` flow), the json event stream, and the headless
 terminal selection (stdout/stderr/exit code) mirroring modes/print-mode.ts.
 Autonomous continuation (print_autonomous.rs, the #254 follow-up): the
