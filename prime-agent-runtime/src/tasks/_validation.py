@@ -15,12 +15,12 @@ def text(value: Any, name: str, max_length: int = 512, *, empty: bool = False) -
 
 # The full record set the host accepts on a create.
 WRITABLE_TASK_FIELDS = frozenset(
-    {"id", "title", "status", "summary", "description", "owner", "parentId", "links"}
+    {"id", "title", "status", "question", "owner", "parentId", "links"}
 )
 
 # The partial change set a patch event may carry.
 PATCH_TASK_FIELDS = frozenset(
-    {"title", "status", "summary", "description", "parentId", "links"}
+    {"title", "status", "question", "parentId", "links"}
 )
 
 
@@ -43,6 +43,16 @@ def validate_links(value: Any) -> list[dict[str, Any]]:
     return links
 
 
+def validate_question(status: str, question: Any, name: str = "question") -> str:
+    """The invariant: the question is required for needs_input, empty otherwise."""
+    question = text(question, name, 2000, empty=True)
+    if status == "needs_input" and not question.strip():
+        raise ValueError("Needs input requires the question")
+    if status != "needs_input" and question.strip():
+        raise ValueError("Only needs_input carries a question")
+    return question
+
+
 def validate_task(value: dict[str, Any]) -> dict[str, Any]:
     if value.keys() - WRITABLE_TASK_FIELDS:
         raise TypeError(f"Unknown task fields: {', '.join(sorted(value.keys() - WRITABLE_TASK_FIELDS))}")
@@ -51,12 +61,8 @@ def validate_task(value: dict[str, Any]) -> dict[str, Any]:
     text(value["title"], "title", 160)
     if value["status"] not in STATUSES:
         raise ValueError("Invalid task status")
-    text(value["summary"], "summary", 2000, empty=True)
+    validate_question(value["status"], value["question"])
     text(value["owner"], "owner", 160)
-    if "description" in value:
-        text(value["description"], "description", 6000, empty=True)
-    if value["status"] == "needs_input" and not value["summary"].strip():
-        raise ValueError("Needs input requires the question in summary")
     if "parentId" in value:
         text(value["parentId"], "parent task ID")
         if value["parentId"] == value["id"]:
@@ -76,10 +82,8 @@ def validate_changes(changes: dict[str, Any]) -> dict[str, Any]:
     if "status" in changes:
         if changes["status"] not in STATUSES:
             raise ValueError("Invalid task status")
-    if "summary" in changes:
-        text(changes["summary"], "summary", 2000, empty=True)
-    if "description" in changes:
-        text(changes["description"], "description", 6000, empty=True)
+    if "question" in changes:
+        text(changes["question"], "question", 2000, empty=True)
     if "parentId" in changes:
         text(changes["parentId"], "parent task ID")
     if "links" in changes:

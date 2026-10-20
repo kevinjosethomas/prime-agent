@@ -19,10 +19,10 @@ items = await tasks.list(status=None, archived=False)  # visible snapshots
 archived = await tasks.list(archived=True)              # only archived
 all_items = await tasks.list(archived=None)             # visible and archived
 task = await tasks.get("prime-cli-json")                # KeyError if missing
-task = await tasks.create("prime-cli-json", "Parse CLI logs",
-                          summary="", description="")   # ValueError on a duplicate id
-child = await task.subtask("cli-parser", "Structured log parser",
-                           status="todo", summary="", description="")
+task = await tasks.create("prime-cli-json", "Parse CLI logs")        # status todo
+task = await tasks.create("born-blocked", "Starts blocked",
+                          status="needs_input", question="Is it green?")  # ValueError on a duplicate id
+child = await task.subtask("cli-parser", "Structured log parser")   # create under this parent
 ```
 
 There are no other module functions. `status=None` lists every status;
@@ -34,25 +34,26 @@ on `task.parent_id`:
 children = [t for t in await tasks.list(archived=None) if t.parent_id == parent.id]
 ```
 
-`create` starts a task at `todo`; the host rejects an already observed ID
-atomically (a client-side duplicate check only gives a friendly error, the
-store is authoritative). `task.subtask(...)` is `create` with
-`parent_id=task.id`.
+`create` starts a task at `todo` unless a `status` is given; `question` is
+only accepted with `needs_input` (it must be nonempty there and empty
+anywhere else). The host rejects an already observed ID atomically (a
+client-side duplicate check only gives a friendly error, the store is
+authoritative). `task.subtask(...)` is `create` with `parent_id=task.id`.
 
 ## Task handle methods
 
 ```python
-task = await task.update(status="active", summary="Parser verified",
-                         description="...", links=[Link("pr", "https://github.com/org/repo/pull/12")])
+task = await task.update(status="active",
+                         links=[Link("pr", "https://github.com/org/repo/pull/12")])
 task = await task.archive()
 task = await task.restore()
 await task.link(agent)  # rlm.spawn/rlm.create_session handle or list_subagents row
 ```
 
-- `update` patches only the named fields (`status`, `summary`, `description`,
-  `links`); the host preserves every unrelated field in one transaction, so
-  concurrent partial updates from different agents do not clobber each other.
-  Omitting a field leaves it unchanged; `links` replaces the whole tuple.
+- `update` patches only the named fields (`status`, `question`, `links`); the
+  host preserves every unrelated field in one transaction, so concurrent
+  partial updates from different agents do not clobber each other. Omitting a
+  field leaves it unchanged; `links` replaces the whole tuple.
 - `archive`/`restore` use the host's `set-archived` operation, preserving
   status and timestamps. `get(id)` can always read an archived entry; the
   `archived` snapshot field defaults to `False` when an older host omits it.
@@ -63,24 +64,27 @@ await task.link(agent)  # rlm.spawn/rlm.create_session handle or list_subagents 
   only; it never spawns, messages, or grants access.
 
 Snapshots are immutable; every operation returns a fresh snapshot of current
-state. The public model has no `question` field anywhere.
+state. The public model has exactly id, title, status, question, parent_id,
+links and archived (plus updated_at).
 
-## Statuses and needs_input
+## Statuses and the question
 
 `todo`, `active`, `needs_input`, `ready`, `backlog`, `done`.
 
-`needs_input` means a real question or approval blocks continuation: the
-question goes in `summary` (required, nonempty), the options in
-`description`. After the user answers, set the status back and continue:
+`question` exists exactly while the status is `needs_input`: required and
+nonempty there, empty in every other status. The host enforces the invariant
+on the merged state and clears the question when the status moves away; the
+package applies the same rules before delivering:
 
 ```python
-task = await task.update(status="needs_input", summary="May I merge the verified change?",
-                         description="Options: merge now, or wait for the review pass.")
-task = await task.update(status="active")
+task = await task.update(status="needs_input", question="May I merge the verified change?")
+task = await task.update(status="active")        # the host clears the question
+with self.assertRaises(ValueError):
+    await task.update(question="not while active")   # only needs_input carries a question
 ```
 
-There is no progress percentage or checklist; split distinct work into
-subtasks and give each its own status.
+There is no progress percentage, checklist, summary or description; split
+distinct work into subtasks and give each its own status.
 
 ## Field limits
 
@@ -89,8 +93,7 @@ subtasks and give each its own status.
 | `id` | Stable, at most 512 characters |
 | `title` | At most 160 characters |
 | `status` | One of the six statuses |
-| `summary` | At most 2,000 characters |
-| `description` | At most 6,000 characters |
+| `question` | At most 2,000 characters; nonempty iff needs_input |
 
 Links: up to 20 per task, kinds `chat`, `pr`, `source`, `commit`; URLs must be
 HTTP(S) without embedded credentials. A `commit` link is the commit's web URL,

@@ -73,6 +73,7 @@ async def get(id: str) -> Task:
     return await _configured().get(id)
 
 
-async def create(id: str, title: str, summary: str = "", description: str = "") -> Task:
+async def create(id: str, title: str, status: Status = "todo",
+                 question: str = "") -> Task:
     """Create a distinct task; raises when the ID already exists."""
-    return await _configured().create(id, title, summary=summary, description=description)
+    return await _configured().create(id, title, status=status, question=question)

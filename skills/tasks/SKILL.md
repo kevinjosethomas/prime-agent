@@ -19,15 +19,19 @@ store.
 - **Subtask**: a task whose `parent_id` points at a task. Each distinct
   request or piece of feedback from the user inside a task is one subtask,
   with its own status and links.
+- Task fields are id, title, status, parent, links, archived, and the
+  `question` — the question exists only while the status is `needs_input`
+  and is empty in every other status.
 - Status: `todo` not started, `active` being worked on, `needs_input` blocked
   on a real question for the user, `ready` a result is available for the user
   (for example an update to install or a PR to review), `done` finished and
   verified, `backlog` deferred. Age alone does not prove activity.
-- There are no steps, checklists or progress percentages.
+- There are no steps, checklists, progress percentages, summaries or
+  descriptions.
 - Threads exist only for top-level tasks. Each chat message belongs to at most
   one top-level task, or to none when it is general. Subtasks have status,
-  details and links, but no thread or message membership. Message placement is
-  a UI-only concept; the package has no message API.
+  question and links, but no thread or message membership. Message placement
+  is a UI-only concept; the package has no message API.
 
 ## Create a task, a subtask, or update?
 
@@ -38,7 +42,7 @@ Then:
 
 1. **Update an existing subtask** when the user follows up on something
    already tracked: a repeat ask, a correction, a "still broken", a review
-   comment on the same change. Change its status, summary and links. Restore
+   comment on the same change. Change its status, question and links. Restore
    it if archived.
 2. **Create a subtask** when the user makes a new, distinct request inside an
    existing task.
@@ -48,17 +52,6 @@ Then:
 A chat, worker, PR, repository, commit, test run or day is never a reason for
 a new task or subtask. A worker's internal plan items are not subtasks either.
 
-Examples from desktop feedback (all subtasks under the desktop task):
-
-- "Send my reply in the thread I have focused" → one subtask. When the user
-  says it again two hours later, update that subtask; do not create another.
-- "Follow-ups should sit above the composer with edit, delete and steer" → one
-  subtask for the follow-up queue. "Steers should just show as text" is
-  feedback on the same change: update it.
-- "Add a Pull requests tab next to Tasks" → its own subtask. "PRs take so
-  long to load" and "Do we need a drafts section?" update that subtask.
-- "Make Cmd+Q ask before quitting" → its own subtask.
-
 ```python
 import tasks
 from tasks import Link
@@ -67,44 +60,23 @@ primer = await tasks.get("prime-root-orchestrator")
 existing = [t for t in await tasks.list(archived=None) if t.parent_id == primer.id]
 item = next((t for t in existing if t.id == "primer-quit-confirmation"), None)
 if item is None:
-    item = await primer.subtask(
-        "primer-quit-confirmation", "Confirm before quitting",
-        status="active", summary="Adding a confirm dialog to Cmd+Q.",
-        description="Cmd+Q should ask before quitting, like Chrome.",
-    )
-item = await item.update(links=[
+    item = await primer.subtask("primer-quit-confirmation", "Confirm before quitting")
+item = await item.update(status="active", links=[
     Link("pr", "https://github.com/org/repo/pull/42", "Confirm before quitting"),
     Link("commit", "https://github.com/org/repo/commit/<sha>", "Quit confirmation"),
 ])
-item = await item.update(status="ready", summary="Update ready: click the download icon.")
+item = await item.update(status="ready")
 # Only after the user has it installed and it is verified:
 item = await item.update(status="done")
 ```
 
-## Write for the user
+## Titles and statuses
 
-The user scans these in the sidebar and detail page.
-
-- **Summary**: one short plain-English sentence, about 12 words or fewer:
-  where it stands and what is next, or what is needed from the user.
-  Examples: "Update ready: click the download icon." / "Testing the CPU
-  export on 12 more model types." / "Waiting on your OK to open the draft PR."
-  For `needs_input`, the summary is the actual blocking question.
-- **Description** (the Goal on the detail page): one to three plain sentences
-  on what the task is for and what is in or out of scope. For `needs_input`,
-  the description carries the options the user can pick from.
-- The latest update follows the summary rule: one or two plain sentences.
-- None of these contain commit SHAs, hashes, run IDs, branch names, file
-  paths, worker names, test counts, running logs, dated notes or internal
-  rules. Mention a PR number only when the user needs to act on it. Evidence
-  goes in links and in the agents' own reports.
-- Titles are short and concrete: the change and where it applies.
-
-## Status rules
-
-- `needs_input` is a real question or approval that blocks continuation; the
-  question goes in `summary`, the options in `description`. After the user
-  answers, set the status back and continue in the same task.
+- Titles are short and concrete: the change and where it applies, at most 160
+  characters. Evidence and context go in links, never in the title.
+- `needs_input` is a real question or approval that blocks continuation; put
+  the concrete question in `question`. After the user answers, set the status
+  back and continue in the same task — the store clears the question.
 - `ready` means a concrete result is available for the user. `done` means
   verified finished: for the desktop app, installed in the user's app, not
   merely in source or the feed.

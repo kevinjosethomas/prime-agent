@@ -1,8 +1,9 @@
 """Public slim tasks API exercised through an actual isolated reporter subprocess.
 
 The fixture simulates the desktop reporter contract (create/patch/set-archived/
-associate/assign with eventId dedup); desktop tests own SQLite semantics. No
-daemon, network, kernel installation, or model inference is needed.
+associate/assign with eventId dedup and merged-state question enforcement);
+desktop tests own SQLite semantics. No daemon, network, kernel installation, or
+model inference is needed.
 """
 
 from __future__ import annotations
@@ -53,6 +54,12 @@ else:
             sys.exit(44)
         for key, item in event["changes"].items():
             value[key] = item
+        # Host contract: the question is required exactly while the merged
+        # status is needs_input, and is cleared on every other status.
+        if value["status"] == "needs_input" and not value.get("question", "").strip():
+            sys.exit(45)
+        if value["status"] != "needs_input":
+            value["question"] = ""
         value["updatedAt"] = len(state["reports"])
     elif operation == "set-archived":
         value = next((item for item in state["tasks"] if item["id"] == event["taskId"]), None)
@@ -67,7 +74,7 @@ else:
         state["agents"] = [item for item in state["agents"] if key(item) != key(agent)] + [agent]
     store.write_text(json.dumps(state))
     # Fail after commit once, proving the internal redelivery retains the exact event ID.
-    if event.get("changes", {}).get("summary") == "uncertain":
+    if event.get("taskId") == "uncertain":
         sys.exit(42)
     print(json.dumps({"disposition": "applied"}))
 '''
@@ -108,13 +115,12 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
         task = await self.client.create("task", "A concrete outcome")
         with self.assertRaises(FrozenInstanceError):
             task.title = "mutated"
-        changed = await task.update(status="active", summary="A newer update")
-        self.assertEqual((changed.status, changed.summary, changed.description, changed.parent_id),
-                         ("active", "A newer update", "", None))
-        self.assertEqual(self.state()["reports"][-1]["changes"],
-                         {"status": "active", "summary": "A newer update"})
-        final = await changed.update(summary="Layout verified", links=[Link("pr", "https://example.com/pr")])
-        self.assertEqual((final.summary, final.links), ("Layout verified", (Link("pr", "https://example.com/pr"),)))
+        changed = await task.update(status="active")
+        self.assertEqual((changed.status, changed.question, changed.parent_id, changed.links),
+                         ("active", "", None, ()))
+        self.assertEqual(self.state()["reports"][-1]["changes"], {"status": "active"})
+        final = await changed.update(links=[Link("pr", "https://example.com/pr")])
+        self.assertEqual(final.links, (Link("pr", "https://example.com/pr"),))
         # No named changes: no event is delivered, and the snapshot stays current.
         before = self.state()["reports"]
         self.assertEqual(await final.update(), final)
@@ -126,23 +132,24 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
             await self.client.create("task", "Accidental overwrite")
         with self.assertRaises(DeliveryError):
             await self.client._deliver(Report.create("create", task={
-                "id": task.id, "title": "Race loser", "status": "todo", "summary": "",
-                "description": "", "owner": "/root", "links": []}))
+                "id": task.id, "title": "Race loser", "status": "todo", "question": "",
+                "owner": "/root", "links": []}))
         self.assertEqual(len(self.state()["tasks"]), 1)
 
     async def test_uncertain_commit_redelivers_the_exact_event_id(self):
-        task = await self.client.create("export", "Export checkpoint")
-        updated = await task.update(summary="uncertain")
-        self.assertEqual(updated.summary, "uncertain")
+        task = await self.client.create("uncertain", "Export checkpoint")
+        updated = await task.update(status="backlog")
+        self.assertEqual(updated.status, "backlog")
         reports = self.state()["reports"]
         self.assertEqual(len(reports), 2)  # create + one patch; the redelivery deduplicated.
         self.assertEqual(self.state()["events"], [report["eventId"] for report in reports])
-        self.assertEqual((await self.client.get("export")).summary, "uncertain")
+        self.assertEqual((await self.client.get("uncertain")).status, "backlog")
 
     async def test_reject_invalid_state_before_report_delivery(self):
         task = await self.client.create("task", "A concrete outcome")
         before = self.state()["reports"]
-        for changes in ({"status": "needs_input", "summary": " "},
+        for changes in ({"status": "needs_input"},
+                        {"question": "Why?"},
                         {"links": [Link("wiki", "https://example.com/page")]},
                         {"links": [Link("commit", "3a8a666b5")]},
                         {"links": [Link("source", "https://@example.com/path")]},
@@ -153,38 +160,39 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(TypeError):
             await task.update(progress=80)
         with self.assertRaises(ValueError):
-            await self.client.create("bad", "Bad", summary="x" * 2001)
+            await self.client.create("bad", "x" * 161)
+        with self.assertRaises(ValueError):
+            await self.client.create("bad", "No question here", question="why?")
         self.assertEqual(self.state()["reports"], before)
 
-    async def test_needs_input_question_lives_in_summary(self):
+    async def test_question_required_exactly_for_needs_input(self):
         task = await self.client.create("layout", "Fix layout")
-        blocked = await task.update(status="needs_input", summary="Which sidebar width?",
-                                    description="Options: 240px or 320px")
-        self.assertEqual((blocked.status, blocked.summary), ("needs_input", "Which sidebar width?"))
-        self.assertNotIn("question", blocked.__dataclass_fields__)
+        blocked = await task.update(status="needs_input", question="Which sidebar width?")
+        self.assertEqual((blocked.status, blocked.question),
+                         ("needs_input", "Which sidebar width?"))
         self.assertEqual(self.state()["reports"][-1]["changes"],
-                         {"status": "needs_input", "summary": "Which sidebar width?",
-                          "description": "Options: 240px or 320px"})
+                         {"status": "needs_input", "question": "Which sidebar width?"})
+        # The host clears the question when the status moves away.
         resumed = await blocked.update(status="active")
-        self.assertEqual((resumed.status, resumed.summary), ("active", "Which sidebar width?"))
-        self.assertEqual(self.state()["reports"][-1]["changes"], {"status": "active"})
-        # Re-entering needs_input reuses the current nonempty summary as the question.
-        again = await resumed.update(status="needs_input")
-        self.assertEqual(again.summary, "Which sidebar width?")
-        # The effective status decides: a needs_input summary cannot be blanked,
-        # an active one can (the patch above would otherwise fail the summary rule).
+        self.assertEqual((resumed.status, resumed.question), ("active", ""))
+        # Re-entering needs_input requires an explicit or inherited question.
         with self.assertRaises(ValueError):
-            await again.update(summary="")
-        active = await again.update(status="active")
-        cleared = await active.update(summary="   ")
-        self.assertEqual(cleared.summary, "   ")
+            await resumed.update(status="needs_input")
+        again = await resumed.update(status="needs_input", question="Retried yet?")
+        self.assertEqual(again.question, "Retried yet?")
+        # A question may be replaced while blocked, never carried elsewhere.
+        replaced = await again.update(question="Still blocked: which width?")
+        self.assertEqual(replaced.question, "Still blocked: which width?")
         with self.assertRaises(ValueError):
-            await cleared.update(status="needs_input")
-        second = await self.client.create("blocked", "Starts blocked", status="needs_input",
-                                         summary="Is the fixture green?")
-        self.assertEqual(second.status, "needs_input")
+            await replaced.update(status="ready", question="carried over")
+        # Atomic needs_input on create (provisional question keyword).
+        born = await self.client.create("born-blocked", "Starts blocked",
+                                       status="needs_input", question="Is the fixture green?")
+        self.assertEqual((born.status, born.question), ("needs_input", "Is the fixture green?"))
         with self.assertRaises(ValueError):
-            await self.client.create("empty", "Needs a question", status="needs_input")
+            await self.client.create("bad-blocked", "Needs a question", status="needs_input")
+        with self.assertRaises(ValueError):
+            await self.client.create("bad-active", "No question here", question="why?")
 
     async def test_source_content_remains_data(self):
         marker = Path(self.directory.name) / "must-not-exist"
@@ -225,8 +233,8 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
     async def test_update_archived_task_preserves_host_flag(self):
         task = await self.client.create("primer", "Primer", status="active")
         await task.archive()
-        changed = await task.update(summary="Layout verified")
-        self.assertEqual((changed.archived, changed.status), (True, task.status))
+        changed = await task.update(status="ready")
+        self.assertEqual((changed.archived, changed.status), (True, "ready"))
         self.assertNotIn("archived", self.state()["reports"][-1]["changes"])
         self.assertTrue((await self.client.get("primer")).archived)
         self.assertEqual(await self.client.list(), ())
@@ -263,7 +271,7 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_uncertain_redelivery_still_fails_when_delivery_never_lands(self):
         client = Client(command=[sys.executable, "-c", "import sys; sys.exit(9)"])
-        report = Report.create("patch", taskId="x", changes={"summary": "never lands"})
+        report = Report.create("patch", taskId="x", changes={"status": "ready"})
         with self.assertRaises(DeliveryError) as caught:
             await client._deliver(report)
         self.assertIs(caught.exception.report, report)
@@ -301,6 +309,10 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
                      "restore", "retry", "assign", "associate", "assign_messages", "spawn",
                      "start_agent", "sync_agents", "Client", "REPORTER_ENV"):
             self.assertFalse(hasattr(tasks, name), f"tasks.{name} must not exist")
+        fields = set(tasks.Task.__dataclass_fields__)
+        self.assertEqual(fields & {"summary", "description", "owner"}, set(),
+                         "summary/description/owner left the public model")
+        self.assertIn("question", fields)
 
     def test_configuration_refuses_shell_strings_and_invalid_timeouts(self):
         with self.assertRaises(ValueError):

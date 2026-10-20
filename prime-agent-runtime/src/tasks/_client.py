@@ -2,21 +2,20 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from rlm import RLMCreateSessionHandle, RLMSpawnHandle, RLMSubagent
 
 from ._models import UNSET, Link, Status, Task, STATUSES
 from ._transport import DeliveryError, Report, Reporter
-from ._validation import text, validate_changes, validate_task
+from ._validation import text, validate_changes, validate_question, validate_task
 
 
 class Client:
     """Internal reporter configuration for a kernel, hook, or local integration."""
 
-    def __init__(self, *, command: Sequence[str], env: Mapping[str, str] | None = None,
-                 timeout: float = 15):
+    def __init__(self, *, command, env=None, timeout=15):
         self._reporter = Reporter(command, env, timeout)
 
     async def _context(self) -> dict[str, Any]:
@@ -29,9 +28,9 @@ class Client:
     def _handle(self, value: dict[str, Any]) -> Task:
         return Task(
             id=value["id"], title=value["title"], status=value["status"],
-            summary=value["summary"], owner=value["owner"],
+            question=value.get("question", ""),
             updated_at=value["updatedAt"],
-            description=value.get("description", ""), parent_id=value.get("parentId"),
+            parent_id=value.get("parentId"),
             links=tuple(Link(**link) for link in value.get("links", [])),
             archived=value.get("archived", False), _client=self,
         )
@@ -55,22 +54,21 @@ class Client:
                 return self._handle(value)
         raise KeyError(f"Unknown task: {id}")
 
-    async def create(self, id: str, title: str, *, status: Status = "todo", summary: str = "",
-                     description: str = "", parent_id: str | None = None,
-                     links: Sequence[Link | Mapping[str, Any]] = ()) -> Task:
+    async def create(self, id: str, title: str, *, status: Status = "todo",
+                     question: str = "", parent_id: str | None = None) -> Task:
         """Create a distinct task; the host rejects an existing ID atomically."""
         if any(value["id"] == id for value in (await self._context())["tasks"]):
             raise ValueError(f"Task already exists: {id}")
         value: dict[str, Any] = dict(
-            id=id, title=title, status=status, summary=summary,
-            description=description, owner="/root", links=links)
+            id=id, title=title, status=status, question=question,
+            owner="/root", links=[])
         if parent_id is not None:
             value["parentId"] = parent_id
         await self._deliver(Report.create("create", task=validate_task(value)))
         return await self.get(id)
 
-    async def update(self, id: str, *, status: Any = UNSET, summary: Any = UNSET,
-                     description: Any = UNSET, links: Any = UNSET) -> Task:
+    async def update(self, id: str, *, status: Any = UNSET, question: Any = UNSET,
+                     links: Any = UNSET) -> Task:
         """Patch named fields; the host preserves every unrelated field in one transaction."""
         current = await self.get(id)
         changes: dict[str, Any] = {}
@@ -78,16 +76,18 @@ class Client:
             if status not in STATUSES:
                 raise ValueError("Invalid task status")
             changes["status"] = status
-        if summary is not UNSET:
-            changes["summary"] = text(summary, "summary", 2000, empty=True)
-        if description is not UNSET:
-            changes["description"] = text(description, "description", 6000, empty=True)
+        if question is not UNSET:
+            changes["question"] = text(question, "question", 2000, empty=True)
         if links is not UNSET:
             changes["links"] = links
-        if (changes.get("status", current.status)) == "needs_input":
-            effective = changes.get("summary", current.summary)
-            if not effective.strip():
-                raise ValueError("Needs input requires the question in summary")
+        effective_status = changes.get("status", current.status)
+        effective_question = changes.get("question", current.question)
+        if effective_status == "needs_input" and not effective_question.strip():
+            raise ValueError("Needs input requires the question")
+        elif "question" in changes and changes["question"].strip():
+            # Only needs_input carries a question; the host clears the current
+            # question itself when the status moves away.
+            raise ValueError("Only needs_input carries a question")
         if not changes:
             return current
         await self._deliver(Report.create("patch", taskId=id, changes=validate_changes(changes)))

@@ -1,7 +1,8 @@
 """Optional real reporter interoperability, using only a temporary desktop DB.
 
 Set TASKS_DESKTOP_REPORTER to JSON argv [node, built task-cli.cjs] whose CLI
-implements the slim create/patch/set-archived/associate/assign wire.
+implements the slim create/patch/set-archived/associate/assign wire with
+merged-state question enforcement.
 Pure Python CI does not depend on a neighboring desktop checkout or Node install.
 """
 
@@ -20,23 +21,24 @@ from tasks._client import Client
 
 @unittest.skipUnless(os.environ.get("TASKS_DESKTOP_REPORTER"), "No built desktop reporter configured")
 class DesktopInteropTests(unittest.IsolatedAsyncioTestCase):
-    async def test_canonical_sqlite_roundtrip_patch_and_needs_input(self):
+    async def test_canonical_sqlite_roundtrip_patch_and_question(self):
         with tempfile.TemporaryDirectory(prefix="tasks canonical ") as directory:
             argv = json.loads(os.environ["TASKS_DESKTOP_REPORTER"])
             command = [*argv, "--db", str(Path(directory) / "state.sqlite")]
             client = Client(command=command, env={"ELECTRON_RUN_AS_NODE": "1"})
             parent = await client.create("o1", "Prepare O1 case")
-            task = await parent.subtask("intake", "Complete Lighthouse intake",
-                                        description="Intake only; judging is a sibling outcome",
-                                        links=[Link("source", "https://example.com/intake", "Fixture intake")])
-            blocked = await task.update(status="needs_input", summary="Are these intake answers ready for review?")
-            self.assertEqual((blocked.status, blocked.summary),
+            task = await parent.subtask("intake", "Complete Lighthouse intake")
+            task = await task.update(links=[
+                Link("source", "https://example.com/intake", "Fixture intake")])
+            blocked = await task.update(status="needs_input", question="Are these intake answers ready for review?")
+            self.assertEqual((blocked.status, blocked.question),
                              ("needs_input", "Are these intake answers ready for review?"))
             resumed = await blocked.update(status="active")
-            self.assertEqual((resumed.status, resumed.parent_id), ("active", "o1"))
+            self.assertEqual((resumed.status, resumed.question, resumed.parent_id),
+                             ("active", "", "o1"))
             with self.assertRaises(ValueError):
                 await client.create("intake", "Accidental duplicate")
-            completed = await task.update(status="done", summary="Verified fixture answers")
+            completed = await task.update(status="done")
             restarted = Client(command=command, env={"ELECTRON_RUN_AS_NODE": "1"})
             persisted = await restarted.get("intake")
             self.assertEqual((persisted.status, persisted.parent_id, persisted.links),
@@ -55,12 +57,12 @@ class DesktopInteropTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await client.list(status="active"), ())
             self.assertEqual(await client.list(status="active", archived=True), (archived,))
             self.assertEqual(await client.list(status="active", archived=None), (archived,))
-            changed = await task.update(summary="Layout verified")
+            changed = await task.update(status="ready")
             self.assertTrue(changed.archived)
-            self.assertEqual(changed.status, "active")
+            self.assertEqual(changed.status, "ready")
             restored = await changed.restore()
-            self.assertEqual((restored.archived, restored.status), (False, "active"))
-            self.assertEqual(await client.list(status="active"), (restored,))
+            self.assertEqual((restored.archived, restored.status), (False, "ready"))
+            self.assertEqual(await client.list(status="ready"), (restored,))
 
     async def test_canonical_link_queued_then_actual_roster_session(self):
         with tempfile.TemporaryDirectory(prefix="tasks assignment ") as directory:

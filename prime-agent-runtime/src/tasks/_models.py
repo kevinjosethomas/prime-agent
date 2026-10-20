@@ -30,32 +30,32 @@ class Link:
 class Task:
     """Snapshot plus handle. Mutations return a fresh snapshot of current state.
 
-    A subtask is a task whose parent_id points at another task.
+    A subtask is a task whose parent_id points at another task. The question
+    holds the real blocking question while status is needs_input, and is empty
+    in every other status.
     """
 
     id: str
     title: str
     status: Status
-    summary: str
-    owner: str
+    question: str
     updated_at: int | float
     _client: Client = field(repr=False, compare=False)
-    description: str = ""
     parent_id: str | None = None
     links: tuple[Link, ...] = ()
     archived: bool = False
 
     async def subtask(self, id: str, title: str, *, status: Status = "todo",
-                      summary: str = "", description: str = "") -> Task:
+                      question: str = "") -> Task:
         """Create a subtask under this task (a task with parent_id=self.id)."""
-        return await self._client.create(id, title, status=status, summary=summary,
-                                         description=description, parent_id=self.id)
+        return await self._client.create(id, title, status=status, question=question,
+                                        parent_id=self.id)
 
-    async def update(self, *, status: Any = UNSET, summary: Any = UNSET,
-                     description: Any = UNSET, links: Any = UNSET) -> Task:
+    async def update(self, *, status: Any = UNSET, question: Any = UNSET,
+                     links: Any = UNSET) -> Task:
         """Patch the named fields; the host preserves every unrelated field."""
-        return await self._client.update(self.id, status=status, summary=summary,
-                                         description=description, links=links)
+        return await self._client.update(self.id, status=status, question=question,
+                                         links=links)
 
     async def archive(self) -> Task:
         """Hide this task without changing its status or timestamps."""
