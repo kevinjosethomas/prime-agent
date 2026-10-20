@@ -148,20 +148,29 @@ pub struct DaemonClientSession {
 
 struct SessionState {
     status: RwLock<ConnectionStatus>,
+    /// The registry AND the connection epoch share this mutex: adoption
+    /// validation and the epoch bump are one critical section (B5).
     registry: Mutex<crate::registry::AttachmentRegistry>,
     client: tokio::sync::RwLock<Option<DaemonClient>>,
-    /// Bumped on every connection swap and at stop: driver-owned
-    /// operations abandon when it moves.
-    epoch: AtomicU64,
     /// Refuses new requests from the moment stop begins.
     stopping: AtomicBool,
     cancel: watch::Sender<bool>,
     events: mpsc::UnboundedSender<ConnectionEvent>,
-    driver: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// The driver's handle (never taken by stop) and its completion memo:
+    /// the first stop to observe the handle's end fills the memo exactly
+    /// once (the honest Result — a panicked driver is an Err, never a
+    /// faked clean completion); concurrent stops read the memo, never a
+    /// re-poll of the finished handle.
+    driver: tokio::sync::Mutex<DriverState>,
     /// The driver's completion mark: every stop settles only after it
-    /// flips (a concurrent stop that does not own the driver handle waits
-    /// on it — no early return before the teardown finished).
+    /// flips.
     stopped: watch::Sender<bool>,
+}
+
+/// The monitored driver task and its memoized completion.
+struct DriverState {
+    handle: Option<tokio::task::JoinHandle<()>>,
+    memo: Option<std::result::Result<(), tokio::task::JoinError>>,
 }
 
 /// The request-path refusal for a stopping or disconnected session: a
@@ -204,15 +213,17 @@ impl DaemonClientSession {
             status: RwLock::new(status),
             registry: Mutex::new(crate::registry::AttachmentRegistry::default()),
             client: tokio::sync::RwLock::new(None),
-            epoch: AtomicU64::new(0),
             stopping: AtomicBool::new(false),
             cancel: cancel_tx,
             events: event_tx,
-            driver: tokio::sync::Mutex::new(None),
+            driver: tokio::sync::Mutex::new(DriverState {
+                handle: None,
+                memo: None,
+            }),
             stopped: stopped_tx,
         });
         let driver = tokio::spawn(driver_run(Arc::downgrade(&state), config, cancel_rx));
-        *state.driver.lock().await = Some(driver);
+        state.driver.lock().await.handle = Some(driver);
         Ok((DaemonClientSession { state }, event_rx))
     }
 
@@ -264,15 +275,31 @@ impl DaemonClientSession {
             let guard = self.state.client.read().await;
             guard.clone().ok_or_else(not_connected)?
         };
-        // The connection epoch at send time: a response that arrives across
-        // a swap (its connection died mid-flight) never adopts — a stale
-        // attach response cannot mutate the registry.
-        let epoch = self.state.epoch.load(Ordering::SeqCst);
+        // The bookkeeping (the attempt token under the registry lock) carries
+        // the connection epoch of THIS send: a response that arrives across
+        // a swap never adopts — the validation and the adoption run under
+        // the registry's one critical section in `after` below.
         let bookkeeping = self.before(&command);
-        let response = client.request(command).await?;
-        if self.state.epoch.load(Ordering::SeqCst) == epoch {
-            self.after(bookkeeping.as_ref(), &response);
-        }
+        let guard = AttemptGuard {
+            state: &self.state,
+            bookkeeping: bookkeeping.clone(),
+            armed: true,
+        };
+        let response = match client.request(command).await {
+            Ok(response) => response,
+            Err(error) => {
+                // A failed fresh attach abandons its intent — the guard's
+                // Drop below would do the same; disarm first so the error
+                // path and the guard never double-abandon.
+                guard.disarm();
+                if let Some(Bookkeeping::Attach { id, token, .. }) = &bookkeeping {
+                    self.state.registry.lock().unwrap().abandon(id, *token);
+                }
+                return Err(error);
+            }
+        };
+        guard.disarm();
+        self.after(bookkeeping.as_ref(), &response);
         Ok(response)
     }
 
@@ -294,29 +321,81 @@ impl DaemonClientSession {
     /// pending request — no live pending is awaited), cancel the driver
     /// (which true-cancels its restore tasks and joins them), then the
     /// driver's final core join; stop awaits the driver's end. Idempotent.
-    pub async fn stop(&self) {
+    pub async fn stop(&self) -> std::result::Result<(), tokio::task::JoinError> {
         // The synchronous request signal, all before the first await: refuse
-        // new requests, invalidate every in-flight epoch, cancel the driver.
+        // new requests, invalidate every in-flight epoch (under the registry
+        // lock), cancel the driver.
         self.state.stopping.store(true, Ordering::SeqCst);
-        self.state.epoch.fetch_add(1, Ordering::SeqCst);
+        self.state.registry.lock().unwrap().bump_epoch();
         self.state.cancel.send_replace(true);
         // The death signal on the live client: every pending request
-        // resolves now — no live pending is ever awaited.
-        if let Some(client) = self.state.client.write().await.take() {
+        // resolves now — no live pending is ever awaited. The taken clone is
+        // RETAINED until its join completes (the panic path must not drop
+        // the join authority with the slot).
+        let retained = self.state.client.write().await.take();
+        if let Some(client) = retained.as_ref() {
             client.shutdown();
         }
-        // The completion authority is the driver's mark — flipped ONLY after
-        // its retained client clone is joined and the restore tasks settled.
-        // No JoinHandle is taken or awaited here: nothing can detach, and a
-        // panicked driver never fakes completion (the wait is honest).
+        // The completion authority: the driver's mark, raced against the
+        // MONITORED handle (borrowed in place — a cancelled stop retains
+        // everything, nothing detaches). The first observation of the
+        // handle's end memoizes it exactly once and clears the handle in
+        // the same critical section; concurrent stops read the memo, never
+        // a re-poll of the finished handle.
         let mut stopped = self.state.stopped.subscribe();
-        while !*stopped.borrow_and_update() {
-            if stopped.changed().await.is_err() {
+        loop {
+            if *stopped.borrow_and_update() {
                 break;
             }
+            let mut driver = self.state.driver.lock().await;
+            let Some(handle) = driver.handle.as_mut() else {
+                break; // A prior stop observed and memoized the end.
+            };
+            tokio::select! {
+                changed = stopped.changed() => {
+                    if changed.is_err() {
+                        break;
+                    }
+                }
+                result = &mut *handle => {
+                    // The driver task ended: memoize once, clear the handle
+                    // (no re-poll), then resolve honestly.
+                    driver.handle = None;
+                    driver.memo.get_or_insert(result);
+                    drop(driver);
+                    if *stopped.borrow_and_update() {
+                        // The settle completed and the mark flipped before
+                        // the task ended: the normal completion.
+                        break;
+                    }
+                    // The task ended WITHOUT the mark: a panicked or failed
+                    // settle — finish the teardown this stop owns and
+                    // return the honest Err; the mark is never faked.
+                    if let Some(client) = retained.as_ref() {
+                        client.join_tasks().await;
+                    }
+                    let mut status = self.state.status.write().unwrap();
+                    status.state = ConnectionState::Disconnected;
+                    status.error = Some(
+                        "the session driver failed before completing its settle"
+                            .to_string(),
+                    );
+                    return self
+                        .state
+                        .driver
+                        .lock()
+                        .await
+                        .memo
+                        .take()
+                        .unwrap_or_else(|| Err(tokio::task::JoinError::cancelled()));
+                }
+            }
         }
+        if let Some(client) = retained.as_ref() {
+            client.join_tasks().await;
+        }
+        Ok(())
     }
-
     /// Pre-request registry bookkeeping: attach/reattach bump the
     /// revision; detach/kill only need their id. Synchronous, under the
     /// mutex, never across an await.
@@ -325,7 +404,10 @@ impl DaemonClientSession {
     ///
     /// Panics when the registry lock is poisoned.
     fn before(&self, command: &DaemonCommand) -> Option<Bookkeeping> {
+        // The registry lock: the token mint, the epoch capture, and any
+        // invalidation are ONE critical section (B5's lock rule).
         let mut registry = self.state.registry.lock().unwrap();
+        let epoch = registry.current_epoch();
         match command {
             DaemonCommand::Attach {
                 active_session_id,
@@ -340,6 +422,7 @@ impl DaemonClientSession {
                 id: active_session_id.clone(),
                 token: registry.attempt_token(active_session_id),
                 capabilities: capabilities.clone().unwrap_or_default(),
+                epoch,
             }),
             DaemonCommand::Detach {
                 active_session_id, ..
@@ -348,12 +431,13 @@ impl DaemonClientSession {
                 // Invalidate any in-flight attach attempt BEFORE the await: a
                 // racing attach response can never adopt past the detach.
                 registry.invalidate(&id);
-                Some(Bookkeeping::Detach { id })
+                Some(Bookkeeping::Detach { id, epoch })
             }
             DaemonCommand::Kill {
                 active_session_id, ..
             } => Some(Bookkeeping::Detach {
                 id: active_session_id.clone(),
+                epoch,
             }),
             _ => None,
         }
@@ -367,23 +451,68 @@ impl DaemonClientSession {
     ///
     /// Panics when the registry lock is poisoned.
     fn after(&self, bookkeeping: Option<&Bookkeeping>, response: &DaemonResponse) {
+        // The registry lock: the epoch validation and the adoption are ONE
+        // critical section (B5's lock rule — the install/loss bumps run
+        // under the same lock, so no bump slips between check and mutation).
         match bookkeeping {
             Some(Bookkeeping::Attach {
                 id,
                 token,
                 capabilities,
+                epoch,
             }) => {
                 if !response.success {
+                    self.state.registry.lock().unwrap().abandon(id, *token);
                     return;
                 }
                 let data = response.data.clone().unwrap_or(Value::Null);
                 let mut registry = self.state.registry.lock().unwrap();
+                if registry.current_epoch() != *epoch {
+                    return; // A swap intervened: the stale response never adopts.
+                }
                 registry.record_attach(id, capabilities, &data, *token);
             }
-            Some(Bookkeeping::Detach { id }) => {
-                self.state.registry.lock().unwrap().forget(id);
+            Some(Bookkeeping::Detach { id, epoch }) => {
+                // A refused detach keeps the attachment (the desktop machine
+                // deletes only on a resolved request); a successful one
+                // drops it — and the pending attach was invalidated at SEND
+                // time, so nothing can resurrect afterwards.
+                if response.success {
+                    let mut registry = self.state.registry.lock().unwrap();
+                    if registry.current_epoch() == *epoch {
+                        registry.forget(id);
+                    }
+                }
             }
             None => {}
+        }
+    }
+}
+
+/// A CANCELLED request's cleanup: the caller can drop the request future at
+/// any await — the guard's Drop abandons the attempt's FRESH intent (only
+/// when it still holds THIS token — a newer attempt's intent is never
+/// removed). Nothing accumulates for cancelled or failed fresh attaches.
+struct AttemptGuard<'a> {
+    state: &'a Arc<SessionState>,
+    bookkeeping: Option<Bookkeeping>,
+    armed: bool,
+}
+
+impl AttemptGuard<'_> {
+    /// Disarm on the completing paths: the response bookkeeping takes over.
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for AttemptGuard<'_> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        if let Some(Bookkeeping::Attach { id, token, .. }) = &self.bookkeeping {
+            self.state.registry.lock().unwrap().abandon(id, *token);
         }
     }
 }
@@ -391,15 +520,18 @@ impl DaemonClientSession {
 /// What one request's registry bookkeeping is.
 #[derive(Debug, Clone)]
 enum Bookkeeping {
-    /// The attach's id, its globally unique attempt token, and the
-    /// command's own capabilities (recorded at adoption).
+    /// The attach's id, its globally unique attempt token, the command's
+    /// own capabilities (recorded at adoption), and the connection epoch
+    /// captured under the registry lock at send time.
     Attach {
         id: String,
         token: u64,
         capabilities: Vec<String>,
+        epoch: u64,
     },
     Detach {
         id: String,
+        epoch: u64,
     },
 }
 
@@ -539,8 +671,9 @@ async fn driver_run(
                         break;
                     }
                     // A new connection is a new epoch: every in-flight
-                    // operation from the prior connection abandons.
-                    let epoch = state.epoch.fetch_add(1, Ordering::SeqCst) + 1;
+                    // operation from the prior connection abandons (the
+                    // bump runs under the registry lock — B5).
+                    let epoch = state.registry.lock().unwrap().bump_epoch();
                     let dead = fresh.reader_dead();
                     let hello = fresh.hello().clone();
                     *state.client.write().await = Some(fresh.clone());
@@ -619,7 +752,7 @@ async fn driver_run(
     // below flips.
     if let Some(state) = session.upgrade() {
         state.stopping.store(true, Ordering::SeqCst);
-        state.epoch.fetch_add(1, Ordering::SeqCst);
+        state.registry.lock().unwrap().bump_epoch();
         let mut handles = std::mem::take(&mut restore_handles);
         for handle in &handles {
             handle.abort();
@@ -637,11 +770,15 @@ async fn driver_run(
             client.join_tasks().await;
         }
         // The terminal snapshot: no request clones a client afterwards, and
-        // the sync status() never says Connected past completion.
+        // the sync status() never says Connected past completion. The
+        // EXPIRY state is retained (its window already expired — the
+        // settle never overwrites it back to Disconnected).
         {
             let mut status = state.status.write().unwrap();
-            status.state = ConnectionState::Disconnected;
-            status.error.get_or_insert_with(|| "the session stopped".to_string());
+            if status.state != ConnectionState::Expired {
+                status.state = ConnectionState::Disconnected;
+                status.error.get_or_insert_with(|| "the session stopped".to_string());
+            }
             let _ = state.events.send(ConnectionEvent::Status(status.clone()));
         }
         state.stopped.send_replace(true);
@@ -705,10 +842,14 @@ async fn service(
             () = state.events.closed() => return ServiceEnd::Stop,
             _ = dead.changed() => {
                 if *dead.borrow() {
-                    // The epoch moves FIRST: every in-flight operation and
-                    // response of the lost connection is invalidated before
-                    // anything else runs, so no stale adoption window exists.
-                    state.epoch.fetch_add(1, Ordering::SeqCst);
+                    // The epoch and EVERY in-flight attempt token are
+                    // invalidated under the registry lock FIRST: no response
+                    // of the lost connection can adopt, ever.
+                    {
+                        let mut registry = state.registry.lock().unwrap();
+                        registry.bump_epoch();
+                        registry.invalidate_all();
+                    }
                     // The loss's restore tasks are cancelled and joined now:
                     // they held old-connection clones and cannot emit stale
                     // outcomes afterwards.
@@ -848,7 +989,8 @@ fn spawn_restores(
                 Ok::<Value, anyhow::Error>(response.data.unwrap_or(Value::Null))
             }
             .await;
-            if state.epoch.load(Ordering::SeqCst) != epoch {
+            let adopted_epoch = state.registry.lock().unwrap().current_epoch();
+            if adopted_epoch != epoch {
                 let _ = restore_tx.send(RestoreOutcome::Abandoned);
                 return;
             }

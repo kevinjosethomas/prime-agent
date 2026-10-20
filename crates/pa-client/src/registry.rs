@@ -55,6 +55,10 @@ pub(crate) struct Attachment {
 /// boundary semantics are claimed or implemented.
 #[derive(Debug, Default)]
 pub(crate) struct AttachmentRegistry {
+    /// The connection epoch, guarded by the SAME mutex as every adoption:
+    /// the install/loss/stop bumps and the request-path validation+adoption
+    /// run under one critical section — no atomic load outside, ever.
+    epoch: u64,
     /// Insertion order (restore visits entries in it).
     order: Vec<String>,
     attachments: HashMap<String, Attachment>,
@@ -71,6 +75,31 @@ pub(crate) struct AttachmentRegistry {
 }
 
 impl AttachmentRegistry {
+    /// The current connection epoch (read under the registry lock).
+    pub(crate) fn current_epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    /// The epoch bump (install, loss, stop) — taken under the registry lock,
+    /// so no adoption can slip between the bump and any validation.
+    pub(crate) fn bump_epoch(&mut self) -> u64 {
+        self.epoch += 1;
+        self.epoch
+    }
+
+    /// Invalidate EVERY in-flight attempt at once (the loss path, under the
+    /// registry lock): a fresh global token dangles every pinned attempt
+    /// token, and the intent slots clear — nothing sent on the lost
+    /// connection can adopt afterwards.
+    pub(crate) fn invalidate_all(&mut self) {
+        self.attempts += 1;
+        let fresh = self.attempts;
+        for entry in self.attachments.values_mut() {
+            entry.attempt = fresh;
+        }
+        self.intents.clear();
+    }
+
     /// Register (or re-register) an attachment; idempotent per id — an
     /// existing cursor and in-flight attempt survive a re-register.
     pub(crate) fn register(&mut self, id: &str, capabilities: Vec<String>) {

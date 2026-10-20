@@ -536,45 +536,6 @@ impl Drop for JoinGuard<'_> {
     }
 }
 
-/// The pre-handshake spawn ownership: the reader and writer tasks exist
-/// from their spawn until the handshake resolves, but the connect future can
-/// be CANCELLED at the hello await (a select arm, a dropped future) — an
-/// unguarded drop would detach both tasks with the socket halves and every
-/// channel sender they hold (the tap, the event channel) still alive. The
-/// guard aborts whatever it still owns at Drop; the handshake's success
-/// path RELEASES both into the connection's TaskSet first.
-struct HandshakeTasks {
-    reader: Option<tokio::task::JoinHandle<()>>,
-    writer: Option<tokio::task::JoinHandle<()>>,
-}
-
-impl HandshakeTasks {
-    /// Transfer both tasks into the connection's TaskSet (the guard then
-    /// owns nothing and its Drop aborts nothing).
-    fn release(mut self, tasks: &TaskSet) -> bool {
-        let reader = self.reader.take();
-        let writer = self.writer.take();
-        match (reader, writer) {
-            (Some(reader), Some(writer)) => tasks.register_connection(reader, writer),
-            _ => false,
-        }
-    }
-}
-
-impl Drop for HandshakeTasks {
-    fn drop(&mut self) {
-        // Cancellation of the connect future (or a handshake failure): the
-        // tasks are ABORTED where they stand, their socket halves and
-        // senders dropping with them.
-        if let Some(reader) = self.reader.take() {
-            reader.abort();
-        }
-        if let Some(writer) = self.writer.take() {
-            writer.abort();
-        }
-    }
-}
-
 /// A live connection to the daemon supervisor socket, optionally upgraded
 /// with a direct worker link (session-plane commands and events go straight
 /// to the session process; the supervisor stays the control plane).
@@ -659,15 +620,107 @@ impl DaemonClient {
         // never observe a supervisor socket loss.
         let (reader_dead_tx, reader_dead_rx) = tokio::sync::watch::channel(false);
         let client_dead_tx = reader_dead_tx.clone();
-        let tasks = Arc::new(TaskSet::default());
-        let (hello_tx, hello_rx) = oneshot::channel::<Value>();
         let shared = Arc::new(Shared {
             pending: Mutex::new(HashMap::new()),
             max_pending: options.max_pending,
         });
         let reader_shared = Arc::clone(&shared);
+        let tasks = Arc::new(TaskSet::default());
+        let raw_tap = options.raw_tap.clone();
+        let max_frame_bytes = options.max_frame_bytes;
 
-        // Writer task: serializes one line per write.
+        // The INLINE handshake: NOTHING spawns until a valid hello — a
+        // cancelled connect future (a select arm, a dropped future) closes
+        // both socket halves with the future itself, so no transport task can
+        // ever be orphaned. The SAME BufReader and partial spill ownership
+        // continue into the reader task below (any coalesced post-hello
+        // buffered bytes ride along — no frame lost, no read-ahead dropped).
+        let (reader, partial, hello) = {
+            let mut reader = BufReader::with_capacity(64 * 1024, reader_half);
+            let mut partial: Vec<u8> = Vec::new();
+            let deadline = tokio::time::sleep(Duration::from_millis(HELLO_TIMEOUT_MS));
+            tokio::pin!(deadline);
+            loop {
+                if let Some(newline) = partial.iter().position(|byte| *byte == b'\n') {
+                    let line: Vec<u8> = partial.drain(..=newline).collect();
+                    // The legacy teardown class: invalid UTF-8 before the
+                    // handshake failed the connect, too.
+                    let Ok(text) = std::str::from_utf8(&line) else {
+                        return Err(anyhow!(
+                            "the daemon sent an invalid frame before the handshake. Socket: {}.",
+                            socket_path.display()
+                        ));
+                    };
+                    let Ok(value) = serde_json::from_str::<Value>(text.trim()) else {
+                        continue;
+                    };
+                    if value.get("type").and_then(Value::as_str) == Some("daemon_hello") {
+                        break Some(value);
+                    }
+                    // The legacy pre-hello behavior, verbatim: a known frame
+                    // dispatches to the typed channel only — the tap stays
+                    // post-handshake-only, and unknown frames stay silent.
+                    if let Some(event) = client_event_from_value(&value) {
+                        let _ = event_tx.send(event);
+                    }
+                } else if max_frame_bytes.is_some_and(|cap| partial.len() > cap) {
+                    return Err(anyhow!(
+                        "a frame exceeded the limit before the Prime Agent daemon handshake. Socket: {}.",
+                        socket_path.display()
+                    ));
+                }
+                let resolved = tokio::select! {
+                    // The socket closed before the hello: the teardown error.
+                    resolved = reader.fill_buf() => resolved,
+                    () = &mut deadline => {
+                        return Err(anyhow!(
+                            "Timed out after {HELLO_TIMEOUT_MS}ms waiting for the Prime Agent daemon handshake. Socket: {}.",
+                            socket_path.display()
+                        ));
+                    }
+                };
+                let buffer = match resolved {
+                    Ok([]) | Err(_) => {
+                        return Err(anyhow!(
+                            "the daemon connection closed before the handshake. Socket: {}.",
+                            socket_path.display()
+                        ));
+                    }
+                    Ok(buffer) => buffer,
+                };
+                let read = buffer.len();
+                partial.extend_from_slice(buffer);
+                reader.consume(read);
+            }
+        };
+        let Some(hello) = hello else {
+            return Err(anyhow!(
+                "the daemon connection closed before the handshake. Socket: {}.",
+                socket_path.display()
+            ));
+        };
+        let protocol = hello
+            .get("protocol")
+            .cloned()
+            .and_then(|p| serde_json::from_value::<DaemonProtocolInfo>(p).ok())
+            .unwrap_or(DaemonProtocolInfo {
+                name: DAEMON_PROTOCOL_NAME.to_string(),
+                version: DAEMON_PROTOCOL_VERSION,
+            });
+        if protocol.name != DAEMON_PROTOCOL_NAME {
+            return Err(anyhow!(
+                "the daemon on {} speaks an unknown protocol \"{}\"",
+                socket_path.display(),
+                protocol.name
+            ));
+        }
+        // Envelope protocol version: the shared minimum.
+        let version = protocol.version.min(DAEMON_PROTOCOL_VERSION);
+
+        // The SYNC TAIL: no await between these spawns and the registration —
+        // a cancellation cannot land here (the structure PR7's review
+        // verified for connect_direct). The reader owns the SAME BufReader
+        // and partial spill the handshake used.
         let writer_task = tokio::spawn(async move {
             let mut writer = writer_half;
             while let Some(line) = line_rx.recv().await {
@@ -679,21 +732,14 @@ impl DaemonClient {
             }
             let _ = writer.shutdown().await;
         });
-
-        // Reader task: dispatch every inbound line; the handle is kept so
-        // handshake-failure paths can abort it. The line assembly is
-        // byte-accurate so the opt-in frame cap can be enforced on the
-        // accumulated bytes; the default `None` keeps the unbounded reader
-        // this crate has always shipped.
-        let raw_tap = options.raw_tap.clone();
-        let max_frame_bytes = options.max_frame_bytes;
         let reader_task = tokio::spawn(async move {
-            let mut reader = BufReader::with_capacity(64 * 1024, reader_half);
-            // The spill of a line longer than the buffer: filled only when
-            // no newline sits in the buffered bytes, so every byte is scanned
-            // once and copied at most once beyond its buffer residency.
-            let mut partial: Vec<u8> = Vec::new();
-            let mut hello_tx = Some(hello_tx);
+            let mut reader = reader;
+            let mut partial = partial;
+            let mut event_tx = event_tx;
+            let raw_tap = raw_tap;
+            let max_frame_bytes = max_frame_bytes;
+            let reader_shared = reader_shared;
+            let mut reader_dead_tx = reader_dead_tx;
             // One decoded line: `false` only on invalid UTF-8, the teardown
             // `read_line` always produced. A malformed JSON line is skipped,
             // exactly like before.
@@ -709,11 +755,6 @@ impl DaemonClient {
                     .and_then(Value::as_str)
                     .unwrap_or_default();
                 match frame_type {
-                    "daemon_hello" => {
-                        if let Some(tx) = hello_tx.take() {
-                            let _ = tx.send(value);
-                        }
-                    }
                     "response" => {
                         if let Ok(response) = serde_json::from_value::<DaemonResponse>(value) {
                             let id = response.id.clone().unwrap_or_default();
@@ -723,14 +764,9 @@ impl DaemonClient {
                     _ => {
                         // The lossless tap first: every decoded application
                         // frame AFTER the handshake, verbatim and in wire
-                        // order, before any typed conversion. A frame before
-                        // the handshake keeps its legacy typed-only behavior,
-                        // so the tap's ordering guarantee holds without
-                        // touching the default event stream.
-                        if hello_tx.is_none() {
-                            if let Some(tap) = raw_tap.as_ref() {
-                                let _ = tap.send(value.clone());
-                            }
+                        // order, before any typed conversion.
+                        if let Some(tap) = raw_tap.as_ref() {
+                            let _ = tap.send(value.clone());
                         }
                         if let Some(event) = client_event_from_value(&value) {
                             let _ = event_tx.send(event);
@@ -768,14 +804,14 @@ impl DaemonClient {
                         partial.extend_from_slice(&buffer[..newline]);
                         std::mem::take(&mut partial)
                     };
-                    reader.consume(newline + 1);
+                    let consumed = newline + 1;
+                    reader.consume(consumed);
                     if !dispatch(&line) {
                         break;
                     }
                 } else {
-                    // No newline in the buffered bytes: the cap also
-                    // bounds the partial frame accumulating across
-                    // fills.
+                    // No newline in the buffered bytes: the cap also bounds
+                    // the partial frame accumulating across fills.
                     if max_frame_bytes.is_some_and(|cap| partial.len() + buffer.len() > cap) {
                         break;
                     }
@@ -784,51 +820,11 @@ impl DaemonClient {
                     reader.consume(read);
                 }
             }
-            // The supervisor socket closed: pending requests fail now and the death watch wakes the
-            // reconnect driver.
+            // The supervisor socket closed: pending requests fail now and the
+            // death watch wakes the reconnect driver.
             let _ = reader_dead_tx.send(true);
             reader_shared.fail_pending("daemon_", "the daemon connection closed");
         });
-
-        // Hello handshake: the supervisor sends daemon_hello immediately on
-        // connect (TS `waitForHello`).
-        let hello = tokio::time::timeout(Duration::from_millis(HELLO_TIMEOUT_MS), hello_rx)
-            .await
-            .map_err(|_| {
-                reader_task.abort();
-                writer_task.abort();
-                anyhow!(
-                    "Timed out after {HELLO_TIMEOUT_MS}ms waiting for the Prime Agent daemon handshake. Socket: {}.",
-                    socket_path.display()
-                )
-            })?
-            .map_err(|_| {
-                reader_task.abort();
-                writer_task.abort();
-                anyhow!("the daemon connection closed before the handshake")
-            })?;
-        let protocol = hello
-            .get("protocol")
-            .cloned()
-            .and_then(|p| serde_json::from_value::<DaemonProtocolInfo>(p).ok())
-            .unwrap_or(DaemonProtocolInfo {
-                name: DAEMON_PROTOCOL_NAME.to_string(),
-                version: DAEMON_PROTOCOL_VERSION,
-            });
-        if protocol.name != DAEMON_PROTOCOL_NAME {
-            reader_task.abort();
-            writer_task.abort();
-            return Err(anyhow!(
-                "the daemon on {} speaks an unknown protocol \"{}\"",
-                socket_path.display(),
-                protocol.name
-            ));
-        }
-        // Envelope protocol version: the shared minimum.
-        let version = protocol.version.min(DAEMON_PROTOCOL_VERSION);
-
-        // The handshake succeeded: the reader and writer tasks now belong to
-        // the connection's shared task set (shutdown aborts, join awaits).
         tasks.register_connection(reader_task, writer_task);
         Ok((
             DaemonClient {
