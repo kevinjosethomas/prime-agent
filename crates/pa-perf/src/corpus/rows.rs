@@ -74,8 +74,6 @@ const WORDS: [&str; 49] = [
     "context",
     "compaction",
     "summary",
-    "refine",
-    "harness",
     "memory",
     "skill",
     "label",
