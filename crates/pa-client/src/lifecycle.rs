@@ -1123,6 +1123,7 @@ mod tests {
         session.stop().await;
     }
 
+    #[allow(clippy::too_many_lines)]
     #[tokio::test]
     async fn frames_flow_while_a_restore_is_held_and_requests_never_wait() {
         // Two scripted connections. The first adopts an attach cursor (g/4)
@@ -1326,12 +1327,9 @@ mod tests {
         release_second.notify_one();
         let reattached = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
-                match next_event(&mut events).await {
-                    ConnectionEvent::Reattached { data, .. } => {
-                        assert_eq!(data["lastEventCursor"]["sequence"], 6);
-                        return;
-                    }
-                    _ => {}
+                if let ConnectionEvent::Reattached { data, .. } = next_event(&mut events).await {
+                    assert_eq!(data["lastEventCursor"]["sequence"], 6);
+                    return;
                 }
             }
         })
@@ -1466,8 +1464,7 @@ mod tests {
                             return;
                         }
                     }
-                    ConnectionEvent::ReconnectExpired { .. } => {}
-                    _ => {}
+                    ConnectionEvent::ReconnectExpired { .. } | _ => {}
                 }
             }
         })
