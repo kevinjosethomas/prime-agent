@@ -85,7 +85,8 @@ class Client:
         effective_question = changes.get("question", current.question)
         if effective_status == "needs_input" and not effective_question.strip():
             raise ValueError("Needs input requires the question")
-        elif "question" in changes and changes["question"].strip():
+        elif (effective_status != "needs_input"
+              and "question" in changes and changes["question"].strip()):
             # Only needs_input carries a question; the host clears the current
             # question itself when the status moves away.
             raise ValueError("Only needs_input carries a question")
