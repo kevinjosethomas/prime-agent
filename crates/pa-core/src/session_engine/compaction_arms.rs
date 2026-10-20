@@ -273,7 +273,7 @@ impl AgentSession {
                 summary_delta: options.summary_delta.clone(),
                 semantic_edges: options.semantic_edges.clone(),
             };
-            let mut prepared = crate::session_engine::compact_session::summarize_attempt(
+            let prepared = crate::session_engine::compact_session::summarize_attempt(
                 &attempt,
                 &attempt_options,
             )

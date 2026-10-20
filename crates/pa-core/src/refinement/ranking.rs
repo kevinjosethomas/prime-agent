@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use super::{HarnessEntry, RefinementKind};
+use super::HarnessEntry;
 
 /// Term -> weight, built from task signal (goal, recent messages).
 pub type HarnessQueryTerms = HashMap<String, f64>;
@@ -82,7 +82,7 @@ pub fn score_harness_entry_for_query(
 
 #[cfg(test)]
 mod tests {
-    use super::super::{empty_harness_state, HarnessScope};
+    use super::super::{HarnessScope, RefinementKind};
     use super::*;
 
 
