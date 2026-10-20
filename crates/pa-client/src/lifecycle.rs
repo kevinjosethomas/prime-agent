@@ -1103,12 +1103,16 @@ mod tests {
         })
         .await;
         assert!(observed.is_ok() && reattached, "the restore reattached");
-        let commands = supervisor.commands.lock().unwrap();
-        let second: Vec<&Value> = commands
-            .iter()
-            .filter(|(connection, _)| *connection == 2)
-            .map(|(_, command)| command)
-            .collect();
+        // The recorded commands, inspected under a scoped lock (never held
+        // across the stop's await below).
+        let second: Vec<Value> = {
+            let commands = supervisor.commands.lock().unwrap();
+            commands
+                .iter()
+                .filter(|(connection, _)| *connection == 2)
+                .map(|(_, command)| command.clone())
+                .collect()
+        };
         assert_eq!(second.len(), 1, "only the restore attach was sent");
         assert_eq!(second[0]["type"], "attach");
         assert_eq!(
