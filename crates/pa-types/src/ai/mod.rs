@@ -360,6 +360,16 @@ fn tagged_block_schema<T: schemars::JsonSchema>(
     branch
 }
 
+impl Serialize for UserContentBlock {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Text(text) => serialize_tagged_block("text", text, serializer),
+            Self::Image(image) => serialize_tagged_block("image", image, serializer),
+            Self::Raw(value) => value.serialize(serializer),
+        }
+    }
+}
+
 /// Serialize a known block as its flat wire object: the content fields plus
 /// the `type` tag (same output as the derived tagged form).
 fn serialize_tagged_block<T: Serialize, S: serde::Serializer>(
