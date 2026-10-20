@@ -655,6 +655,7 @@ impl DaemonClient {
                     let Ok(value) = serde_json::from_str::<Value>(text.trim()) else {
                         continue;
                     };
+                    eprintln!("DBG inline: line type {:?}", value.get("type"));
                     if value.get("type").and_then(Value::as_str) == Some("daemon_hello") {
                         break Some(value);
                     }
@@ -690,6 +691,7 @@ impl DaemonClient {
                     Ok(buffer) => buffer,
                 };
                 let read = buffer.len();
+                eprintln!("DBG inline: got {read} bytes");
                 partial.extend_from_slice(buffer);
                 reader.consume(read);
             }
