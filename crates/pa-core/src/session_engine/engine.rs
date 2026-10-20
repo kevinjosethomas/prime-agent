@@ -253,11 +253,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     let refinement_settings = settings.reopen();
     let service_tier_preference = settings.get_default_service_tier();
     // Captured before `settings` moves into the resource loader: the
-    // compaction budget and the auto-refine gates.
+    // compaction budget.
     let compaction_settings = settings.settings().compaction.clone().unwrap_or_default();
     let compaction_threshold_percent = settings.get_compaction_threshold_percent();
-    let auto_refine_gates =
-        super::refine::AutoRefineGates::from_settings(settings.settings().auto_refine.as_ref());
     // Request timing: the settings half of the flag is read once here
     // (`settings` moves into the loader); the `PI_REQUEST_TIMING` half stays live.
     let request_timing_settings = settings.get_request_timing();
@@ -377,8 +375,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         });
     let local_harness_dir =
         crate::refinement::get_local_harness_state_dir(session_artifact_dir.as_deref());
-    // The only sessions the compact-trigger auto-refine may run for.
-    let auto_refine_allowed = config.rlm_depth.unwrap_or(0) == 0 && local_harness_dir.is_some();
     // Kernel boots (duration, cold/revived, outcome) count into the
     // session counters.
     let on_bootstrap_result = config.telemetry.as_ref().map(|_| {
@@ -713,7 +709,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     .await?;
     session.prompt_sources = Some(prompt_sources);
     *session.pinned_prompt.write().unwrap() = Some(system_prompt.clone());
-    session.set_auto_refine(auto_refine_allowed, auto_refine_gates);
     session.set_agent_dir(config.agent_dir.clone());
     // Keep the context descriptor even while disabled, so re-enabling can load it.
     session.harness_digest = Some(digest_context);

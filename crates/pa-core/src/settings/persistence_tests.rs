@@ -134,14 +134,14 @@ fn resource_save_survives_an_unrelated_later_save() {
 #[test]
 fn harness_refinements_persist_without_clobbering_other_settings() {
     let (storage, mut manager) =
-        fixture(r#"{"theme":"light","autoRefine":{"turnInterval":3},"future":{"keep":true}}"#);
+        fixture(r#"{"theme":"light","retry":{"maxRetries":3},"future":{"keep":true}}"#);
     assert!(manager.get_harness_refinements());
     manager.set_harness_refinements(false).unwrap();
     assert!(!manager.reopen().get_harness_refinements());
     assert_eq!(
         document(storage.as_ref()),
         json!({
-            "theme":"light", "autoRefine":{"turnInterval":3}, "future":{"keep":true}, "harnessRefinements":false
+            "theme":"light", "retry":{"maxRetries":3}, "future":{"keep":true}, "harnessRefinements":false
         })
     );
     manager.set_harness_refinements(true).unwrap();

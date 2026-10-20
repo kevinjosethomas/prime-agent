@@ -3,8 +3,7 @@
 
 use super::planner::{
     apply_refinement_proposal, parse_proposal, refinement_request, rollback_proposal, ApplyOptions,
-    RefinementProposal, AUTO_REFINE_REVIEW_MAX_OUTPUT_TOKENS, AUTO_REFINE_REVIEW_SYSTEM_PROMPT,
-    REFINEMENT_MAX_OUTPUT_TOKENS, REFINEMENT_SYSTEM_PROMPT,
+    RefinementProposal, REFINEMENT_MAX_OUTPUT_TOKENS, REFINEMENT_SYSTEM_PROMPT,
 };
 use super::{
     infer_refinement_result_scope, merge_refinement_history, HarnessScope, HarnessState,
@@ -311,81 +310,6 @@ pub fn apply_refinement_plan(
     )
 }
 
-#[derive(Debug, Default, Clone, PartialEq)]
-pub struct AutoRefineReview {
-    pub should_refine: bool,
-    pub rationale: String,
-    pub instructions: Option<String>,
-}
-
-pub struct AutoRefineReviewContext {
-    pub reason: String,
-    pub turns_since_last_review: u32,
-}
-
-fn parse_auto_refine_review(text: &str) -> anyhow::Result<AutoRefineReview> {
-    let value = super::planner::extract_json_object(text).map_err(anyhow::Error::msg)?;
-    let record = value.as_object().cloned().unwrap_or_default();
-    Ok(AutoRefineReview {
-        should_refine: record.get("shouldRefine") == Some(&serde_json::Value::Bool(true)),
-        rationale: record
-            .get("rationale")
-            .and_then(|value| value.as_str())
-            .unwrap_or("No rationale provided.")
-            .to_string(),
-        instructions: record
-            .get("instructions")
-            .and_then(|value| value.as_str())
-            .map(std::string::ToString::to_string),
-    })
-}
-
-/// The automatic /refine review gate.
-///
-/// # Errors
-///
-/// Error on a failed request build or LLM call, or an unparseable reply.
-pub async fn review_auto_refine(
-    messages: &[AgentMessage],
-    state: &HarnessState,
-    history: &[RefinementResult],
-    model: &pa_types::ai::Model,
-    context: &AutoRefineReviewContext,
-    review_call: RefinerFn,
-) -> anyhow::Result<AutoRefineReview> {
-    let conversation_text = conversation_text(messages, 40_000);
-    let build_prompt = |conversation: &str| -> String {
-        [
-            format!(
-                "<trigger>\n{}; {} assistant turns since last auto-refine review\n</trigger>",
-                context.reason, context.turns_since_last_review
-            ),
-            format!(
-                "<current_harness_state>\n{}\n</current_harness_state>",
-                overview_for_prompt(state)
-            ),
-            format!(
-                "<refinement_history>\n{}\n</refinement_history>",
-                history_for_prompt(history)
-            ),
-            format!("<conversation>\n{conversation}\n</conversation>"),
-            "Return shouldRefine=true when the trajectory contains evidence useful to this session's future turns. Prefer local harness edits for current task progress, temporary blockers, and current-run coordination. Ask for global refinement only for durable cross-session lessons or explicitly project-qualified lessons likely to be reused in future sessions.".to_string(),
-        ]
-        .join("\n\n")
-    };
-    let (request_max_tokens, user_prompt) = refinement_request(
-        model,
-        AUTO_REFINE_REVIEW_SYSTEM_PROMPT,
-        &conversation_text,
-        &build_prompt,
-        AUTO_REFINE_REVIEW_MAX_OUTPUT_TOKENS,
-    )?;
-    let mut request_model = model.clone();
-    request_model.max_tokens = request_max_tokens.min(AUTO_REFINE_REVIEW_MAX_OUTPUT_TOKENS);
-    let reply = review_call(request_model, AUTO_REFINE_REVIEW_SYSTEM_PROMPT, user_prompt).await?;
-    parse_auto_refine_review(&assistant_text(&reply))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,38 +346,10 @@ mod tests {
     }
 
     #[tokio::test]
+    #[tokio::test]
     async fn review_and_plan_carry_their_own_system_prompts() {
         let model = test_model();
-        // The review seam records its system prompt in a shared cell.
-        let review_systems: std::sync::Arc<std::sync::Mutex<Vec<&'static str>>> =
-            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let review_recorder = std::sync::Arc::clone(&review_systems);
-        let review_call: RefinerFn = Box::new(move |_model, system, _prompt| {
-            review_recorder.lock().unwrap().push(system);
-            Box::pin(async move {
-                Ok(text_message(
-                    r#"{"shouldRefine": false, "rationale": "no"}"#,
-                ))
-            })
-        });
-        let review = review_auto_refine(
-            &[],
-            &super::super::empty_harness_state(),
-            &[],
-            &model,
-            &AutoRefineReviewContext {
-                reason: "compact".to_string(),
-                turns_since_last_review: 0,
-            },
-            review_call,
-        )
-        .await
-        .unwrap();
-        assert!(!review.should_refine);
-        assert_eq!(
-            *review_systems.lock().unwrap(),
-            vec![AUTO_REFINE_REVIEW_SYSTEM_PROMPT]
-        );
+        // The plan seam records its system prompt in a shared cell.
         let plan_systems: std::sync::Arc<std::sync::Mutex<Vec<&'static str>>> =
             std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let plan_recorder = std::sync::Arc::clone(&plan_systems);
@@ -469,14 +365,13 @@ mod tests {
             &state,
             &[],
             &model,
-            &RefineOptions::default(),
             plan_call,
         )
         .await
         .unwrap();
         assert_eq!(
             *plan_systems.lock().unwrap(),
-            vec![REFINEMENT_SYSTEM_PROMPT]
+            vec![super::super::planner::REFINEMENT_PLAN_SYSTEM_PROMPT]
         );
     }
 
@@ -581,42 +476,6 @@ mod tests {
         assert!(missing.is_err());
     }
 
-    #[tokio::test]
-    async fn auto_refine_review_parses_verdict() {
-        let state = super::super::empty_harness_state();
-        let review = review_auto_refine(
-            &[],
-            &state,
-            &[],
-            &test_model(),
-            &AutoRefineReviewContext {
-                reason: "checkpoint".to_string(),
-                turns_since_last_review: 4,
-            },
-            seam(r#"{"shouldRefine":true,"rationale":"pattern seen","instructions":"note the tactic"}"#),
-        )
-        .await
-        .unwrap();
-        assert!(review.should_refine);
-        assert_eq!(review.rationale, "pattern seen");
-        assert_eq!(review.instructions.as_deref(), Some("note the tactic"));
-        let rejected = review_auto_refine(
-            &[],
-            &state,
-            &[],
-            &test_model(),
-            &AutoRefineReviewContext {
-                reason: "checkpoint".to_string(),
-                turns_since_last_review: 1,
-            },
-            seam(r#"{"shouldRefine":false}"#),
-        )
-        .await
-        .unwrap();
-        assert!(!rejected.should_refine);
-        assert_eq!(rejected.rationale, "No rationale provided.");
-        assert_eq!(rejected.instructions, None);
-    }
 
     fn test_model() -> pa_types::ai::Model {
         pa_types::ai::Model {

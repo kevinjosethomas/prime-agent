@@ -138,19 +138,6 @@ pub trait SessionEngine: Send + Sync {
     /// also aborts the auto controller, not just the manual run.
     fn abort_auto_compaction(&self) {}
 
-    /// Consume a pending compact-trigger auto-refine review: the engine
-    /// resolves the model and runs the gated round. `Ok(None)` is every
-    /// silent outcome — no trigger armed, a gate drop, cooldown, or decline.
-    ///
-    /// # Errors
-    ///
-    /// Errors when the armed round itself fails (its model call).
-    fn consume_compact_auto_refine(
-        &self,
-    ) -> anyhow::Result<Option<pa_core::refinement::RefinementResult>> {
-        Ok(None)
-    }
-
     /// Run one branch summary (`navigate_tree` with `summarize`): summarize
     /// the abandoned branch's entries; the engine owns the model call.
     fn run_branch_summary(

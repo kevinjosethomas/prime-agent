@@ -311,15 +311,6 @@ impl SessionEngine for AgentSessionEngine {
         decision.fallback_message
     }
 
-    /// The `compact` command path: the compact-trigger auto-refine round
-    /// runs after the compaction answered (the same gated body as the
-    /// boundaries).
-    fn consume_compact_auto_refine(
-        &self,
-    ) -> anyhow::Result<Option<pa_core::refinement::RefinementResult>> {
-        self.consume_compact_auto_refine_round()
-    }
-
     /// The worker's live session summary, rendered into the sender identity block.
     fn set_session_summary(&self, summary: Value) {
         *self
@@ -685,8 +676,6 @@ impl SessionEngine for AgentSessionEngine {
                         telemetry.note_compaction(Some(run.duration_ms));
                     }
                 }
-                // The compact-trigger auto-refine review runs after every successful compaction.
-                self.mark_compact_auto_refine_pending();
                 CompactionOutcome::Compacted {
                     run: Box::new(CompactionRun {
                         // The wire result is the TS `CompactionResult` shape;
@@ -807,8 +796,6 @@ impl SessionEngine for AgentSessionEngine {
             let Some(engine) = guard.as_deref() else {
                 return Ok(());
             };
-            // The moved branch invalidates an armed review.
-            engine.session.discard_compact_auto_refine();
             engine
                 .session
                 .rebuild_branch_context(branch_entries)

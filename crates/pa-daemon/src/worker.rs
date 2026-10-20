@@ -53,7 +53,6 @@ pub use env::{
     WORKER_SOCKET_ENV, WORKER_SUPERVISOR_LOST_EXIT_MS_ENV, WORKER_SUPERVISOR_SOCKET_ENV,
     WORKER_TELEMETRY_DISABLED_ENV, WORKER_TOKEN_ENV,
 };
-use serde_json::Map;
 pub(crate) use session_core::SessionCore;
 use std::collections::VecDeque;
 // PathBuf is read only by this facade's in-file test modules (via `use super::*`).
@@ -880,82 +879,6 @@ pub(crate) fn refine_complete_event(
     })
 }
 
-/// Send a background refinement result only if the session that started
-/// the review is still current. Hold the core lock through the broadcast so
-/// navigation cannot move the event onto a different session.
-fn emit_refinement_event_for_session(
-    core: &Arc<Mutex<SessionCore>>,
-    events: &Arc<EventPump>,
-    review_session_id: &str,
-    event: Value,
-) -> bool {
-    let mut core = core.lock().unwrap();
-    if core.store.as_ref().map(SessionFile::session_id) != Some(review_session_id) {
-        return false;
-    }
-    let sequence = core.last_event_sequence + 1;
-    core.last_event_sequence = sequence;
-    let meta = crate::protocol::create_daemon_event_meta(
-        &core.active_session_id,
-        sequence,
-        None,
-        Some(&core.generation),
-    );
-    let outbound = crate::protocol::DaemonOutbound::SessionEvent {
-        active_session_id: core.active_session_id.clone(),
-        event,
-        meta: Some(meta),
-        rest: Map::default(),
-    };
-    let payload = serde_json::to_vec(&outbound).unwrap_or_default();
-    events.send(OutboundFrame::session_event(payload));
-    true
-}
-
-/// Record one durable custom row of the background compact-trigger
-/// review and broadcast its `message_start`/`message_end` pair.
-/// `review_session_id` fences the row against session moves made while
-/// the review's model call was in flight.
-fn emit_refinement_row(
-    core: &Arc<Mutex<SessionCore>>,
-    events: &Arc<EventPump>,
-    review_session_id: &str,
-    message: &Value,
-) -> bool {
-    {
-        let mut core = core.lock().unwrap();
-        let Some(store) = core.store.as_mut() else {
-            return false;
-        };
-        if store.session_id() != review_session_id {
-            pa_core::session_engine::compaction_trace::trace(
-                "autorefine.rows_dropped_session_moved",
-                &serde_json::Value::Null,
-            );
-            return false;
-        }
-        let _ = store.persist_entry(
-            "custom_message",
-            json!({
-                "customType": message.get("customType").cloned().unwrap_or(Value::Null),
-                "content": message.get("content").cloned().unwrap_or(Value::Null),
-                "display": message.get("display").cloned().unwrap_or(Value::Bool(true)),
-                "details": message.get("details").cloned().unwrap_or(Value::Null),
-            }),
-        );
-    }
-    emit_worker_event_with(
-        core,
-        events,
-        json!({ "type": "message_start", "message": message }),
-    );
-    emit_worker_event_with(
-        core,
-        events,
-        json!({ "type": "message_end", "message": message }),
-    );
-    true
-}
 
 struct CoreUsageStore(Arc<Mutex<SessionCore>>);
 

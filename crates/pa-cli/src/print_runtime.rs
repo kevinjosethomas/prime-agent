@@ -1572,9 +1572,6 @@ async fn run_prompts_and_emit(
         if let Some(subscription) = unsubscribe {
             subscription.unsubscribe().await;
         }
-        boundary
-            .drain_compact_auto_refine_at_disposal(engine, model, api_key, global_harness_dir)
-            .await;
         return Ok(1);
     }
     // The #2270 fix: print waits for RLM quiescence — every admitted
@@ -1698,11 +1695,6 @@ async fn run_prompts_and_emit(
         eprintln!("{stderr}");
         exit_code = 1;
     }
-    // The disposal order: the exit code first, then the teardown drains a
-    // compact-trigger auto-refine no later boundary consumed.
-    boundary
-        .drain_compact_auto_refine_at_disposal(engine, model, api_key, global_harness_dir)
-        .await;
     Ok(exit_code)
 }
 

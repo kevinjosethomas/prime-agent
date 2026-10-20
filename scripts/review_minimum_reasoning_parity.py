@@ -188,8 +188,7 @@ def run_case(binary, label, scenario, root, observation):
     (agent / 'settings.json').write_text(json.dumps({
         'defaultProvider': 'fixture', 'defaultModel': 'mandatory-fixture',
         'prewarmPythonKernel': False, 'compaction': {'enabled': False, 'keepRecentTokens': 100,
-                                                   'reserveTokens': 1024},
-        'autoRefine': {'enabled': False}}))
+                                                   'reserveTokens': 1024}}))
     command = [str(binary), '--mode', 'json', '--provider', 'fixture', '--model',
                'mandatory-fixture', '--thinking', 'low', '--session-dir', str(sessions),
                'Seed the fixture.', 'Schedule the requested auxiliary operation.']

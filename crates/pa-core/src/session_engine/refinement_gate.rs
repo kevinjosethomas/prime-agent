@@ -185,7 +185,6 @@ mod tests {
                 })
                 .await
                 .unwrap();
-            assert!(!engine.session.auto_refine_allowed());
             assert!(engine.session.harness_digest_inputs().await.is_none());
             assert!(engine
                 .session
@@ -200,7 +199,6 @@ mod tests {
             );
             // Re-enable without a reload (the busy-session case): the next admission loads state.
             settings.set_harness_refinements(true).unwrap();
-            assert!(engine.session.auto_refine_allowed());
             assert!(engine
                 .session
                 .pending_digest_prompt_row()
