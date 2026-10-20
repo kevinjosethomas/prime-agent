@@ -880,7 +880,6 @@ pub(crate) fn refine_complete_event(
     })
 }
 
-
 struct CoreUsageStore(Arc<Mutex<SessionCore>>);
 
 fn missing_usage_target(target_id: &str) -> std::io::Error {
