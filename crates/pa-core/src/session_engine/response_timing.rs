@@ -28,7 +28,7 @@ struct ResponseClockInner {
     request_sent_at: Option<Instant>,
     first_delta_at: Option<Instant>,
     terminal_at: Option<Instant>,
-    /// result() carries this onto the fresh final message, not a cached event message.
+    /// `result()` carries this onto the fresh final message, not a cached event message.
     stamped_timing: Option<AssistantMessageTiming>,
 }
 
@@ -126,7 +126,7 @@ fn round_ms(delta_ms: f64) -> f64 {
 }
 
 /// Always-on wrapper: marks request sent (after the composed payload hook),
-/// stamps the terminal message, carries timing through result(). Cannot
+/// stamps the terminal message, carries timing through `result()`. Cannot
 /// fail the request.
 #[must_use]
 pub fn instrument_response_timing(stream_fn: StreamFn) -> StreamFn {
