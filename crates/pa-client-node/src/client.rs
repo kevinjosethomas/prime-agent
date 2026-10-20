@@ -319,7 +319,7 @@ impl PrimeDaemonClient {
         );
         let inner = Arc::clone(&self.inner);
         bridge(async move {
-            let mut notified = inner.teardown.notified();
+            let notified = inner.teardown.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
             let fut = client.request_with_timeout(command, timeout);
@@ -361,7 +361,7 @@ impl PrimeDaemonClient {
             })?;
         let inner = Arc::clone(&self.inner);
         bridge(async move {
-            let mut notified = inner.teardown.notified();
+            let notified = inner.teardown.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
             let fut = client.request_ok(command);
@@ -468,7 +468,7 @@ pub async fn connect(
     {
         let inner = Arc::clone(&inner);
         let frame_tx = frame_tx;
-        let tap_rx = tap_rx;
+        let mut tap_rx = tap_rx;
         bridge(async move {
             while let Some(frame) = tap_rx.recv().await {
                 if frame_tx.try_send(frame).is_err() {
