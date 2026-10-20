@@ -12,7 +12,13 @@ import { fileURLToPath } from "node:url";
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 
 function run(cmd, cwd, args) {
-  return execFileSync(cmd, { cwd, args, encoding: "utf8" });
+  try {
+    return execFileSync(cmd, { cwd, args, encoding: "utf8" });
+  } catch (error) {
+    console.error(`command failed: ${cmd} ${args.join(" ")} in ${cwd}`);
+    console.error(String(error.stderr ?? error.message));
+    throw error;
+  }
 }
 
 test("packed tarball loads with production dependencies only", async () => {
