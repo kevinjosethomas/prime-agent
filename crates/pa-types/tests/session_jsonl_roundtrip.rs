@@ -89,9 +89,6 @@ fn historical_fixture_lines_parse_and_survive_reserialization() {
             });
             let reserialized = serde_json::to_string(&parsed).expect("serialize entry");
             let mut original: Value = serde_json::from_str(line).unwrap();
-            if let Some(map) = original.as_object_mut() {
-                map.remove("harnessDigest");
-            }
             if let Some(message) = original.get_mut("message").and_then(Value::as_object_mut) {
                 message.remove("harnessDigest");
             }
