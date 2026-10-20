@@ -10,13 +10,11 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Result};
-use pa_types::daemon::DaemonCommand;
+use pa_types::daemon::{DaemonCommand, DaemonResponse};
 use serde_json::{Map, Value};
 use tokio::sync::{mpsc, watch};
 
-use crate::daemon_client::{
-    CommandNotSent, DaemonClient, DaemonClientOptions, DaemonResponse,
-};
+use crate::daemon_client::{CommandNotSent, DaemonClient, DaemonClientOptions};
 use crate::registry::FrameAction;
 
 /// One closing kind's reconnect behavior: unbounded (`window: None`) with

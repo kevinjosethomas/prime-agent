@@ -39,7 +39,7 @@ pub use errors::{
 /// and the opt-in wire bounds. Defaults preserve the existing
 /// [`DaemonClient::connect`] behavior exactly — no tap, unbounded frames,
 /// unbounded pending requests.
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct DaemonClientOptions {
     /// The raw outbound tap: a separate channel carrying every decoded
     /// application frame after the `daemon_hello` handshake — supervisor
