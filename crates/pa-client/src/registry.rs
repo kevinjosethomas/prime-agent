@@ -134,7 +134,7 @@ impl AttachmentRegistry {
         if let Some(cursor) = snapshot.get("lastEventCursor").and_then(parse_cursor) {
             if current
                 .as_ref()
-                .map_or(true, |c| c.generation != cursor.generation)
+                .is_none_or(|c| c.generation != cursor.generation)
                 || current.as_ref().and_then(|c| c.sequence).unwrap_or(0)
                     < cursor.sequence.unwrap_or(0)
             {
@@ -289,10 +289,6 @@ impl AttachmentRegistry {
             .collect()
     }
 
-    /// Whether the id is registered.
-    pub(crate) fn is_registered(&self, id: &str) -> bool {
-        self.attachments.contains_key(id)
-    }
 }
 
 /// The wire shape of a snapshot's `lastEventCursor`.
@@ -442,8 +438,8 @@ mod tests {
             "activeSessionId": "s2",
         });
         assert_eq!(registry.observe_frame(&binding), FrameAction::Deliver);
-        assert!(registry.is_registered("s2"));
-        assert!(!registry.is_registered("s1"));
+        assert!(registry.restore_entries().iter().any(|(id, _)| id == "s2"));
+        assert!(registry.restore_entries().iter().all(|(id, _)| id != "s1"));
         // The marker moved with the attachment: the replay dedupes under the
         // new id.
         let replay = json!({

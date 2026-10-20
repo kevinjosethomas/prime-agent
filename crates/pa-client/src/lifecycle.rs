@@ -214,6 +214,10 @@ impl DaemonClientSession {
     }
 
     /// The latest status snapshot — synchronous, never blocks on I/O.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the status lock is poisoned.
     #[must_use]
     pub fn status(&self) -> ConnectionStatus {
         self.state.status.read().unwrap().clone()
@@ -251,7 +255,7 @@ impl DaemonClientSession {
         };
         let bookkeeping = self.before(&command);
         let response = client.request(command).await?;
-        self.after(&bookkeeping, &response);
+        self.after(bookkeeping.as_ref(), &response);
         Ok(response)
     }
 
@@ -294,6 +298,10 @@ impl DaemonClientSession {
     /// Pre-request registry bookkeeping: attach/reattach bump the
     /// revision; detach/kill only need their id. Synchronous, under the
     /// mutex, never across an await.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the registry lock is poisoned.
     fn before(&self, command: &DaemonCommand) -> Option<Bookkeeping> {
         let mut registry = self.state.registry.lock().unwrap();
         match command {
@@ -324,7 +332,11 @@ impl DaemonClientSession {
     /// Post-response registry bookkeeping: an attach/reattach success adopts
     /// at its own revision (never resurrecting a detached or superseded
     /// entry); a completed detach/kill forgets.
-    fn after(&self, bookkeeping: &Option<Bookkeeping>, response: &DaemonResponse) {
+    ///
+    /// # Panics
+    ///
+    /// Panics when the registry lock is poisoned.
+    fn after(&self, bookkeeping: Option<&Bookkeeping>, response: &DaemonResponse) {
         match bookkeeping {
             Some(Bookkeeping::Attach { id, revision }) => {
                 if !response.success {
@@ -488,37 +500,9 @@ async fn driver_run(
                 }
             }
         }
-        // Backoff sleep: cancellation and consumer death are select arms.
-        let delay = backoff.as_ref().map_or(config.reconnect.lost.initial_delay, |state| state.delay);
-        let sleep = tokio::time::sleep(delay);
-        let gone = consumer_gone(&state);
-        tokio::pin!(gone);
-        tokio::select! {
-            _ = sleep => {}
-            _ = cancel.changed() => break,
-            _ = &mut gone => break,
-        }
-        // Window expiry: a typed event, then the driver stops. No exit.
-        let expired = backoff
-            .as_ref()
-            .and_then(|state| state.deadline)
-            .is_some_and(|deadline| tokio::time::Instant::now() > deadline);
-        if expired {
-            let kind = backoff.as_ref().map_or(ReconnectKind::Lost, |state| state.kind);
-            let _ = state
-                .events
-                .send(ConnectionEvent::ReconnectExpired { kind });
-            publish(&state, |status| {
-                status.state = ConnectionState::Expired;
-                status.error =
-                    Some(format!("the {} reconnect window expired", window_name(kind)));
-            });
+        // The backoff tick: sleep, expiry, and the next attempt's delay.
+        if !backoff_tick(&state, &config, &mut backoff, &mut cancel).await {
             break;
-        }
-        // The next attempt's delay: doubling, capped.
-        if let Some(backoff) = backoff.as_mut() {
-            let window = config.reconnect.window_for(backoff.kind);
-            backoff.delay = backoff.delay.saturating_mul(2).min(window.max_delay);
         }
     }
     // The settle (stop or teardown): cancel restore tasks (TRUE
@@ -537,6 +521,51 @@ async fn driver_run(
             client.join_tasks().await;
         }
     }
+}
+
+
+/// One backoff tick: sleep with cancellation/consumer-death arms, then
+/// expiry (a typed event; the driver stops) and the doubling delay.
+/// Returns `false` when the driver must stop.
+async fn backoff_tick(
+    state: &Arc<SessionState>,
+    config: &LifecycleConfig,
+    backoff: &mut Option<BackoffState>,
+    cancel: &mut watch::Receiver<bool>,
+) -> bool {
+    let delay = backoff
+        .as_ref()
+        .map_or(config.reconnect.lost.initial_delay, |state| state.delay);
+    let sleep = tokio::time::sleep(delay);
+    let gone = consumer_gone(state);
+    tokio::pin!(gone);
+    tokio::select! {
+        () = sleep => {}
+        _ = cancel.changed() => return false,
+        _ = &mut gone => return false,
+    }
+    // Window expiry: a typed event, then the driver stops. No exit.
+    let expired = backoff
+        .as_ref()
+        .and_then(|state| state.deadline)
+        .is_some_and(|deadline| tokio::time::Instant::now() > deadline);
+    if expired {
+        let kind = backoff.as_ref().map_or(ReconnectKind::Lost, |state| state.kind);
+        let _ = state
+            .events
+            .send(ConnectionEvent::ReconnectExpired { kind });
+        publish(state, |status| {
+            status.state = ConnectionState::Expired;
+            status.error = Some(format!("the {} reconnect window expired", window_name(kind)));
+        });
+        return false;
+    }
+    // The next attempt's delay: doubling, capped.
+    if let Some(backoff) = backoff.as_mut() {
+        let window = config.reconnect.window_for(backoff.kind);
+        backoff.delay = backoff.delay.saturating_mul(2).min(window.max_delay);
+    }
+    true
 }
 
 /// Arm a fresh backoff for one closing kind.
@@ -628,7 +657,7 @@ async fn service(
                             error,
                         });
                     }
-                    Some(RestoreOutcome::Abandoned) => {}
+                    Some(RestoreOutcome::Abandoned) => (),
                     // All restore senders dropped: reap finished handles.
                     None => {
                         restore_handles.retain(|handle| !handle.is_finished());
@@ -651,6 +680,10 @@ async fn consumer_gone(state: &Arc<SessionState>) {
 }
 
 /// Publish a status transition: snapshot + event.
+///
+/// # Panics
+///
+/// Panics when the status lock is poisoned.
 fn publish(state: &Arc<SessionState>, edit: impl FnOnce(&mut ConnectionStatus)) {
     let mut status = state.status.write().unwrap();
     edit(&mut status);
@@ -703,7 +736,8 @@ fn spawn_restores(
                 let response = client
                     .request_with_timeout(
                         command,
-                        config.restore_attempt_timeout.as_millis() as u64,
+                        u64::try_from(config.restore_attempt_timeout.as_millis())
+                            .unwrap_or(600_000),
                     )
                     .await?;
                 if !response.success {
