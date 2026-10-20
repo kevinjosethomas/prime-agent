@@ -2293,9 +2293,11 @@ mod tests {
             tokio::spawn(async move { session.stop().await })
         };
         tokio::task::yield_now().await;
+        eprintln!("DBG test: pre-drop");
         // Release: both installs proceed to the registry gate and REFUSE
         // on the mark.
         drop(guard);
+        eprintln!("DBG test: post-drop");
         tokio::time::timeout(Duration::from_secs(10), stop_task)
             .await
             .expect("the stop settles after the guard release")
