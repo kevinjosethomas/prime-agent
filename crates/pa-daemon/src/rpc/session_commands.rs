@@ -443,7 +443,14 @@ async fn export_html(state: &Arc<RpcState>, payload: &Value) -> Result<ResponseD
             let manager = persistence.lock().await;
             manager.get_leaf_id().map(str::to_string)
         },
-        system_prompt: Some(handle.engine.system_prompt.clone()),
+        // The compaction-pinned prompt wins over the creation-time snapshot.
+        system_prompt: Some(
+            handle
+                .engine
+                .session
+                .pinned_system_prompt()
+                .unwrap_or_else(|| handle.engine.system_prompt.clone()),
+        ),
         tools: Some(tools),
         rendered_tools: None,
     };

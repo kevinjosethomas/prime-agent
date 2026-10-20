@@ -425,6 +425,23 @@ pub trait SessionEngine: Send + Sync {
         Box::pin(async { Ok(String::new()) })
     }
 
+    /// Stage appended prompt sources (`set_prompt_guidelines`); the live
+    /// prompt stays unchanged until the next successful compaction.
+    ///
+    /// # Errors
+    ///
+    /// Errors when the engine cannot stage prompt sources.
+    fn set_prompt_guidelines(
+        &self,
+        _sources: Vec<String>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async {
+            Err(anyhow::anyhow!(
+                "set_prompt_guidelines is not supported by this engine"
+            ))
+        })
+    }
+
     /// One tool definition by name, when the engine exposes one.
     fn tool_definition(
         &self,

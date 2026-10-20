@@ -1249,6 +1249,18 @@ pub enum DaemonCommand {
         #[serde(flatten)]
         rest: JsonMap,
     },
+    /// Rust-native client command (the desktop's inline prompt guidelines):
+    /// stage appended sources for the next successful compaction; a rebind
+    /// of an existing worker skips the source refresh, so the client pushes
+    /// its current list.
+    SetPromptGuidelines {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        active_session_id: String,
+        append_system_prompt: Vec<String>,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
     AckResult {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -1363,5 +1375,12 @@ mod tests {
     #[test]
     fn mark_anthropic_warning_shown_roundtrip() {
         rt::<DaemonCommand>(r#"{"type":"mark_anthropic_warning_shown","activeSessionId":"s1"}"#);
+    }
+
+    #[test]
+    fn set_prompt_guidelines_roundtrip() {
+        rt::<DaemonCommand>(
+            r#"{"type":"set_prompt_guidelines","activeSessionId":"s1","appendSystemPrompt":["/abs/guidance.md"]}"#,
+        );
     }
 }

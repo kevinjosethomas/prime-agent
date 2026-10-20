@@ -330,6 +330,39 @@ impl Worker {
         response_success(None, "set_scoped_models", None)
     }
 
+    /// `set_prompt_guidelines { appendSystemPrompt }`: stage the sources
+    /// for the next successful compaction; the live prompt stays unchanged
+    /// until then.
+    pub(crate) async fn handle_set_prompt_guidelines(&self, payload: &Value) -> DaemonResponse {
+        if let Err(response) = self.require_created("set_prompt_guidelines") {
+            return response;
+        }
+        let Some(sources) = payload.get("appendSystemPrompt").and_then(Value::as_array) else {
+            return response_failure(
+                None,
+                "set_prompt_guidelines",
+                "set_prompt_guidelines requires an appendSystemPrompt array",
+                None,
+            );
+        };
+        let Some(sources) = sources
+            .iter()
+            .map(|source| source.as_str().map(str::to_string))
+            .collect::<Option<Vec<String>>>()
+        else {
+            return response_failure(
+                None,
+                "set_prompt_guidelines",
+                "set_prompt_guidelines requires appendSystemPrompt entries to be strings",
+                None,
+            );
+        };
+        if let Err(error) = self.engine.set_prompt_guidelines(sources).await {
+            return response_failure(None, "set_prompt_guidelines", &error.to_string(), None);
+        }
+        response_success(None, "set_prompt_guidelines", None)
+    }
+
     /// `cycle_thinking_level`: reasoning models cycle their supported levels (the same flow as
     /// `set_thinking_level`); models without reasoning answer success with `null` data.
     pub(crate) async fn handle_cycle_thinking_level(&self) -> DaemonResponse {
@@ -1217,5 +1250,55 @@ mod tests {
             )
             .await;
         assert!(response.success, "failed: {response:?}");
+    }
+
+    /// `set_prompt_guidelines` validates its payload shape: the array is
+    /// required.
+    #[tokio::test]
+    async fn set_prompt_guidelines_requires_the_sources_array() {
+        let worker = created_worker().await;
+        let response = worker
+            .dispatch(
+                "set_prompt_guidelines",
+                &json!({ "activeSessionId": "switch-session" }),
+            )
+            .await;
+        assert!(!response.success);
+        assert_eq!(
+            response.error.as_deref(),
+            Some("set_prompt_guidelines requires an appendSystemPrompt array")
+        );
+        let response = worker
+            .dispatch(
+                "set_prompt_guidelines",
+                &json!({ "activeSessionId": "switch-session", "appendSystemPrompt": [42] }),
+            )
+            .await;
+        assert!(!response.success);
+        assert_eq!(
+            response.error.as_deref(),
+            Some("set_prompt_guidelines requires appendSystemPrompt entries to be strings")
+        );
+    }
+
+    /// The scripted (non-session) engine answers the staged-guidelines
+    /// command with the unsupported failure, never a no-op success.
+    #[tokio::test]
+    async fn set_prompt_guidelines_fails_without_a_session_prompt_surface() {
+        let worker = created_worker().await;
+        let response = worker
+            .dispatch(
+                "set_prompt_guidelines",
+                &json!({
+                    "activeSessionId": "switch-session",
+                    "appendSystemPrompt": ["/abs/guidance.md"]
+                }),
+            )
+            .await;
+        assert!(!response.success);
+        assert_eq!(
+            response.error.as_deref(),
+            Some("set_prompt_guidelines is not supported by this engine")
+        );
     }
 }

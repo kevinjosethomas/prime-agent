@@ -48,6 +48,7 @@ pub mod turn_boundary;
 
 mod admission;
 mod compaction_arms;
+mod prompt_refresh;
 mod wiring;
 
 use std::sync::Arc;
@@ -184,6 +185,9 @@ pub struct AgentSession {
     /// resolves it (verification harnesses building the session directly
     /// keep `None`, which reads as the fail-closed disabled default).
     agent_dir: Option<std::path::PathBuf>,
+    prompt_sources: Option<Arc<prompt_refresh::PromptSources>>,
+    pinned_prompt: std::sync::RwLock<Option<String>>,
+    prompt_guidelines: std::sync::RwLock<Option<Vec<String>>>,
 }
 
 impl AgentSession {
@@ -252,6 +256,9 @@ impl AgentSession {
             semantic_edges: std::sync::Mutex::new(None),
             side_question_stream_fn: std::sync::Mutex::new(None),
             agent_dir: None,
+            prompt_sources: None,
+            pinned_prompt: std::sync::RwLock::new(None),
+            prompt_guidelines: std::sync::RwLock::new(None),
             compaction_flight: tokio::sync::Mutex::new(()),
         };
         this.ensure_harness_digest_context().await?;

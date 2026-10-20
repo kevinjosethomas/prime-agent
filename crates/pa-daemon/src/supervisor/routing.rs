@@ -688,6 +688,7 @@ impl Supervisor {
                     | DaemonCommand::Kill { .. }
                     | DaemonCommand::Rename { .. }
                     | DaemonCommand::SetSessionName { .. }
+                    | DaemonCommand::SetPromptGuidelines { .. }
                     | DaemonCommand::CronAdd {
                         promote_owned_session: Some(true),
                         ..
@@ -841,6 +842,30 @@ impl Supervisor {
                         if let Err(error) = self.stop_worker(&resident).await {
                             self.log_line(&format!(
                                 "session worker {} stop after kill failed: {error:#}; the tombstoned descriptor holds the stop for the next boot",
+                                resident.worker_id
+                            ));
+                        }
+                    }
+                }
+                if let DaemonCommand::SetPromptGuidelines {
+                    append_system_prompt,
+                    ..
+                } = command
+                {
+                    // The staged sources ride the durable create so a respawned worker replays them.
+                    if response.success {
+                        let mut descriptor = resident.descriptor.lock().await;
+                        descriptor.create_command.rest.insert(
+                            "appendSystemPrompt".to_string(),
+                            serde_json::json!(append_system_prompt),
+                        );
+                        if let Err(error) = crate::descriptor::persist_worker(
+                            &resident.descriptor_path,
+                            &descriptor,
+                        ) {
+                            drop(descriptor);
+                            self.log_line(&format!(
+                                "the create-config persist for worker {} failed after set_prompt_guidelines: {error}",
                                 resident.worker_id
                             ));
                         }
