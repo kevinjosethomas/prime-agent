@@ -102,7 +102,7 @@ const server = net.createServer((socket) => {
         );
         continue;
       }
-      if (mode === 'echo') {
+      if (mode === 'echo' || mode === 'events') {
         socket.write(
           JSON.stringify({
             type: 'response',

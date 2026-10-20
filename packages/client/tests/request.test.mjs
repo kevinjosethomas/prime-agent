@@ -81,8 +81,18 @@ test('the pending cap refuses as a provable NotSent', async () => {
   const stop = await startMock(socketPath, 'silent');
   const connection = await DaemonConnection.connect(socketPath, { maxPending: 1 });
   const first = connection.request(GET_CONNECTION_STATE, 500);
-  const second = connection.request(GET_CONNECTION_STATE, 500);
-  await assert.rejects(second, (error) => error instanceof NotSentError);
+  // The cap refusal can reject before any later handler attaches — the
+  // rejection is settled structurally from creation.
+  const second = connection
+    .request(GET_CONNECTION_STATE, 500)
+    .then(
+      () => {
+        throw new Error('the capped request should have refused');
+      },
+      (error) => error,
+    );
+  const capError = await second;
+  assert.ok(capError instanceof NotSentError);
   await first.catch(() => {});
   connection.close();
   await stop();

@@ -23,6 +23,9 @@ test('close resolves after pending request, upgrade, and pull are all torn down'
     (error) => error,
   );
   const pendingFrame = connection.nextFrame();
+  // The initial 'open' is delivered exactly once: consume it, then hold a
+  // REAL pending change that close must resolve with 'closed'.
+  assert.deepEqual(await connection.nextStatus(), { type: 'open' });
   const pendingStatus = connection.nextStatus();
   await connection.close();
   // The close promise resolved: the registry drained and the core task set
