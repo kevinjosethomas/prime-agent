@@ -1,0 +1,67 @@
+name: Recovery parity baseline diagnostic
+on:
+  push:
+    branches: [diagnostic/recovery-parity-baseline]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compare-installed-baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          # Installed runtime before this recovery patch; fixtures are unchanged on the candidate.
+          ref: 204cfaa71e1d9eb409239f599a102cf0ec7dd65c
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          shared-key: test-shards
+      - name: Build the actual installed-baseline binaries
+        run: cargo build --locked --workspace --bins
+      - name: Bootstrap the isolated CI kernel
+        run: |
+          python3 -m pip install --user uv
+          export PATH="$HOME/.local/bin:$PATH"
+          ./target/debug/prime-agent --prime-agent-bootstrap
+      - name: Run the unchanged failing fixtures against the installed baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          reference="${RUNNER_TEMP}/lifecycle-ts-reference"
+          receipts="${RUNNER_TEMP}/baseline-parity-receipts"
+          mkdir -p "$reference" "$receipts"
+          gh release download v0.9.8 --repo PrimeIntellect-ai/prime-agent \
+            --pattern prime-agent-0.9.8-linux-x64.tar.gz --dir "$reference"
+          archive="$reference/prime-agent-0.9.8-linux-x64.tar.gz"
+          echo "83fb09129bf78e3e60268212cd70932166591b15188caa70c1b0efbcc76235e2  $archive" | sha256sum --check
+          mkdir -p "$reference/package"
+          tar -xzf "$archive" -C "$reference/package"
+          export PA_TS_ARCHIVE="$archive"
+          export PA_TS_BINARY="$reference/package/prime-agent"
+          export PA_RUST_BINARY="$GITHUB_WORKSPACE/target/debug/prime-agent"
+          export PI_PACKAGE_DIR="$reference/package"
+          export PRIME_AGENT_KERNEL_PYTHON="$HOME/.prime/agent/kernel-venv/bin/python"
+          export PA_E2E_KERNEL_PYTHON="$PRIME_AGENT_KERNEL_PYTHON"
+          export PYTHONPATH="$reference/package/skills/goal/src"
+          test -x "$PRIME_AGENT_KERNEL_PYTHON"
+          git rev-parse HEAD > "$receipts/source.txt"
+          result=0
+          for scenario in client_write_cleanup factory_resumption new_goal; do
+            python3 "scripts/review_${scenario}_parity.py" \
+              --receipt "$receipts/${scenario}.json" || result=1
+          done
+          exit "$result"
+      - name: Preserve diagnostic receipts even when baseline fails
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: installed-native-baseline-parity
+          path: ${{ runner.temp }}/baseline-parity-receipts
+          if-no-files-found: error
