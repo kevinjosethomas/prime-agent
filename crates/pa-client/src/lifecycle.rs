@@ -356,11 +356,15 @@ impl DaemonClientSession {
         // linearized section — an install holding the same gate cannot
         // publish past it.
         {
+            // The synchronous stop marks, ALL under the registry gate (F-1):
+            // the stopping mark lands INSIDE the same critical section as
+            // the bump and the invalidation — an install holding the same
+            // gate can never observe the bump without the mark.
             let mut registry = self.state.registry.lock().unwrap();
             registry.bump_epoch();
             registry.invalidate_all();
+            self.state.stopping.store(true, Ordering::SeqCst);
         }
-        self.state.stopping.store(true, Ordering::SeqCst);
         self.state.cancel.send_replace(true);
         // The death signal on the live client: every pending request
         // resolves now — no live pending is ever awaited. CLONE, not take
@@ -927,10 +931,17 @@ async fn service(
     cancel: &mut watch::Receiver<bool>,
 ) -> ServiceEnd {
     let mut announced: Option<ReconnectKind> = None;
+    // The shared loss cleanup (F-2): the ONE path for every observed death —
+    // the pre-entry value check and the changed arm both flow through it, so
+    // the loss's full cleanup (epoch bump + token invalidation under the
+    // registry gate, restore cancel/join, the prior client's shutdown+join,
+    // the slot clear) runs exactly once per loss, no bypass anywhere.
+    //
     // The pre-service death check (item 6): a watch already true at entry
-    // never fires `changed()` — the value is read directly, the loss is
-    // taken at once, and no tap-close spin can follow.
+    // never fires `changed()` — the value is read directly and the shared
+    // cleanup runs at once.
     if *dead.borrow() {
+        run_loss_cleanup(state, restore_handles).await;
         return ServiceEnd::Loss(announced.take().unwrap_or(ReconnectKind::Lost));
     }
     loop {
@@ -939,30 +950,7 @@ async fn service(
             () = state.events.closed() => return ServiceEnd::Stop,
             _ = dead.changed() => {
                 if *dead.borrow() {
-                    // The epoch and EVERY in-flight attempt token are
-                    // invalidated under the registry lock FIRST: no response
-                    // of the lost connection can adopt, ever.
-                    {
-                        let mut registry = state.registry.lock().unwrap();
-                        registry.bump_epoch();
-                        registry.invalidate_all();
-                    }
-                    // The loss's restore tasks are cancelled and joined now:
-                    // they held old-connection clones and cannot emit stale
-                    // outcomes afterwards.
-                    let cancelled = std::mem::take(restore_handles);
-                    for handle in &cancelled {
-                        handle.abort();
-                    }
-                    for handle in cancelled {
-                        let _ = handle.await;
-                    }
-                    // The prior connection's registered tasks are joined
-                    // NOW: no swap leaves a prior join behind.
-                    if let Some(client) = state.client.write().await.take() {
-                        client.shutdown();
-                        client.join_tasks().await;
-                    }
+                    run_loss_cleanup(state, restore_handles).await;
                     return ServiceEnd::Loss(announced.take().unwrap_or(ReconnectKind::Lost));
                 }
             }
@@ -997,26 +985,59 @@ async fn service(
                 // queued before a loss/stop boundary can never surface as
                 // a stale Reattached/ReattachFailed afterwards (item 9).
                 match outcome {
-                    Some(RestoreOutcome::Done { id, data, epoch })
-                        if state.registry.lock().unwrap().current_epoch() == epoch =>
-                    {
-                        let _ = state.events.send(ConnectionEvent::Reattached {
-                            active_session_id: id,
-                            data,
-                        });
+                    Some(RestoreOutcome::Done { id, data, epoch }) => {
+                        // F-3: the epoch check and the emission run under
+                        // ONE explicit registry guard held across the
+                        // synchronous send — a match-guard temporary drops
+                        // at the guard expression, never covering the send.
+                        let registry = state.registry.lock().unwrap();
+                        if registry.current_epoch() == epoch {
+                            let _ = state.events.send(ConnectionEvent::Reattached {
+                                active_session_id: id,
+                                data,
+                            });
+                        }
                     }
-                    Some(RestoreOutcome::Failed { id, error, epoch })
-                        if state.registry.lock().unwrap().current_epoch() == epoch =>
-                    {
-                        let _ = state.events.send(ConnectionEvent::ReattachFailed {
-                            active_session_id: id,
-                            error,
-                        });
+                    Some(RestoreOutcome::Failed { id, error, epoch }) => {
+                        let registry = state.registry.lock().unwrap();
+                        if registry.current_epoch() == epoch {
+                            let _ = state.events.send(ConnectionEvent::ReattachFailed {
+                                active_session_id: id,
+                                error,
+                            });
+                        }
                     }
                     _ => {}
                 }
             }
         }
+    }
+}
+
+/// The ONE shared loss cleanup (F-2): the epoch and EVERY in-flight attempt
+/// token are invalidated under the registry lock first; the loss's restore
+/// tasks are cancelled and joined; the prior connection's registered tasks
+/// are shut down and joined; the slot is cleared — nothing of the lost
+/// connection survives into the next swap.
+async fn run_loss_cleanup(
+    state: &Arc<SessionState>,
+    restore_handles: &mut Vec<tokio::task::JoinHandle<()>>,
+) {
+    {
+        let mut registry = state.registry.lock().unwrap();
+        registry.bump_epoch();
+        registry.invalidate_all();
+    }
+    let cancelled = std::mem::take(restore_handles);
+    for handle in &cancelled {
+        handle.abort();
+    }
+    for handle in cancelled {
+        let _ = handle.await;
+    }
+    if let Some(client) = state.client.write().await.take() {
+        client.shutdown();
+        client.join_tasks().await;
     }
 }
 
@@ -1833,25 +1854,23 @@ mod tests {
 
     #[tokio::test]
     async fn a_driver_ending_without_the_mark_fails_every_stop_honestly() {
-        // Item 4: a "driver" that ends WITHOUT flipping the stopped mark
-        // (the panic shape): EVERY stop returns the same honest Err — the
-        // memo is read, never consumed — including stops issued AFTER the
-        // first observation.
+        // P-2: a REAL-OWNING driver failure. The REAL driver's handle stays
+        // IN the state; the driver is aborted through it (no take, no
+        // replacement) — the stop monitor observes the actual JoinError
+        // (the honest cancellation-completion outcome), and every stop
+        // returns the identical honest Err. The real handle's end is really
+        // observed, never a swapped mock.
         let (session, _events) =
             DaemonClientSession::start(config(std::path::Path::new("/dev/null")))
                 .await
                 .unwrap();
-        // The panic shape: the real driver is aborted (no settle, no
-        // mark), and a replacement task that DIES IN A PANIC keeps a
-        // monitorable handle in the state.
+        // Abort the REAL driver THROUGH its retained handle — the state
+        // keeps ownership; the monitor will observe the genuine end.
         {
             let mut driver = session.state.driver.lock().await;
-            if let Some(handle) = driver.handle.take() {
+            if let Some(handle) = driver.handle.as_ref() {
                 handle.abort();
             }
-            driver.handle = Some(tokio::spawn(async {
-                panic!("the session driver failed");
-            }));
         }
         let first = tokio::time::timeout(Duration::from_secs(5), session.stop())
             .await
@@ -1860,12 +1879,16 @@ mod tests {
         let message = first.to_string();
         let second = tokio::time::timeout(Duration::from_secs(5), session.stop())
             .await
-            .expect("the second stop settles")
+            .expect("a later stop settles")
             .unwrap_err();
         assert_eq!(
             message,
             second.to_string(),
             "every stop reads the identical honest memo"
+        );
+        assert!(
+            message.contains("panicked") || message.contains("cancelled"),
+            "the honest JoinError outcome, never a faked clean completion: {message}"
         );
     }
 
@@ -1926,18 +1949,115 @@ mod tests {
 
     #[tokio::test]
     async fn a_queued_done_before_a_loss_never_reattaches_afterwards() {
-        // Item 9: a restore's Done resolved just BEFORE a loss boundary is
-        // queued with the OLD epoch; the reconnect must never surface it as
-        // a stale Reattached (the delivery validates the epoch under the
-        // registry gate).
+        // P-1 (F-3's proof): a REAL old-epoch Done queued on the OLD
+        // connection (its restore attach RESOLVES before the scripted
+        // death), delivered across the loss boundary — the new-epoch
+        // service must NOT surface it. The two connections carry DISTINCT
+        // restore answers ("source":"old" vs "new"), so any surfaced
+        // Reattached is attributable: only "new" may appear.
         let dir = tempfile::TempDir::new().unwrap();
-        // A supervisor whose FIRST connection answers the restore attach and
-        // is then dropped; the second connection serves the reconnect.
-        let (supervisor, socket, release) = Supervisor::spawn(&dir, Vec::new(), false, true);
+        let socket = dir.path().join("p1.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let release = std::sync::Arc::new(tokio::sync::Notify::new());
+        {
+            let release = std::sync::Arc::clone(&release);
+            let event = json!({
+                "type": "session_event",
+                "activeSessionId": "s1",
+                "event": { "type": "delta" },
+                "meta": { "cursor": { "generation": "g", "sequence": 5 } },
+            });
+            tokio::spawn(async move {
+                let hello = json!({
+                    "type": "daemon_hello",
+                    "protocol": { "name": "prime-agent.daemon", "version": 7 },
+                });
+                // Connection 1: answer every command; the restore attach's
+                // answer carries the OLD marker; death on signal.
+                {
+                    let (stream, _) = listener.accept().await.expect("accept one");
+                    let (reader, mut writer) = stream.into_split();
+                    let mut reader = tokio::io::BufReader::new(reader);
+                    let mut line = String::new();
+                    writer
+                        .write_all(format!("{hello}\n").as_bytes())
+                        .await
+                        .unwrap();
+                    loop {
+                        line.clear();
+                        tokio::select! {
+                            read = reader.read_line(&mut line) => {
+                                if read.unwrap_or(0) == 0 { break; }
+                            }
+                            () = release.notified() => break,
+                        }
+                        let envelope: Value = serde_json::from_str(line.trim()).unwrap();
+                        let command = envelope["command"]["type"].as_str().unwrap_or_default();
+                        let data = if command == "attach" {
+                            json!({ "lastEventCursor": { "generation": "g", "sequence": 4 }, "source": "old" })
+                        } else {
+                            json!({ "ok": true })
+                        };
+                        let response = json!({
+                            "type": "response",
+                            "id": envelope["id"],
+                            "command": command,
+                            "success": true,
+                            "data": data,
+                        });
+                        writer
+                            .write_all(format!("{response}\n").as_bytes())
+                            .await
+                            .unwrap();
+                    }
+                }
+                // Connection 2: answer the restore attach with the NEW
+                // marker — any legitimate new-epoch restore is
+                // distinguishable from the stale one.
+                let (stream, _) = listener.accept().await.expect("accept two");
+                let (reader, mut writer) = stream.into_split();
+                let mut reader = tokio::io::BufReader::new(reader);
+                let mut line = String::new();
+                writer
+                    .write_all(format!("{hello}\n").as_bytes())
+                    .await
+                    .unwrap();
+                writer
+                    .write_all(format!("{event}\n").as_bytes())
+                    .await
+                    .unwrap();
+                loop {
+                    line.clear();
+                    if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+                        break;
+                    }
+                    let envelope: Value = serde_json::from_str(line.trim()).unwrap();
+                    let command = envelope["command"]["type"].as_str().unwrap_or_default();
+                    let data = if command == "attach" {
+                        json!({ "lastEventCursor": { "generation": "g", "sequence": 6 }, "source": "new" })
+                    } else {
+                        json!({ "ok": true })
+                    };
+                    let response = json!({
+                        "type": "response",
+                        "id": envelope["id"],
+                        "command": command,
+                        "success": true,
+                        "data": data,
+                    });
+                    writer
+                        .write_all(format!("{response}\n").as_bytes())
+                        .await
+                        .unwrap();
+                }
+            });
+        }
         let (session, mut events) = DaemonClientSession::start(config(&socket)).await.unwrap();
         wait_connected(&mut events).await;
+        // Register + attach BEFORE the loss: the attachment is live, and
+        // the first connection's restore-equivalent state is adopted via
+        // the request path.
         session.register_attachment("s1", None);
-        // Attach through the request path: the cursor g/4 adopts.
         session
             .request_ok(DaemonCommand::Attach {
                 id: None,
@@ -1953,32 +2073,162 @@ mod tests {
             })
             .await
             .unwrap();
-        // The scripted death: the loss boundary lands; the queued outcome
-        // (if any) carries the old epoch.
+        // The scripted death of connection 1 — the loss boundary moves
+        // the epoch; any queued old Done/Failed must never surface.
         release.notify_one();
-        tokio::time::timeout(Duration::from_secs(20), async {
-            while supervisor.connected.load(Ordering::SeqCst) < 2 {
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-        })
-        .await
-        .expect("the driver reconnected");
-        // Collect events for a bounded window: any Reattached that appears
-        // must belong to the NEW epoch (a reconnect-time restore), and its
-        // data is the mock's cursor — the proof is that no pre-loss Done
-        // leaks (the two-connection flow's own restore is the only one).
-        let mut saw_reattached = false;
-        let _ = tokio::time::timeout(Duration::from_secs(15), async {
+        // Collect events across the reconnect and the second connection's
+        // restore: EVERY surfaced Reattached must carry the "new" marker;
+        // a stale old-epoch emission fails the proof.
+        let verdict = tokio::time::timeout(Duration::from_secs(20), async {
+            let mut saw_new = false;
             loop {
-                if let ConnectionEvent::Reattached { data, .. } = next_event(&mut events).await {
-                    assert_eq!(data["lastEventCursor"]["sequence"], 4);
-                    saw_reattached = true;
-                    return;
+                match next_event(&mut events).await {
+                    ConnectionEvent::Reattached { data, .. } => {
+                        assert_eq!(
+                            data["source"], "new",
+                            "only the new-epoch restore may surface: {data}"
+                        );
+                        saw_new = true;
+                        return saw_new;
+                    }
+                    ConnectionEvent::ReattachFailed { error, .. } => {
+                        panic!("no failure was scripted: {error}");
+                    }
+                    _ => {}
                 }
             }
         })
         .await;
-        assert!(saw_reattached, "only the new-epoch restore reattached");
-        session.stop().await.expect("the settle completed honestly");
+        assert!(
+            verdict.unwrap_or(false),
+            "the new connection's restore surfaced, and no old-epoch outcome did"
+        );
+        session.stop()
+            .await
+            .expect("the settle completed honestly");
+    }
+
+    #[tokio::test]
+    async fn a_stop_racing_the_install_never_publishes_connected() {
+        // P-4: the REAL install-stop interleaving. The supervisor accepts
+        // but never greets — the driver's connect hangs in the inline
+        // hello — and the stop lands DURING that wait. The fresh
+        // connection (once the hello eventually resolves) must NEVER
+        // install or publish Connected past the stop boundary; a
+        // subsequent request is a provable non-delivery; the session's
+        // final status never says Connected.
+        let dir = tempfile::TempDir::new().unwrap();
+        let socket = dir.path().join("p4.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let greeted = std::sync::Arc::new(tokio::sync::Notify::new());
+        {
+            let greeted = std::sync::Arc::clone(&greeted);
+            tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.expect("accept");
+                let mut writer = stream;
+                // Hold the hello until released — the stop lands mid-hello.
+                greeted.notified().await;
+                let hello = json!({
+                    "type": "daemon_hello",
+                    "protocol": { "name": "prime-agent.daemon", "version": 7 },
+                });
+                writer
+                    .write_all(format!("{hello}\n").as_bytes())
+                    .await
+                    .unwrap();
+                std::future::pending::<()>().await;
+            });
+        }
+        let (session, events) = DaemonClientSession::start(config(&socket)).await.unwrap();
+        // The stop marks land while the connect future hangs in the hello.
+        session
+            .stop()
+            .await
+            .expect("the stop settles honestly against the hung connect");
+        // The hello now resolves for the cancelled-or-completing connect:
+        // whichever future survives sees the stop truth and never installs.
+        greeted.notify_one();
+        // The request path must refuse: no client was installed past the
+        // stop.
+        let error = session
+            .request(DaemonCommand::List {
+                id: None,
+                all: None,
+                cwd: None,
+                session_dir: None,
+                include_client_owned: None,
+                rest: Map::new(),
+            })
+            .await
+            .unwrap_err();
+        assert!(crate::daemon_client::is_command_not_sent(&error), "unexpected: {error}");
+        assert_ne!(
+            session.status().state,
+            ConnectionState::Connected,
+            "no Connected publish past the stop boundary"
+        );
+        drop(events);
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_join_keeps_the_shared_slot_owner() {
+        // P-3: a REAL client TaskSet join, blocked by a hot-loop task
+        // registered on the connection's TaskSet (the crate-private unit
+        // barrier — no production hooks). The stop is dropped MID-JOIN;
+        // the shared slot retains the TaskSet Arc (nothing detaches); the
+        // fresh stop asserts the INNER Ok with the real task Drop observed
+        // BEFORE its return.
+        let (supervisor, socket, _release) =
+            Supervisor::spawn(&tempfile::TempDir::new().unwrap(), Vec::new(), false, false);
+        let (session, mut events) = DaemonClientSession::start(config(&socket)).await.unwrap();
+        wait_connected(&mut events).await;
+        // The real client's TaskSet: register a hot-loop task through the
+        // crate-private surface — a task that resists abort until its loop
+        // finishes, so the join genuinely blocks.
+        let completed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        {
+            let client = session
+                .state
+                .client
+                .read()
+                .await
+                .clone()
+                .expect("the connection is live");
+            let completed = std::sync::Arc::clone(&completed);
+            // SAFETY of intent: this is test-only — a task that occupies
+            // the join for a bounded, observable window, then completes.
+            let hot = tokio::spawn(async move {
+                let mut acc = 0u64;
+                for i in 0..150_000_000u64 {
+                    acc = acc.wrapping_add(i);
+                }
+                std::hint::black_box(acc);
+                completed.store(true, Ordering::SeqCst);
+                std::future::pending::<()>().await;
+            });
+            client.tasks.register_direct(vec![hot]);
+        }
+        // The stop's join blocks on the hot task: the stop future is
+        // genuinely pending, dropped mid-join.
+        let mut stop = Box::pin(session.stop());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), &mut stop)
+                .await
+                .is_err(),
+            "the stop is genuinely pending on the blocked join"
+        );
+        drop(stop);
+        // The shared slot retained the owner through the cancelled join:
+        // the fresh stop completes the join and returns the INNER Ok only
+        // after the real task's completion is observed.
+        session
+            .stop()
+            .await
+            .expect("the fresh stop completes the retained join");
+        assert!(
+            completed.load(Ordering::SeqCst),
+            "the real task completed before the fresh stop returned"
+        );
+        let _ = supervisor;
     }
 }

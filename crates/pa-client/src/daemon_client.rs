@@ -557,8 +557,9 @@ pub struct DaemonClient {
     /// flips the watch for every clone without waiting for the reader's own
     /// exit.
     reader_dead_tx: tokio::sync::watch::Sender<bool>,
-    /// The connection's tasks (see [`TaskSet`]).
-    tasks: Arc<TaskSet>,
+    /// The connection's tasks (see [`TaskSet`]); crate-visible for the
+    /// lifecycle tests' real-join barrier (no public surface).
+    pub(crate) tasks: Arc<TaskSet>,
     /// The transport options this connection was established with (the
     /// raw outbound tap rides the direct reader pumps on upgrade).
     options: DaemonClientOptions,
