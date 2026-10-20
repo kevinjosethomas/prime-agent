@@ -102,14 +102,6 @@ impl AgentSession {
         self.skill_telemetry = Some(telemetry);
     }
 
-    /// Bind the auto-refine surface for this session: whether the session may
-    /// auto-refine (TS `_autoRefineAllowedForSession`: depth 0 with a local
-    /// harness state dir) and the resolved gates.
-    pub fn set_auto_refine(&mut self, allowed: bool, gates: refine::AutoRefineGates) {
-        self.auto_refine_allowed = allowed;
-        self.auto_refine = gates;
-    }
-
     /// Bind the session's agent dir (the settings root). The refine flow
     /// reads the `factory.enabled` opt-in from the agent dir's
     /// settings.json on every run — the same live read the kernel-side
@@ -143,16 +135,6 @@ impl AgentSession {
             .compaction_summary_sink
             .lock()
             .expect("compaction summary sink lock") = Some(sink);
-    }
-
-    /// Whether the session may run auto-refinement.
-    pub fn auto_refine_allowed(&self) -> bool {
-        self.auto_refine_allowed && self.harness_refinements_enabled()
-    }
-
-    /// The resolved auto-refine gates.
-    pub fn auto_refine_gates(&self) -> refine::AutoRefineGates {
-        self.auto_refine
     }
 
     /// Whether automatic compaction is enabled for this session: the

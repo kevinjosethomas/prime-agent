@@ -782,9 +782,6 @@ impl AgentSessionEngine {
         // CURRENT model.
         *self.provider_target.write().expect("provider target lock") = None;
         if let Some(engine) = built {
-            // The teardown drops the compact-trigger state with a version bump: an in-flight
-            // review round never applies its edits.
-            engine.session.discard_compact_auto_refine();
             if let Some(telemetry) = &engine.telemetry {
                 let _ = telemetry.end().await;
             }

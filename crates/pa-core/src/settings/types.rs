@@ -119,15 +119,6 @@ pub struct BranchSummarySettings {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AutoRefineSettings {
-    pub enabled: Option<bool>,
-    pub turn_interval: Option<u64>,
-    pub compact: Option<bool>,
-    pub cooldown_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ProviderWaitSettings {
     pub enabled: Option<bool>,
     pub base_delay_ms: Option<u64>,
@@ -327,7 +318,6 @@ pub struct Settings {
     pub follow_up_mode: Option<QueueModeSetting>,
     pub theme: Option<String>,
     pub compaction: Option<CompactionSettings>,
-    pub auto_refine: Option<AutoRefineSettings>,
     /// Master switch for harness creation and context loading; unset preserves enabled behavior.
     pub harness_refinements: Option<bool>,
     pub agent_traces: Option<AgentTracesSettings>,

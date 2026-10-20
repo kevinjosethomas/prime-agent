@@ -3,7 +3,6 @@
 //! persistence); the Agent owns the loop, this layer decides admission.
 
 pub mod agent_messaging;
-pub mod auto_refine_trigger;
 pub mod auto_retry;
 pub mod auxiliary_model;
 pub mod branch_summarization;
@@ -135,15 +134,7 @@ pub struct AgentSession {
     /// Auxiliary-model routing for compaction summaries; `None` keeps
     /// every summarizer on the session model.
     auxiliary_model: Option<auxiliary_model::AuxiliaryModelContext>,
-    /// Whether this session may auto-refine; defaults off until the
-    /// engine wiring resolves it.
-    auto_refine_allowed: bool,
     refinement_settings: Option<crate::settings::SettingsManager>,
-    /// The resolved auto-refine gates; the compact trigger reads them.
-    auto_refine: refine::AutoRefineGates,
-    /// Session-side auto-refine state the transport surfaces arm and
-    /// consume.
-    compact_auto_refine: std::sync::Mutex<auto_refine_trigger::CompactAutoRefineState>,
     /// The kernel-state probe behind the post-compaction
     /// `ipython_state` notice; `None` without a kernel.
     kernel_state: Option<std::sync::Arc<dyn ipython_state::CompactionKernelProbe>>,
@@ -243,10 +234,7 @@ impl AgentSession {
             digest_pending: std::sync::atomic::AtomicBool::new(false),
             compaction: std::sync::RwLock::new(compaction::CompactionSettings::default()),
             auxiliary_model: None,
-            auto_refine_allowed: false,
             refinement_settings: None,
-            auto_refine: refine::AutoRefineGates::default(),
-            compact_auto_refine: std::sync::Mutex::default(),
             kernel_state: None,
             pending_next_turn_rows: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             skills: Vec::new(),

@@ -134,9 +134,6 @@ impl AgentSessionEngine {
                         telemetry.note_compaction(Some(run.duration_ms));
                     }
                 }
-                // The run stops on purpose; the worker services the armed review off
-                // the settle (never before the `Done`).
-                self.mark_compact_auto_refine_pending();
                 let entry = serde_json::to_value(&run.entry).unwrap_or(Value::Null);
                 // The wire result is the `CompactionResult` shape; the event reason
                 // is `requested`.

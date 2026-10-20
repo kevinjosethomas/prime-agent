@@ -87,7 +87,6 @@ pub struct RuntimeConfig {
     pub autonomous: Option<AutonomousConfig>,
     pub execution_mode: Option<AppMode>,
     pub telemetry_disabled: bool,
-    pub serialized_refine: bool,
     pub initial_goal: Option<InitialGoal>,
 }
 
@@ -270,8 +269,6 @@ pub fn runtime_config_from_args(
         autonomous: AutonomousConfig::from_args(parsed),
         execution_mode: (app_mode != AppMode::Daemon).then_some(app_mode),
         telemetry_disabled,
-        // Serialized refine is only used by print/json/rpc clients.
-        serialized_refine: !matches!(app_mode, AppMode::Interactive | AppMode::Daemon),
         initial_goal: parsed.goal.as_ref().map(|objective| InitialGoal {
             objective: objective.clone(),
             token_budget: parsed.goal_token_budget,

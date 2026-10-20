@@ -364,7 +364,6 @@ impl Worker {
         // Mint the owed goal continuation only when nothing is queued;
         // the resume site below clears the suspension gate and wakes
         // the runner (TS `compact()` goal branch).
-        let mut goal_continue_scheduled = false;
         if let crate::engine::CompactionOutcome::Compacted { .. } = &outcome {
             let goal_active = self
                 .engine
@@ -456,63 +455,11 @@ impl Worker {
                 // The resume site: clears the suspension and wakes the
                 // runner.
                 self.resume_queued_input();
-                goal_continue_scheduled = true;
             }
         }
         match outcome {
             crate::engine::CompactionOutcome::Compacted { run } => {
                 let run = *run;
-                // The compact-trigger review consumes here while the session is idle;
-                // the goal-continue branch defers to that turn's boundary instead of
-                // interleaving before it.
-                let engine = std::sync::Arc::clone(&self.engine);
-                let refined = if goal_continue_scheduled {
-                    Ok(None)
-                } else {
-                    tokio::task::spawn_blocking(move || engine.consume_compact_auto_refine())
-                        .await
-                        .unwrap_or_else(|error| {
-                            Err(anyhow::anyhow!("auto-refinement task failed: {error}"))
-                        })
-                };
-                match refined {
-                    Ok(Some(result)) => {
-                        let outcome_row =
-                            pa_core::session_engine::refine::create_refinement_outcome_message(
-                                &result,
-                            );
-                        if let Ok(value) = serde_json::to_value(
-                            pa_types::session::AgentMessage::Custom(outcome_row),
-                        ) {
-                            self.emit_custom_row(&value);
-                        }
-                        if result.applied_edits.iter().any(|edit| edit.applied) {
-                            let notice =
-                                pa_core::session_engine::refine::create_refinement_notice_message(
-                                    &result,
-                                    pa_core::session_engine::refine::RefinementSource::Auto,
-                                );
-                            if let Ok(value) = serde_json::to_value(
-                                pa_types::session::AgentMessage::Custom(notice),
-                            ) {
-                                self.emit_custom_row(&value);
-                            }
-                        }
-                        crate::user_bash::emit_session_event_frame(
-                            &self.core,
-                            &self.events,
-                            crate::worker::refine_complete_event(&result),
-                        );
-                    }
-                    Ok(None) => {}
-                    Err(error) => {
-                        eprintln!("pa-daemon: auto-refinement after compaction failed: {error:#}");
-                        self.emit_worker_event(json!({
-                            "type": "refine_failed",
-                            "error": format!("{error:#}"),
-                        }));
-                    }
-                }
                 response_success(None, "compact", Some(run.result))
             }
             crate::engine::CompactionOutcome::Skipped { message } => {

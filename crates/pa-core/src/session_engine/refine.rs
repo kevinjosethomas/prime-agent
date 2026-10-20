@@ -9,8 +9,7 @@ use serde_json::json;
 
 use super::AgentSession;
 use crate::refinement::executor::{
-    apply_refinement_plan, plan_refinement, review_auto_refine, AutoRefineReview,
-    AutoRefineReviewContext, RefineOptions as CoreRefineOptions, RefinementPlan,
+    apply_refinement_plan, plan_refinement, RefineOptions as CoreRefineOptions, RefinementPlan,
 };
 use crate::refinement::{
     append_global_refinement, format_refinement_notice_body, load_global_refinement_history,
@@ -24,70 +23,9 @@ pub const REFINEMENT_OUTCOME_CUSTOM_TYPE: &str = "refinement_outcome";
 /// Model-facing notice custom type (display=false).
 pub const REFINEMENT_NOTICE_CUSTOM_TYPE: &str = "refinement_notice";
 
-pub const AUTO_REFINE_COMPACT_REASON: &str = "compact";
-
-/// The resolved auto-refine gates: the settings block with the product
-/// defaults and clamps applied.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AutoRefineGates {
-    pub enabled: bool,
-    pub turn_interval: u64,
-    pub compact: bool,
-    pub cooldown_ms: u64,
-}
-
-impl Default for AutoRefineGates {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            turn_interval: 25,
-            compact: true,
-            cooldown_ms: 20 * 60 * 1000,
-        }
-    }
-}
-
-impl AutoRefineGates {
-    /// The interval clamps to at least 1.
-    #[must_use]
-    pub fn from_settings(raw: Option<&crate::settings::AutoRefineSettings>) -> Self {
-        let Some(raw) = raw else {
-            return Self::default();
-        };
-        let defaults = Self::default();
-        Self {
-            enabled: raw.enabled.unwrap_or(defaults.enabled),
-            turn_interval: raw.turn_interval.unwrap_or(defaults.turn_interval).max(1),
-            compact: raw.compact.unwrap_or(defaults.compact),
-            cooldown_ms: raw.cooldown_ms.unwrap_or(defaults.cooldown_ms),
-        }
-    }
-}
-
-/// The instructions an approved review carries into the run.
-#[must_use]
-pub fn auto_refine_instructions(reason: &str, review: &AutoRefineReview) -> String {
-    let detail = review
-        .instructions
-        .as_deref()
-        .map(|instructions| {
-            format!(
-                "
-
-Reviewer instructions: {instructions}"
-            )
-        })
-        .unwrap_or_default();
-    format!(
-        "Automatic refine review triggered by {reason}. Only create/update/delete local harness entries if there is clear evidence that should help this session continue. Prefer an empty edits array over speculative or one-off memories. Do not promote anything global unless explicitly requested. Reviewer rationale: {}{detail}",
-        review.rationale
-    )
-}
-
 /// Who triggered a refinement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefinementSource {
-    Auto,
     User,
     SelfRefine,
 }
@@ -95,7 +33,6 @@ pub enum RefinementSource {
 impl RefinementSource {
     fn as_str(self) -> &'static str {
         match self {
-            RefinementSource::Auto => "auto",
             RefinementSource::User => "user",
             RefinementSource::SelfRefine => "self",
         }
@@ -475,141 +412,6 @@ pub struct RefineOptions {
     pub rollback_id: Option<String>,
 }
 
-/// The compact-trigger round's resolution: decline, deferred behind an
-/// active agent turn, or ran.
-pub(crate) enum AutoRefineRound {
-    /// No refinement ran; the caller stamps the review cooldown.
-    Declined,
-    /// Approved mid-stream: the review is retained and the next serviced
-    /// boundary runs it.
-    Deferred(AutoRefineReview),
-    /// The refinement ran.
-    Ran(RefinementResult),
-}
-
-impl AgentSession {
-    /// The compact-trigger review: an LLM call over the conversation, the
-    /// merged harness state, and the refinement history. `Ok(None)` is the
-    /// decline; `Ok(Some(review))` a fresh approval.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the conversation history cannot be read or
-    /// when the review request fails; a decline is `Ok(None)`.
-    pub async fn review_compact_auto_refine(
-        &self,
-        model: &pa_types::ai::Model,
-        api_key: Option<String>,
-        global_harness_dir: &Path,
-        turns_since_last_review: u32,
-        branch_version: u64,
-    ) -> anyhow::Result<Option<AutoRefineReview>> {
-        if !self.harness_refinements_enabled() {
-            return Ok(None);
-        }
-        // The review reads the same planning inputs the run plans
-        // against, extracted under this lock from the retained rows.
-        let (parts, merged_state, history) = {
-            let session = self.session_handle().lock().await;
-            let local_state =
-                load_harness_state(&local_harness_state_dir(&session), HarnessScope::Local);
-            let global_state = load_harness_state(global_harness_dir, HarnessScope::Global);
-            (
-                session.refine_transcript_parts(),
-                merge_harness_states(&global_state, Some(&local_state)),
-                load_global_refinement_history(global_harness_dir),
-            )
-        };
-        // Refinement deliberately reviews historical messages; await the
-        // transcript parts after releasing the session mutex.
-        let crate::session::manager::RefineTranscriptParts {
-            messages,
-            refinement_history: session_history,
-        } = parts.await?;
-        let history = crate::refinement::merge_refinement_history(&history, &session_history);
-        let review = review_auto_refine(
-            &messages,
-            &merged_state,
-            &history,
-            model,
-            &AutoRefineReviewContext {
-                reason: AUTO_REFINE_COMPACT_REASON.to_string(),
-                turns_since_last_review,
-            },
-            default_refiner_call(api_key.clone()),
-        )
-        .await?;
-        if !review.should_refine {
-            return Ok(None);
-        }
-        // A branch move (or a replacement teardown's discard) bumped the version
-        // while the review's model call was in flight — the approval belongs to
-        // the abandoned conversation, so the refinement run never starts.
-        if !self.compact_auto_refine_branch_version_unchanged(branch_version) {
-            return Ok(None);
-        }
-        Ok(Some(review))
-    }
-
-    /// The serialized arm's compact-trigger round: the review, then only on
-    /// approval the refinement run. The serialized boundary is quiescent, so
-    /// this arm carries no active-agent gate.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the review or the refinement run fails; a decline
-    /// is `Ok(None)`.
-    pub async fn auto_refine_after_compaction(
-        &self,
-        model: &pa_types::ai::Model,
-        api_key: Option<String>,
-        global_harness_dir: std::path::PathBuf,
-        turns_since_last_review: u32,
-        branch_version: u64,
-    ) -> anyhow::Result<Option<RefinementResult>> {
-        let Some(review) = self
-            .review_compact_auto_refine(
-                model,
-                api_key.clone(),
-                &global_harness_dir,
-                turns_since_last_review,
-                branch_version,
-            )
-            .await?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(
-            self.run_approved_refine(&review, model, api_key, global_harness_dir)
-                .await?,
-        ))
-    }
-
-    /// The approved review's refinement run; the result consumes the
-    /// review.
-    pub(crate) async fn run_approved_refine(
-        &self,
-        review: &AutoRefineReview,
-        model: &pa_types::ai::Model,
-        api_key: Option<String>,
-        global_harness_dir: std::path::PathBuf,
-    ) -> anyhow::Result<RefinementResult> {
-        let options = RefineOptions {
-            global: false,
-            instructions: Some(auto_refine_instructions(AUTO_REFINE_COMPACT_REASON, review)),
-            rollback_id: None,
-        };
-        self.refine(
-            &options,
-            RefinementSource::Auto,
-            model,
-            api_key,
-            global_harness_dir,
-        )
-        .await
-    }
-}
-
 /// The default model seam over pa-ai completion.
 #[must_use]
 pub fn default_refiner_call(api_key: Option<String>) -> crate::refinement::executor::RefinerFn {
@@ -792,58 +594,6 @@ mod tests {
         assert_eq!(
             notice.content,
             UserContent::Text("[user-refinement]\n\nadd memory".to_string())
-        );
-    }
-
-    #[test]
-    fn auto_refine_gates_resolve_the_ts_defaults_and_clamps() {
-        assert_eq!(
-            AutoRefineGates::from_settings(None),
-            AutoRefineGates {
-                enabled: true,
-                turn_interval: 25,
-                compact: true,
-                cooldown_ms: 20 * 60 * 1000,
-            }
-        );
-        let raw = crate::settings::AutoRefineSettings {
-            enabled: Some(false),
-            turn_interval: Some(0),
-            compact: Some(false),
-            cooldown_ms: Some(5),
-        };
-        assert_eq!(
-            AutoRefineGates::from_settings(Some(&raw)),
-            AutoRefineGates {
-                enabled: false,
-                turn_interval: 1,
-                compact: false,
-                cooldown_ms: 5,
-            }
-        );
-    }
-
-    #[test]
-    fn auto_refine_instructions_compose_the_ts_text() {
-        let review = AutoRefineReview {
-            should_refine: true,
-            rationale: "reusable tactic".to_string(),
-            instructions: Some("record it".to_string()),
-        };
-        assert_eq!(
-            auto_refine_instructions("compact", &review),
-            "Automatic refine review triggered by compact. Only create/update/delete local harness entries if there is clear evidence that should help this session continue. Prefer an empty edits array over speculative or one-off memories. Do not promote anything global unless explicitly requested. Reviewer rationale: reusable tactic
-
-Reviewer instructions: record it"
-        );
-        let bare = AutoRefineReview {
-            should_refine: true,
-            rationale: "reusable tactic".to_string(),
-            instructions: None,
-        };
-        assert_eq!(
-            auto_refine_instructions("compact", &bare),
-            "Automatic refine review triggered by compact. Only create/update/delete local harness entries if there is clear evidence that should help this session continue. Prefer an empty edits array over speculative or one-off memories. Do not promote anything global unless explicitly requested. Reviewer rationale: reusable tactic"
         );
     }
 

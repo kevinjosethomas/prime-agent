@@ -1283,7 +1283,6 @@ mod tests {
                     "reserveTokens": 1,
                     "keepRecentTokens": 10,
                 },
-                "autoRefine": { "enabled": false },
             }),
         )
         .await;
