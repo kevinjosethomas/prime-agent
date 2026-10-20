@@ -2354,9 +2354,7 @@ mod tests {
         // Hold the client WRITE guard BEFORE the driver can install: the
         // connect resolves and the driver parks at the guard await (never
         // inside the registry gate — no deadlock by design).
-        let mut guard = std::sync::Arc::clone(&session.state.client)
-            .write_owned()
-            .await;
+        let guard = session.state.client.write().await;
         // Give the driver a beat to park at the guard.
         tokio::time::sleep(Duration::from_millis(100)).await;
         // The stop's marks land under the registry gate while the client
@@ -2367,7 +2365,7 @@ mod tests {
             .expect("the stop settles honestly against the parked install");
         // Release: the install proceeds to the registry gate and REFUSES
         // on the mark.
-        guard.unlock_mut();
+        drop(guard);
         drop(events);
         // No Connected past the boundary; the request refused.
         assert_ne!(
