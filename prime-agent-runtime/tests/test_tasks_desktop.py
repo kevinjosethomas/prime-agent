@@ -8,6 +8,7 @@ Pure Python CI does not depend on a neighboring desktop checkout or Node install
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -63,6 +64,34 @@ class DesktopInteropTests(unittest.IsolatedAsyncioTestCase):
             restored = await changed.restore()
             self.assertEqual((restored.archived, restored.status), (False, "ready"))
             self.assertEqual(await client.list(status="ready"), (restored,))
+
+    async def test_canonical_link_accepts_frozen_agent_shapes(self):
+        with tempfile.TemporaryDirectory(prefix="tasks agent link ") as directory:
+            argv = json.loads(os.environ["TASKS_DESKTOP_REPORTER"])
+            client = Client(command=[*argv, "--db", str(Path(directory) / "state.sqlite")])
+            task = await client.create("fixture", "Verify frozen Agent links")
+
+            @dataclass
+            class Agent:
+                name: str | None = None
+                session_id: str | None = None
+                relationship: str = "child"
+                child_id: str | None = None
+                session_dir: object = None
+
+            child_dir = Path(directory) / "agent-child"
+            await task.link(Agent(name="agent-worker", session_id="agent-session",
+                                  relationship="child", child_id="agent-child", session_dir=child_dir))
+            agents = (await client._context())["agents"]
+            self.assertEqual(agents, [{
+                "taskId": "fixture", "rlmChildId": "agent-child", "sessionDir": str(child_dir),
+                "sessionId": "agent-session", "name": "agent-worker", "role": "worker"}])
+            await task.link(Agent(name="agent-parent", session_id="agent-parent-session",
+                                  relationship="parent"))
+            await task.link(Agent(name="agent-sibling", session_id="agent-sibling-session",
+                                  relationship="sibling"))
+            agents = (await client._context())["agents"]
+            self.assertEqual(len(agents), 3)
 
     async def test_canonical_link_queued_then_actual_roster_session(self):
         with tempfile.TemporaryDirectory(prefix="tasks assignment ") as directory:

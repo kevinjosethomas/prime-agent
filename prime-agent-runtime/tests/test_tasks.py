@@ -9,7 +9,7 @@ model inference is needed.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import FrozenInstanceError
+from dataclasses import dataclass, FrozenInstanceError
 import json
 import os
 from pathlib import Path
@@ -54,8 +54,7 @@ else:
             sys.exit(44)
         for key, item in event["changes"].items():
             value[key] = item
-        # Host contract: the question is required exactly while the merged
-        # status is needs_input, and is cleared on every other status.
+        # Host contract: question required iff merged status is needs_input.
         if value["status"] == "needs_input" and not value.get("question", "").strip():
             sys.exit(45)
         if value["status"] != "needs_input":
@@ -78,6 +77,17 @@ else:
         sys.exit(42)
     print(json.dumps({"disposition": "applied"}))
 '''
+
+
+@dataclass
+class Agent:
+    """The frozen Agent shape the new API returns."""
+
+    name: str | None = None
+    session_id: str | None = None
+    relationship: str = "child"
+    child_id: str | None = None
+    session_dir: object = None
 
 
 class TaskTests(unittest.IsolatedAsyncioTestCase):
@@ -258,6 +268,35 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
                       (await self.client._context())["agents"])
         with self.assertRaises(TypeError):
             await task.link({"sessionId": "guessed"})
+
+    async def test_link_accepts_frozen_agents_with_real_session_ids(self):
+        task = await self.client.create("parser", "Parse JSON in Prime CLI logs")
+        directory = Path(self.directory.name) / "child"
+        await task.link(Agent(name="parser-worker", session_id="child-session",
+                              relationship="child", child_id="child", session_dir=directory))
+        self.assertEqual((await self.client._context())["agents"], [{
+            "taskId": "parser", "rlmChildId": "child", "sessionDir": str(directory),
+            "sessionId": "child-session", "name": "parser-worker", "role": "worker"}])
+        for relationship in ("parent", "sibling"):
+            with self.subTest(relationship=relationship):
+                await task.link(Agent(name=f"{relationship}-peer", session_id="peer-session",
+                                      relationship=relationship))
+        self.assertEqual([item for item in (await self.client._context())["agents"]
+                           if item.get("sessionId") == "peer-session"], [
+            {"taskId": "parser", "sessionId": "peer-session", "name": "parent-peer", "role": "worker"},
+            {"taskId": "parser", "sessionId": "peer-session", "name": "sibling-peer", "role": "worker"}])
+        # A real session id is mandatory: no fake ids, no guessed names.
+        for agent in (Agent(name="w", relationship="child", child_id="c", session_dir=directory),
+                      Agent(name="w", session_id="  "),
+                      Agent(name="w", session_id="s", relationship="cousin"),
+                      Agent(name="w", session_id="s", relationship="sibling", child_id="c"),
+                      Agent(name=None, session_id="s"),
+                      Agent(session_id="s")):
+            with self.subTest(agent=agent):
+                with self.assertRaises((TypeError, ValueError)):
+                    await task.link(agent)
+        with self.assertRaises(TypeError):
+            await task.link("not-an-agent")
 
     async def test_timeout_terminates_child_and_does_not_block_event_loop(self):
         client = Client(command=[sys.executable, "-c", "import threading; threading.Event().wait()"], timeout=0.2)

@@ -1,18 +1,7 @@
-//! The trusted tasks-reporter env contract: the canonical JSON configuration the
-//! desktop pushes to the daemon (`set_task_reporter`) and the daemon stamps on
-//! every kernel environment it provisions.
-//!
-//! Two delivery paths converge on [`current`]:
-//! - the daemon stamps [`TASKS_REPORTER_ENV`] on every spawned worker process
-//!   (`worker_launch_env`), and the worker's kernels inherit it;
-//! - the supervisor also forwards the accepted configuration to already-live
-//!   workers, whose engines store it here ([`store_forwarded`]) so a kernel
-//!   (re)start inside an existing worker picks the configuration up without a
-//!   worker restart. A forwarded value also wins inside a freshly stamped
-//!   worker (the two are the same trusted configuration).
-//!
-//! The value is trusted only because the daemon set it; it must never be
-//! sourced from prompt or task content.
+//! The trusted tasks-reporter env contract: the canonical JSON the daemon
+//! stamps on every kernel environment or forwards to a live worker, so
+//! `import tasks` self-configures without any prompt. Trusted only because
+//! the daemon set it; never sourced from prompt or task content.
 
 use std::sync::Mutex;
 
@@ -56,9 +45,7 @@ pub fn current() -> Option<String> {
 mod tests {
     use super::*;
 
-    /// The forwarded configuration wins over a stale process env value; an
-    /// empty process value never surfaces as configured. The slot is reset
-    /// after the test so it never leaks into other tests' kernel envs.
+    /// The forwarded value wins over the process env; reset so it never leaks.
     #[test]
     fn forwarded_value_wins_over_the_process_env() {
         let prior = current();

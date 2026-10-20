@@ -57,11 +57,13 @@ await task.link(agent)  # rlm.spawn/rlm.create_session handle or list_subagents 
 - `archive`/`restore` use the host's `set-archived` operation, preserving
   status and timestamps. `get(id)` can always read an archived entry; the
   `archived` snapshot field defaults to `False` when an older host omits it.
-- `link` records an actual observed agent identity: an `rlm.create_session`
-  handle (its durable session id), an `rlm.spawn` handle (child id + session
-  directory, no session id yet), or an `rlm.list_subagents()` row (which
-  carries the durable session id once observed). Linking records metadata
-  only; it never spawns, messages, or grants access.
+- `link` records an actual observed agent identity: a native handle, an
+  `rlm.list_subagents()` row, or the frozen `Agent` shape. Agents link as an
+  association by their real `session_id` (any relationship; children also
+  carry `child_id`/`session_dir`); an Agent without a session id is rejected
+  — no fabricated ids or names. Native spawn handles record the queued child
+  identity before its session id exists. Linking records metadata only; it
+  never spawns, messages, or grants access.
 
 Snapshots are immutable; every operation returns a fresh snapshot of current
 state. The public model has exactly id, title, status, question, parent_id,

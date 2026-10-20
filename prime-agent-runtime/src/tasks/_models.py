@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from ._client import Client
-    from rlm import RLMCreateSessionHandle, RLMSpawnHandle, RLMSubagent
 
 Status = Literal["todo", "active", "needs_input", "ready", "backlog", "done"]
 STATUSES = ("todo", "active", "needs_input", "ready", "backlog", "done")
@@ -65,6 +64,6 @@ class Task:
         """Show this task again without changing its status or timestamps."""
         return await self._client.restore(self.id)
 
-    async def link(self, agent: "RLMCreateSessionHandle | RLMSpawnHandle | RLMSubagent") -> Any:
-        """Record an actual native spawn/create_session handle or roster row."""
+    async def link(self, agent: Any) -> Any:
+        """Record an actual native handle/roster row or frozen Agent shape."""
         return await self._client.link(self.id, agent)

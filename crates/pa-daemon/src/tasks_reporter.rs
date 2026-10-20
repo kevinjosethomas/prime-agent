@@ -1,7 +1,5 @@
-//! The `set_task_reporter` payload validation: the desktop's trusted local
-//! reporter argv becomes the canonical JSON the daemon stamps into every
-//! kernel environment it provisions. Never sourced from prompt or task
-//! content; the desktop re-pushes it on every reconnect.
+//! `set_task_reporter` payload validation: the desktop's trusted reporter
+//! argv becomes the canonical JSON stamped into kernel environments.
 
 use anyhow::{bail, Result};
 use serde_json::json;

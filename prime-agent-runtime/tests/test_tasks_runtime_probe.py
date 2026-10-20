@@ -29,8 +29,7 @@ class RuntimeReadinessTests(unittest.TestCase):
                         exec(self.probe, {})
 
     def test_removed_legacy_helpers_are_not_ready(self):
-        # A stale pre-slim runtime still exposes upsert or a configure surface;
-        # the probe must refuse it.
+        # A stale pre-slim runtime still exposes upsert or configure.
         with patch.object(tasks, "upsert", lambda *args, **kwargs: None, create=True):
             with self.assertRaises(AssertionError):
                 exec(self.probe, {})

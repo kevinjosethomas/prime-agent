@@ -15,9 +15,7 @@ use super::{
 /// keeps running after its owner's last connection closes.
 const OWNED_WORKER_DISCONNECT_GRACE: Duration = Duration::from_secs(30);
 
-/// Per-worker budget for the `set_task_reporter` fan-out to live residents:
-/// the value also rides the respawn stamp, so a slow worker never blocks the
-/// desktop's ACK for long.
+/// Per-worker budget for the set_task_reporter fan-out (misses ride the respawn stamp).
 const TASKS_REPORTER_FORWARD_BUDGET_MS: u64 = 2_000;
 
 async fn write_line<W: AsyncWriteExt + Unpin>(writer: &mut W, value: &Value) -> Result<usize> {
@@ -720,21 +718,14 @@ impl Supervisor {
                         );
                     }
                 };
-                // Store first: every worker this supervisor spawns from now on
-                // (root creates, rlm children, create_session sessions, crash
-                // respawns) carries the configuration in its launch env.
+                // Store first: every spawn from now on stamps the config.
                 *self
                     .tasks_reporter
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(canonical.clone());
                 self.note_daemon_event("task_reporter_set", None);
-                // Forward to every live resident worker as one concurrent
-                // batch: its engine stores the value and injects it into each
-                // kernel (re)start's env, so an existing worker picks the
-                // configuration up without a worker restart. A worker whose
-                // forward does not land still carries the value on its next
-                // spawn (the launch-env stamp above), so failures are logged
-                // and reported, never blocking the accepted configuration.
+                // Forward concurrently to live workers (a kernel restart in
+                // an existing worker then picks it up); misses ride the stamp.
                 let config = canonical.as_str();
                 let forwards =
                     futures::future::join_all(self.registry.list().await.into_iter().map(
