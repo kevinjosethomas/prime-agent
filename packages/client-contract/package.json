@@ -7,7 +7,7 @@
   "engines": {
     "node": ">=18"
   },
-  "main": "dist/index.js",
+  "main": "dist/src/index.js",
   "scripts": {
     "gen:ts": "node scripts/gen-ts.mjs",
     "verify": "node scripts/verify-drift.mjs",

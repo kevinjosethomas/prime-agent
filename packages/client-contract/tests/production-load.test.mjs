@@ -33,7 +33,7 @@ test("packed tarball loads with production dependencies only", async () => {
       join(staging, tarball),
     ]);
     const loaded = await import(
-      new URL("./node_modules/prime-agent-client-contract/dist/index.js", `file://${consumer}/`).href
+      new URL("./node_modules/prime-agent-client-contract/dist/src/index.js", `file://${consumer}/`).href
     );
     assert.equal(typeof loaded.loadContract, "function");
     assert.equal(typeof loaded.loadMetadata, "function");

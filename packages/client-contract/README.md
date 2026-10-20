@@ -60,7 +60,7 @@ const metadata = loadMetadata(); // protocol, commands, kinds, errors, capabilit
 
 ## Production consumption
 
-The runtime entry is BUILT JavaScript (`dist/index.js` — Node 18 compatible;
+The runtime entry is BUILT JavaScript (`dist/src/index.js` — Node 18 compatible;
 TypeScript is never imported at runtime). `dist` is a pack-time build
 output, not committed: consumers run `npm run build:validators && npm pack`
 and pin the resulting tarball (`ajv` is the only runtime dependency; the

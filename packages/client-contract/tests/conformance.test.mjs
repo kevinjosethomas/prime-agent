@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadContract, checkInboundFrame, loadMetadata } from "../dist/index.js";
+import { loadContract, checkInboundFrame, loadMetadata } from "../dist/src/index.js";
 
 const generated = join(fileURLToPath(new URL("../generated", import.meta.url)));
 
