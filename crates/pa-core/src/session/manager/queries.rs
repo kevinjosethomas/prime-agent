@@ -66,6 +66,184 @@ impl SessionManager {
         }
     }
 
+    /// Loaded current-context records; not a whole-history view.
+    #[must_use]
+    pub fn retained_entries(&self) -> &[FileEntry] {
+        &self.file_entries
+    }
+
+    pub fn has_thinking_level(&self) -> bool {
+        self.window
+            .as_ref()
+            .is_some_and(super::window::WindowedSessionStore::has_thinking_level)
+            || self
+                .active_branch_entries()
+                .iter()
+                .any(|entry| matches!(entry, FileEntry::ThinkingLevelChange { .. }))
+    }
+
+    pub fn has_service_tier(&self) -> bool {
+        self.window
+            .as_ref()
+            .is_some_and(super::window::WindowedSessionStore::has_service_tier)
+            || self
+                .active_branch_entries()
+                .iter()
+                .any(|entry| matches!(entry, FileEntry::ServiceTierChange { .. }))
+    }
+
+    fn active_branch_entries(&self) -> Vec<&FileEntry> {
+        let mut branch = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let mut id = self.leaf_id.as_deref();
+        while let Some(index) = id.and_then(|id| self.by_id.get(id)).copied() {
+            // A corrupt file can hold a parent cycle; opening must not hang.
+            if !visited.insert(index) {
+                break;
+            }
+            let entry = &self.file_entries[index];
+            branch.push(entry);
+            id = entry.parent_id();
+        }
+        branch.reverse();
+        branch
+    }
+
+    /// Whether the active branch still grows through `prefix_leaf` — the
+    /// leaf a compaction prepared against — with no compaction row between
+    /// the two. The compaction commit's structural-prefix check: a plain
+    /// append chains onto the leaf behind `prefix_leaf` and stays on the
+    /// path (it joins the retained tail behind the committed summary);
+    /// a branch switch or another compaction rebuilds the path and
+    /// invalidates the prepared cut.
+    pub(crate) fn compaction_prefix_intact(&self, prefix_leaf: Option<&str>) -> bool {
+        let Some(prefix_leaf) = prefix_leaf else {
+            return self.leaf_id.is_none();
+        };
+        let mut visited = std::collections::HashSet::new();
+        let mut id = self.leaf_id.as_deref();
+        while let Some(current) = id {
+            // A corrupt file can hold a parent cycle; the check must not hang.
+            if !visited.insert(current) {
+                return false;
+            }
+            // The prefix counts only as an entry of the active branch: a
+            // dangling parent id that left the tree is a different branch.
+            let Some(&index) = self.by_id.get(current) else {
+                return false;
+            };
+            if current == prefix_leaf {
+                return true;
+            }
+            if matches!(self.file_entries[index], FileEntry::Compaction { .. }) {
+                return false;
+            }
+            id = self.file_entries[index].parent_id();
+        }
+        false
+    }
+
+    #[must_use]
+    pub fn active_goal_state(&self) -> Option<crate::goals::GoalState> {
+        if let Some(window) = &self.window {
+            return window.goal_state().cloned();
+        }
+        self.active_branch_entries().iter().rev().find_map(|entry| {
+            let FileEntry::Custom { payload, .. } = entry else {
+                return None;
+            };
+            let data = payload.data.as_ref()?;
+            if payload.custom_type != crate::goals::GOAL_STATE_CUSTOM_TYPE
+                || !crate::goals::is_persisted_goal_state(data)
+            {
+                return None;
+            }
+            serde_json::from_value(data.clone())
+                .ok()
+                .map(crate::goals::normalize_goal_state)
+        })
+    }
+
+    /// The branch's newest un-resumed quota park, reachable without
+    /// hydration (newest first): the loaded active branch entries first,
+    /// then — for a windowed store — the window's pre-boundary metadata.
+    #[must_use]
+    pub fn latest_quota_park(
+        &self,
+    ) -> Option<crate::session_engine::provider_park::PersistedQuotaPark> {
+        use crate::session_engine::provider_park::{scan_quota_park_entries, BranchParkScan};
+        // The loaded branch is a borrow scan; the windowed fallback below
+        // reads the older metadata records line by line.
+        let branch: Vec<FileEntry> = self.active_branch_entries().into_iter().cloned().collect();
+        match scan_quota_park_entries(&branch) {
+            BranchParkScan::Park(park) => return Some(park),
+            // A newer resume entry ends the episode; older records restore nothing.
+            BranchParkScan::Resumed => return None,
+            BranchParkScan::None => {}
+        }
+        let window = self.window.as_ref()?;
+        for line in window.metadata_entries().iter().rev() {
+            let Ok(entry) = serde_json::from_str::<FileEntry>(line) else {
+                continue;
+            };
+            match scan_quota_park_entries(std::slice::from_ref(&entry)) {
+                BranchParkScan::Park(park) => return Some(park),
+                BranchParkScan::Resumed => return None,
+                BranchParkScan::None => {}
+            }
+        }
+        None
+    }
+
+    /// Newest `git_state` reachable without hydration: the loaded active
+    /// branch first, then the window's pre-boundary metadata (newest first).
+    pub(crate) fn latest_git_context(&self) -> Option<pa_types::session::GitContext> {
+        let on_branch = self.active_branch_entries().iter().rev().find_map(|entry| {
+            if let FileEntry::GitState { payload, .. } = entry {
+                Some(payload.git.clone())
+            } else {
+                None
+            }
+        });
+        if on_branch.is_some() {
+            return on_branch;
+        }
+        // metadata_entries is file order; the newest wins.
+        self.window
+            .as_ref()?
+            .metadata_entries()
+            .iter()
+            .rev()
+            .find_map(|line| match serde_json::from_str::<FileEntry>(line) {
+                Ok(FileEntry::GitState { payload, .. }) => Some(payload.git),
+                _ => None,
+            })
+    }
+
+    /// The restore-resurrection guard: `Some(failure_text)` when the newest
+    /// goal-state row is `active` but a terminal provider failure (stop
+    /// reason `error`, not quota park) settled after it; the rehydrating
+    /// driver adopts the failure as the goal's terminal state.
+    #[must_use]
+    pub fn stale_active_goal_failure(&self) -> Option<String> {
+        let branch: Vec<FileEntry> = self.active_branch_entries().into_iter().cloned().collect();
+        crate::goals::stale_active_goal_failure(&branch)
+    }
+
+    pub fn has_non_bootstrap_entries(&self) -> bool {
+        self.window
+            .as_ref()
+            .is_some_and(super::window::WindowedSessionStore::has_non_bootstrap_entries)
+            || self.file_entries.iter().any(|entry| {
+                !matches!(
+                    entry,
+                    FileEntry::Header { .. }
+                        | FileEntry::ModelChange { .. }
+                        | FileEntry::ThinkingLevelChange { .. }
+                        | FileEntry::ServiceTierChange { .. }
+                )
+            })
+    }
 
     #[cfg(test)]
     #[must_use]
