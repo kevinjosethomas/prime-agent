@@ -18,7 +18,7 @@ use super::oauth_discovery::{
     random_state, register_client, validated_https_url, AudienceMode, TokenResponse,
     TOKEN_EXPIRY_BUFFER_MS,
 };
-use super::oauth_http::OAuthHttp;
+use super::oauth_http::{OAuthHttp, OAuthHttpMethod, OAuthHttpRequest};
 use url::Url;
 
 /// One MCP server's OAuth setup: builtin catalog entries and `--oauth`
@@ -125,6 +125,60 @@ enum ManualOutcome {
     Failed(anyhow::Error),
 }
 
+/// The account identity a fresh login could read once at connect: a
+/// workspace/org or user name and optionally an email. Best-effort; a server
+/// that offers no identity endpoint yields `None`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpLoginIdentity {
+    pub label: Option<String>,
+    pub email: Option<String>,
+}
+
+/// The one-time identity read after a successful login: the authorization
+/// server's OIDC userinfo endpoint with the fresh access token. Never
+/// fails the login; never keeps more than a bounded label and email.
+async fn fetch_login_identity(
+    http: &dyn OAuthHttp,
+    userinfo_endpoint: Option<&str>,
+    access_token: &str,
+) -> Option<McpLoginIdentity> {
+    let endpoint = userinfo_endpoint?;
+    let response = http
+        .request(OAuthHttpRequest {
+            method: OAuthHttpMethod::Get,
+            url: endpoint.to_string(),
+            headers: vec![(
+                "authorization".to_string(),
+                format!("Bearer {access_token}"),
+            )],
+            body: None,
+        })
+        .await
+        .ok()?;
+    if response.status != 200 {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_str(&response.body).ok()?;
+    let text = |name: &str| -> Option<String> {
+        let field = value
+            .get(name)
+            .and_then(|field| field.as_str())
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .filter(|text| text.len() <= 200)
+            .filter(|text| !text.contains(|c: char| c.is_control()))
+            .map(str::to_string);
+        field
+    };
+    let label = text("name")
+        .or_else(|| text("workspace_name"))
+        .or_else(|| text("organization_name"))
+        .or_else(|| text("preferred_username"))
+        .or_else(|| text("username"));
+    let email = text("email");
+    (label.is_some() || email.is_some()).then_some(McpLoginIdentity { label, email })
+}
+
 /// Run one interactive login; the returned credential is ready to persist under `mcp:<server>`.
 ///
 /// # Errors
@@ -136,6 +190,21 @@ pub async fn mcp_login(
     config: &McpOAuthConfig,
     ui: &dyn McpLoginUi,
 ) -> Result<AuthCredential> {
+    Ok(mcp_login_with_identity(http, config, ui).await?.0)
+}
+
+/// The login plus the account identity it could read: the same flow as
+/// [`mcp_login`], with a one-time best-effort identity read appended.
+///
+/// # Errors
+///
+/// Returns an error when discovery, registration, the callback server, the
+/// paste validation, or the token exchange fails.
+pub async fn mcp_login_with_identity(
+    http: &dyn OAuthHttp,
+    config: &McpOAuthConfig,
+    ui: &dyn McpLoginUi,
+) -> Result<(AuthCredential, Option<McpLoginIdentity>)> {
     super::oauth_callback::validate_callback_port(config.callback_port)?;
     let discovery = discover(http, &config.url).await?;
     ui.on_progress(&format!(
@@ -295,7 +364,8 @@ pub async fn mcp_login(
         token_params.push(("resource".to_string(), resource.clone()));
     }
     let token = exchange_token(http, &discovery.metadata.token_endpoint, &token_params).await?;
-    Ok(to_credentials(
+    let access_token = token.access_token.clone();
+    let credential = to_credentials(
         token,
         &discovery.metadata.token_endpoint,
         &client_id,
@@ -309,7 +379,16 @@ pub async fn mcp_login(
                 .map(str::to_string),
         },
         None,
-    ))
+    );
+    // The one-time identity read never fails the login and never spans UI
+    // surfaces: a server without an identity endpoint simply stores none.
+    let identity = fetch_login_identity(
+        http,
+        discovery.metadata.userinfo_endpoint.as_deref(),
+        &access_token,
+    )
+    .await;
+    Ok((credential, identity))
 }
 
 /// Refresh stored credentials. Every binding the login established must
@@ -729,6 +808,110 @@ mod tests {
         let rebound = std::net::TcpListener::bind(("127.0.0.1", port))
             .expect("cancelling login must release its callback port before the next attempt");
         drop(rebound);
+    }
+
+    #[tokio::test]
+    async fn login_reads_the_account_identity_once_from_userinfo() {
+        let mut meta = origin_meta();
+        meta["userinfo_endpoint"] = serde_json::json!("https://srv.test/userinfo");
+        let http = ScriptedHttp::new(vec![
+            (ORIGIN_URL, 404, None, ""),
+            (
+                "https://srv.test/.well-known/oauth-protected-resource/mcp",
+                404,
+                None,
+                "",
+            ),
+            (ORIGIN_META_URL, 200, None, &json_response(&meta)),
+            (
+                ORIGIN_TOKEN,
+                200,
+                None,
+                r#"{"access_token":"origin-access","refresh_token":"origin-refresh"}"#,
+            ),
+            (
+                "https://srv.test/userinfo",
+                200,
+                None,
+                r#"{"name":"Acme workspace","email":"dev@acme.io"}"#,
+            ),
+        ]);
+        let mut config = config("Slack", ORIGIN_URL);
+        config.client_id = Some("registered-client".to_string());
+        let (credential, identity) = mcp_login_with_identity(&http, &config, &test_ui())
+            .await
+            .unwrap();
+        assert_eq!(credential.credential_type(), "oauth");
+        let identity = identity.expect("the userinfo endpoint yields an identity");
+        assert_eq!(identity.label.as_deref(), Some("Acme workspace"));
+        assert_eq!(identity.email.as_deref(), Some("dev@acme.io"));
+    }
+
+    #[tokio::test]
+    async fn login_without_identity_fields_or_endpoints_stores_none() {
+        // No userinfo endpoint: the identity read never runs, the login stands.
+        let mut meta = origin_meta();
+        meta["userinfo_endpoint"] = serde_json::json!("not-a-url");
+        let http = ScriptedHttp::new(vec![
+            (ORIGIN_URL, 404, None, ""),
+            (
+                "https://srv.test/.well-known/oauth-protected-resource/mcp",
+                404,
+                None,
+                "",
+            ),
+            (ORIGIN_META_URL, 200, None, &json_response(&meta)),
+            (
+                ORIGIN_TOKEN,
+                200,
+                None,
+                r#"{"access_token":"origin-access","refresh_token":"origin-refresh"}"#,
+            ),
+        ]);
+        let mut config = config("Slack", ORIGIN_URL);
+        config.client_id = Some("registered-client".to_string());
+        let (credential, identity) = mcp_login_with_identity(&http, &config, &test_ui())
+            .await
+            .unwrap();
+        assert_eq!(credential.credential_type(), "oauth");
+        assert!(
+            identity.is_none(),
+            "an invalid userinfo endpoint stores nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn userinfo_without_usable_identity_fields_yields_none() {
+        let mut meta = origin_meta();
+        meta["userinfo_endpoint"] = serde_json::json!("https://srv.test/userinfo");
+        let http = ScriptedHttp::new(vec![
+            (ORIGIN_URL, 404, None, ""),
+            (
+                "https://srv.test/.well-known/oauth-protected-resource/mcp",
+                404,
+                None,
+                "",
+            ),
+            (ORIGIN_META_URL, 200, None, &json_response(&meta)),
+            (
+                ORIGIN_TOKEN,
+                200,
+                None,
+                r#"{"access_token":"origin-access","refresh_token":"origin-refresh"}"#,
+            ),
+            (
+                "https://srv.test/userinfo",
+                200,
+                None,
+                r#"{"sub":"opaque-subject"}"#,
+            ),
+        ]);
+        let mut config = config("Slack", ORIGIN_URL);
+        config.client_id = Some("registered-client".to_string());
+        let (_credential, identity) = mcp_login_with_identity(&http, &config, &test_ui())
+            .await
+            .unwrap();
+        assert!(identity.is_none(), "no name and no email is no identity");
     }
 
     #[tokio::test(start_paused = true)]

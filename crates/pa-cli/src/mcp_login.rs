@@ -106,6 +106,23 @@ impl TerminalMcpAuth {
         ))
     }
 
+    /// Run one ADD-account login against an injectable UI/transport: the
+    /// connection id is minted behind the scenes; the service's other
+    /// accounts stay untouched.
+    async fn login_add_account_with(
+        &self,
+        service: &str,
+        ui: &dyn McpLoginUi,
+        http: &dyn OAuthHttp,
+    ) -> Result<String> {
+        let context = self.manager().add_account_context(service)?;
+        let connection_id = context.server().to_string();
+        context.run(ui, http).await?;
+        Ok(format!(
+            "Connected a new {service} account ({connection_id}). Its skill activates in new              sessions (/new)."
+        ))
+    }
+
     async fn login_inner(
         &self,
         server: &str,
@@ -113,6 +130,18 @@ impl TerminalMcpAuth {
     ) -> Result<String> {
         let ui = PanelMcpLoginUi { panel };
         self.login_with(server, &ui, &ReqwestOAuthHttp::new()).await
+    }
+
+    /// The settings surface's add-account flow: the normal login run with the
+    /// next free per-account id minted by the manager.
+    async fn login_add_account_inner(
+        &self,
+        service: &str,
+        panel: pa_tui::auth_panel::AuthPanelHandle,
+    ) -> Result<String> {
+        let ui = PanelMcpLoginUi { panel };
+        self.login_add_account_with(service, &ui, &ReqwestOAuthHttp::new())
+            .await
     }
 
     /// The inline paste panel's flow: prompt for the ONE credential a pasteable
@@ -210,6 +239,18 @@ impl TerminalMcpAuth {
         Ok(format!(
             "Disconnected {server}. Its skill deactivates in new sessions (/new)."
         ))
+    }
+}
+
+impl TerminalMcpAuth {
+    /// The auth helper's add-account entry: one more account of one service.
+    pub fn login_add_account(
+        &self,
+        service: &str,
+        panel: pa_tui::auth_panel::AuthPanelHandle,
+    ) -> AuthFuture {
+        let (auth, service) = (self.clone(), service.to_string());
+        Box::pin(async move { auth.login_add_account_inner(&service, panel).await })
     }
 }
 

@@ -53,6 +53,7 @@ fn supervisor_end_to_end_scripted_session_lifecycle() {
             "subagent_model_defaults",
             "global_harness_defaults",
             "prompt_guidelines",
+            "mcp_multi_account",
             "workstream_classification",
             "side_question_transcript",
             "transient_bash",

@@ -774,3 +774,476 @@ fn api_key_credential_views_see_a_cross_instance_write_after_the_reload() {
         "the reload sees the cross-instance write"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Multi-account: add-account minting, identity labels, rename, disconnect.
+// ---------------------------------------------------------------------------
+
+/// A login UI whose manual paste derives the callback redirect from the
+/// authorization URL (the `oauth` suite's `TestUi` shape, local to these tests).
+struct ManualPasteUi {
+    auth_url: std::sync::Mutex<String>,
+}
+
+impl crate::mcp::McpLoginUi for ManualPasteUi {
+    fn on_progress(&self, _message: &str) {}
+    fn on_auth(&self, url: &str, _instructions: &str) {
+        *self.auth_url.lock().unwrap() = url.to_string();
+    }
+    fn on_prompt(
+        &self,
+        _message: &str,
+        _placeholder: &str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send>> {
+        Box::pin(async { Err(anyhow::anyhow!("prompt surface unavailable in tests")) })
+    }
+    fn on_manual_code_input(
+        &self,
+    ) -> Option<std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send>>> {
+        let url = self.auth_url.lock().unwrap().clone();
+        Some(Box::pin(async move {
+            let value = |name: &str| -> Option<String> {
+                url.split('?')
+                    .nth(1)?
+                    .split('&')
+                    .filter_map(|pair| pair.split_once('='))
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| value.replace("%3A", ":").replace("%2F", "/"))
+            };
+            let redirect = value("redirect_uri")?;
+            let state = value("state")?;
+            Some(format!("{redirect}?code=the-code&state={state}"))
+        }))
+    }
+}
+
+/// A scripted OAuth transport: url -> (status, body), unknown urls fail.
+struct LoginHttp {
+    responses: std::collections::HashMap<String, crate::mcp::OAuthHttpResponse>,
+}
+
+impl LoginHttp {
+    fn new(responses: Vec<(&str, u16, &str)>) -> Self {
+        LoginHttp {
+            responses: responses
+                .into_iter()
+                .map(|(url, status, body)| {
+                    (
+                        url.to_string(),
+                        crate::mcp::OAuthHttpResponse {
+                            status,
+                            headers: vec![(
+                                "content-type".to_string(),
+                                "application/json".to_string(),
+                            )],
+                            body: body.to_string(),
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+}
+
+impl crate::mcp::OAuthHttp for LoginHttp {
+    fn request(
+        &self,
+        request: crate::mcp::OAuthHttpRequest,
+    ) -> futures::future::BoxFuture<'_, anyhow::Result<crate::mcp::OAuthHttpResponse>> {
+        let response = self.responses.get(&request.url).cloned();
+        Box::pin(async move {
+            response.ok_or_else(|| anyhow::anyhow!("unexpected request: {}", request.url))
+        })
+    }
+}
+
+fn oauth_service_json(server: &str, url: &str) -> serde_json::Value {
+    let mut entry = entry_json(server, url);
+    entry["label"] = serde_json::json!("Linear");
+    entry
+}
+
+#[tokio::test]
+async fn add_account_login_mints_the_next_id_and_persists_identity() {
+    let agent_dir = tempfile::tempdir().expect("tempdir");
+    let endpoint = "https://srv.test/mcp";
+    let remote = catalog_from_entries(&[oauth_service_json("acme", endpoint)]);
+    let probe = McpEndpointProbe::new(std::sync::Arc::new(FakeProbe {
+        log: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        tool_count: 7,
+    }));
+    let manager = std::sync::Arc::new(std::sync::Mutex::new(McpManager::new(McpManagerOptions {
+        auth_storage: crate::auth::AuthStorage::in_memory(
+            &crate::auth::types::AuthStorageData::default(),
+            std::sync::Arc::new(crate::auth::manager::NoOAuth),
+        ),
+        get_user_servers: no_user_servers(),
+        begin_login: None,
+        agent_dir: Some(agent_dir.path().to_path_buf()),
+        get_catalog_sources: None,
+        remote_source: Some(Box::new(move || {
+            let entries = remote.clone();
+            Some(crate::mcp::catalog_schema::PluginsCatalog {
+                version: 2,
+                counts: crate::mcp::catalog_schema::CatalogCounts::default(),
+                entries,
+            })
+        })),
+        probe_override: Some(probe),
+    })));
+    manager.lock().unwrap().refresh();
+    let http = LoginHttp::new(vec![
+        (endpoint, 404, ""),
+        (
+            "https://srv.test/.well-known/oauth-protected-resource/mcp",
+            404,
+            "",
+        ),
+        (
+            "https://srv.test/.well-known/oauth-authorization-server",
+            200,
+            r#"{"issuer":"https://srv.test/tenant","authorization_endpoint":"https://srv.test/authorize","token_endpoint":"https://srv.test/token","registration_endpoint":"https://srv.test/register","scopes_supported":["read"],"userinfo_endpoint":"https://srv.test/userinfo"}"#,
+        ),
+        (
+            "https://srv.test/register",
+            200,
+            r#"{"client_id":"registered-client","client_id_issued_at":0,"client_secret_expires_at":0}"#,
+        ),
+        (
+            "https://srv.test/token",
+            200,
+            r#"{"access_token":"second-account-access","refresh_token":"second-refresh"}"#,
+        ),
+        (
+            "https://srv.test/userinfo",
+            200,
+            r#"{"name":"Acme workspace","email":"dev@acme.io"}"#,
+        ),
+    ]);
+    // Unknown urls must fail; the scripted map above misses 404s, so give the
+    // discovery candidates empty-200 fallbacks by scripting every candidate.
+    let ui = ManualPasteUi {
+        auth_url: std::sync::Mutex::new(String::new()),
+    };
+    let context = manager
+        .lock()
+        .unwrap()
+        .add_account_context("acme")
+        .expect("the OAuth service supports an add-account login");
+    assert_eq!(context.server(), "acme-2", "the first alias id");
+    context.run(&ui, &http).await.expect("login completes");
+
+    let manager2 = std::sync::Arc::clone(&manager);
+    let (records, roster, views) = {
+        let manager = std::sync::Arc::clone(&manager2);
+        tokio::task::spawn_blocking(move || {
+            manager.lock().unwrap().refresh();
+            let records = manager.lock().unwrap().records_by_id();
+            let roster = manager.lock().unwrap().connection_roster();
+            let views = manager
+                .lock()
+                .unwrap()
+                .service_catalog_connection_views(&[]);
+            (records, roster, views)
+        })
+        .await
+        .expect("blocking read")
+    };
+    let record = records.get("acme-2").expect("the alias record exists");
+    assert_eq!(
+        record.service_id, "acme",
+        "the alias keeps the parent service"
+    );
+    assert_eq!(record.endpoint, endpoint);
+    assert_eq!(record.status, RecordStatus::Connected);
+    assert_eq!(record.tool_count, Some(7));
+    assert_eq!(record.account_label.as_deref(), Some("Acme workspace"));
+    assert_eq!(record.account_email.as_deref(), Some("dev@acme.io"));
+    let alias = roster
+        .iter()
+        .find(|entry| entry.server == "acme-2")
+        .expect("roster row for the alias");
+    assert_eq!(alias.service_id.as_deref(), Some("acme"));
+    assert_eq!(alias.account_label.as_deref(), Some("Acme workspace"));
+    assert_eq!(alias.account_email.as_deref(), Some("dev@acme.io"));
+    assert_eq!(
+        alias.label, "Acme workspace",
+        "the roster label is the identity, never the internal id"
+    );
+    let inventory = views
+        .iter()
+        .find(|view| view.connection_id == "acme-2")
+        .expect("kernel inventory row");
+    assert_eq!(inventory.service_id.as_deref(), Some("acme"));
+    assert_eq!(
+        inventory.label, "Acme workspace",
+        "mcp.list_connections shows the label next to the id"
+    );
+
+    // The next add-account login mints the NEXT free id.
+    let next = manager.lock().unwrap().next_account_connection_id("acme");
+    assert_eq!(next.as_deref(), Some("acme-3"));
+
+    // The next add-account login mints the NEXT free id while acme-2 lives.
+    let context = manager
+        .lock()
+        .unwrap()
+        .add_account_context("acme")
+        .expect("minting skips the live alias");
+    assert_eq!(context.server(), "acme-3");
+
+    // A rename survives a re-login's identity read.
+    manager
+        .lock()
+        .unwrap()
+        .connection_handles()
+        .renamed("acme-2", "Second workspace")
+        .expect("rename writes");
+    let http_relogin = LoginHttp::new(vec![
+        (endpoint, 404, ""),
+        (
+            "https://srv.test/.well-known/oauth-protected-resource/mcp",
+            404,
+            "",
+        ),
+        (
+            "https://srv.test/.well-known/oauth-authorization-server",
+            200,
+            r#"{"issuer":"https://srv.test/tenant","authorization_endpoint":"https://srv.test/authorize","token_endpoint":"https://srv.test/token","registration_endpoint":"https://srv.test/register","scopes_supported":["read"],"userinfo_endpoint":"https://srv.test/userinfo"}"#,
+        ),
+        (
+            "https://srv.test/register",
+            200,
+            r#"{"client_id":"registered-client","client_id_issued_at":0,"client_secret_expires_at":0}"#,
+        ),
+        (
+            "https://srv.test/token",
+            200,
+            r#"{"access_token":"relogin-access","refresh_token":"relogin-refresh"}"#,
+        ),
+        (
+            "https://srv.test/userinfo",
+            200,
+            r#"{"name":"A different workspace","email":"other@acme.io"}"#,
+        ),
+    ]);
+    let ui = ManualPasteUi {
+        auth_url: std::sync::Mutex::new(String::new()),
+    };
+    let relogin_context = manager
+        .lock()
+        .unwrap()
+        .login_context("acme-2")
+        .expect("the alias re-logins on its own id");
+    relogin_context
+        .run(&ui, &http_relogin)
+        .await
+        .expect("re-login completes");
+    manager.lock().unwrap().refresh();
+    let record = manager
+        .lock()
+        .unwrap()
+        .records_by_id()
+        .get("acme-2")
+        .cloned()
+        .expect("record after re-login");
+    assert_eq!(
+        record.account_label.as_deref(),
+        Some("Second workspace"),
+        "the user's rename survives the re-login's identity read"
+    );
+    assert_eq!(
+        record.account_email.as_deref(),
+        Some("dev@acme.io"),
+        "the identity email from the first connect stays after the rename"
+    );
+
+    // Disconnect the alias account; nothing else moves.
+    let handles = manager.lock().unwrap().connection_handles();
+    crate::mcp::remove_mcp_connection(&handles, "acme-2")
+        .await
+        .expect("disconnect");
+    let records = manager.lock().unwrap().records_by_id();
+    assert!(!records.contains_key("acme-2"), "the record left");
+    let snapshot = {
+        let manager = std::sync::Arc::clone(&manager);
+        tokio::task::spawn_blocking(move || manager.lock().unwrap().credential_snapshot())
+            .await
+            .expect("blocking credential read")
+    };
+    assert!(snapshot.get("mcp:acme-2").is_none(), "the credential left");
+    // The id frees for the next add-account login.
+    assert_eq!(
+        manager
+            .lock()
+            .unwrap()
+            .next_account_connection_id("acme")
+            .as_deref(),
+        Some("acme-2")
+    );
+}
+
+#[tokio::test]
+async fn add_paste_account_mints_the_next_id_under_the_parent_service() {
+    let agent_dir = tempfile::tempdir().expect("tempdir");
+    let endpoint = "https://paste-service.example/mcp";
+    let remote = catalog_from_entries(&[pasteable_entry_json("paste-service", endpoint)]);
+    let probe = McpEndpointProbe::new(std::sync::Arc::new(FakeProbe {
+        log: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        tool_count: 2,
+    }));
+    let manager = std::sync::Arc::new(std::sync::Mutex::new(McpManager::new(McpManagerOptions {
+        auth_storage: crate::auth::AuthStorage::in_memory(
+            &crate::auth::types::AuthStorageData::default(),
+            std::sync::Arc::new(crate::auth::manager::NoOAuth),
+        ),
+        get_user_servers: no_user_servers(),
+        begin_login: None,
+        agent_dir: Some(agent_dir.path().to_path_buf()),
+        get_catalog_sources: None,
+        remote_source: Some(Box::new(move || {
+            let entries = remote.clone();
+            Some(crate::mcp::catalog_schema::PluginsCatalog {
+                version: 2,
+                counts: crate::mcp::catalog_schema::CatalogCounts::default(),
+                entries,
+            })
+        })),
+        probe_override: Some(probe),
+    })));
+    manager.lock().unwrap().refresh();
+    // The primary account installs first.
+    let primary = manager
+        .lock()
+        .unwrap()
+        .paste_install_inputs("paste-service")
+        .expect("pasteable");
+    install_static_token(primary, "primary-token")
+        .await
+        .expect("primary install");
+    // The add-account install: the connection id is minted, the service id stays the parent's.
+    let inputs = manager
+        .lock()
+        .unwrap()
+        .add_paste_account_inputs("paste-service")
+        .expect("add-account paste");
+    assert_eq!(inputs.server, "paste-service-2");
+    assert_eq!(inputs.service_id, "paste-service");
+    install_static_token(inputs, "second-token")
+        .await
+        .expect("second install");
+    manager.lock().unwrap().refresh();
+    let records = manager.lock().unwrap().records_by_id();
+    let second = records.get("paste-service-2").expect("alias record");
+    assert_eq!(second.service_id, "paste-service");
+    assert_eq!(second.endpoint, endpoint);
+    // Both credentials live side by side (the snapshot read blocks; the
+    // daemon wraps it in spawn_blocking, the test does the same).
+    let credentials = {
+        let manager = std::sync::Arc::clone(&manager);
+        tokio::task::spawn_blocking(move || manager.lock().unwrap().credential_snapshot())
+            .await
+            .expect("blocking credential read")
+    };
+    assert!(credentials.get("mcp:paste-service").is_some());
+    assert!(credentials.get("mcp:paste-service-2").is_some());
+    // Disconnecting the second account keeps the first.
+    let handles = manager.lock().unwrap().connection_handles();
+    crate::mcp::remove_mcp_connection(&handles, "paste-service-2")
+        .await
+        .expect("disconnect");
+    let records = manager.lock().unwrap().records_by_id();
+    assert!(records.contains_key("paste-service"));
+    assert!(!records.contains_key("paste-service-2"));
+    let credentials = {
+        let manager = std::sync::Arc::clone(&manager);
+        tokio::task::spawn_blocking(move || manager.lock().unwrap().credential_snapshot())
+            .await
+            .expect("blocking credential read")
+    };
+    assert!(
+        credentials.get("mcp:paste-service").is_some(),
+        "the first account stays"
+    );
+    assert!(credentials.get("mcp:paste-service-2").is_none());
+}
+
+#[test]
+fn alias_labels_never_show_the_internal_id() {
+    let agent_dir = tempfile::tempdir().expect("tempdir");
+    let endpoint = "https://alpha.example/mcp";
+    let remote = catalog_from_entries(&[oauth_service_json("alpha", endpoint)]);
+    let manager = std::sync::Arc::new(std::sync::Mutex::new(McpManager::new(McpManagerOptions {
+        auth_storage: crate::auth::AuthStorage::in_memory(
+            &crate::auth::types::AuthStorageData::default(),
+            std::sync::Arc::new(crate::auth::manager::NoOAuth),
+        ),
+        get_user_servers: no_user_servers(),
+        begin_login: None,
+        agent_dir: Some(agent_dir.path().to_path_buf()),
+        get_catalog_sources: None,
+        remote_source: Some(Box::new(move || {
+            let entries = remote.clone();
+            Some(crate::mcp::catalog_schema::PluginsCatalog {
+                version: 2,
+                counts: crate::mcp::catalog_schema::CatalogCounts::default(),
+                entries,
+            })
+        })),
+        probe_override: None,
+    })));
+    manager.lock().unwrap().refresh();
+    // Two alias records without identity labels: the fallback is the service
+    // label plus an ordinal, never the connection id.
+    let mut first =
+        crate::mcp::connection_store::new_pending_record("alpha-2", "alpha", "Linear", endpoint);
+    first.status = RecordStatus::Connected;
+    let mut second =
+        crate::mcp::connection_store::new_pending_record("alpha-3", "alpha", "Linear", endpoint);
+    second.status = RecordStatus::Connected;
+    {
+        let manager = manager.lock().unwrap();
+        let store = manager.connection_store_handle();
+        store.lock().unwrap().upsert(&first).unwrap();
+        store.lock().unwrap().upsert(&second).unwrap();
+    }
+    manager.lock().unwrap().refresh();
+    let roster = manager.lock().unwrap().connection_roster();
+    let labels: Vec<(String, String)> = roster
+        .iter()
+        .filter(|entry| entry.server.starts_with("alpha-"))
+        .map(|entry| (entry.server.clone(), entry.label.clone()))
+        .collect();
+    assert_eq!(
+        labels,
+        vec![
+            ("alpha-2".to_string(), "Linear account 2".to_string()),
+            ("alpha-3".to_string(), "Linear account 3".to_string()),
+        ]
+    );
+    // A rename relabels the roster row.
+    {
+        let manager = manager.lock().unwrap();
+        manager
+            .connection_handles()
+            .renamed("alpha-3", "Work workspace")
+            .expect("rename");
+    }
+    manager.lock().unwrap().refresh();
+    let roster = manager.lock().unwrap().connection_roster();
+    let entry = roster
+        .iter()
+        .find(|entry| entry.server == "alpha-3")
+        .expect("row");
+    assert_eq!(entry.label, "Work workspace");
+    assert_eq!(entry.account_label.as_deref(), Some("Work workspace"));
+    let views = manager
+        .lock()
+        .unwrap()
+        .service_catalog_connection_views(&[]);
+    let view = views
+        .iter()
+        .find(|view| view.connection_id == "alpha-3")
+        .expect("inventory row");
+    assert_eq!(view.label, "Work workspace");
+}

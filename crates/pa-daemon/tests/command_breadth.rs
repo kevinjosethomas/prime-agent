@@ -525,6 +525,10 @@ const WIRE_FIXTURES: &[(&str, &str)] = &[
         r#"{"type": "mark_anthropic_warning_shown", "activeSessionId": "sess"}"#,
     ),
     (
+        "set_mcp_connection_label",
+        r#"{"type": "set_mcp_connection_label", "activeSessionId": "sess", "connectionId": "linear-2", "label": "Work"}"#,
+    ),
+    (
         "list_queued_inputs",
         r#"{"type": "list_queued_inputs", "activeSessionId": "sess"}"#,
     ),
@@ -573,6 +577,7 @@ fn known_command_types_match_the_ts_list() {
                     | "mutate_queued_input"
                     | "set_prompt_guidelines"
                     | "heartbeat_update_job"
+                    | "set_mcp_connection_label"
             ),
             "unexpected non-TS command type: {extra}"
         );

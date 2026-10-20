@@ -50,15 +50,28 @@ pub(super) async fn options(cwd: PathBuf, agent_dir: PathBuf) -> Value {
     .flatten();
     json!({"providers":providers.iter().map(row).collect::<Vec<_>>(),"logoutProviders":logout.iter().filter(|provider| !provider.id.starts_with("mcp:") && provider.id != pa_core::auth::SERPER_CREDENTIAL_ID && provider.id != PRIME_AGENT_TRACES_PROVIDER_ID).map(|provider| &provider.id).collect::<Vec<_>>(),"traces":{"configured":label.is_some(),"stored":stored,"label":label}})
 }
+/// One validated `begin` request: what to authenticate and how.
+pub(super) struct FlowRequest {
+    pub(super) target: Target,
+    pub(super) action: Action,
+    pub(super) key: String,
+    pub(super) method_id: Option<Method>,
+    /// `mcp` + `login` only: connect another account of the service.
+    pub(super) add_account: bool,
+}
 pub(super) async fn flow(
     cwd: PathBuf,
     agent_dir: PathBuf,
-    target: Target,
-    action: Action,
-    key: String,
-    method_id: Option<Method>,
+    request: FlowRequest,
     panel: AuthPanelHandle,
 ) -> ProviderAuthOutcome {
+    let FlowRequest {
+        target,
+        action,
+        key,
+        method_id,
+        add_account,
+    } = request;
     match target {
         Target::Provider => {
             let auth = crate::provider_login::ProviderAuth::new(cwd, agent_dir);
@@ -121,6 +134,7 @@ pub(super) async fn flow(
         Target::Mcp => {
             let auth = crate::mcp_login::TerminalMcpAuth::new(cwd, agent_dir);
             let result = match action {
+                Action::Login if add_account => auth.login_add_account(&key, panel.clone()).await,
                 Action::Login => auth.login(&key, panel.clone()).await,
                 Action::Logout => auth.logout(&key).await,
                 Action::Paste => auth.paste_token(&key, panel.clone()).await,
