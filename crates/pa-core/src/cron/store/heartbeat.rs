@@ -333,7 +333,7 @@ impl AgentCronJobStore {
                 {
                     return job;
                 }
-                let mut next = job.clone();
+                let mut next = job;
                 if let Some(label) = &update.label {
                     next.label = normalize_optional_label(Some(label));
                 }
