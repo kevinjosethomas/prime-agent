@@ -14,6 +14,7 @@ from rlm.agents import Agent, Message, Receipt
 
 SPAWN_PAYLOAD = {
     "rlm_child_id": "sub-a1b2c3d4",
+    "session_id": "session-child",
     "name": "api-reviewer",
     "session_dir": "/tmp/parent/sub-a1b2c3d4",
     "model": "anthropic/claude-sonnet-4-5",
@@ -46,7 +47,7 @@ class AgentsSpawnTest(unittest.TestCase):
             agent,
             Agent(
                 name="api-reviewer",
-                session_id=None,
+                session_id="session-child",
                 relationship="child",
                 status="running",
                 model="anthropic/claude-sonnet-4-5",

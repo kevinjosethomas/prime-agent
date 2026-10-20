@@ -8,6 +8,9 @@ from pathlib import Path
 from typing import Any, Literal
 
 Relationship = Literal["parent", "sibling", "child"]
+
+# `list` below names the roster call, so the builtin stays reachable for checks.
+_builtin_list = list
 Status = Literal["running", "idle", "done", "error"]
 
 NOTE_MAX_LENGTH = 512
@@ -59,7 +62,7 @@ class Agent:
             "agent_observe.recent", {"target": target, "limit": limit, "max_chars": 800}
         )
         rows = payload.get("messages")
-        if not isinstance(rows, list):
+        if not isinstance(rows, _builtin_list):
             raise RuntimeError("agent_observe.recent returned an invalid messages list")
         return [_message_from_row(row) for row in rows]
 
@@ -150,9 +153,12 @@ async def spawn(
         raise TypeError("a child needs a name: agents.spawn(prompt, name='worker')")
     payload = await host_request("rlm.run", {"prompt": prompt, "kwargs": kwargs})
     _require_fields(payload, ("rlm_child_id", "name", "session_dir", "model"), "rlm.spawn")
+    session_id = payload.get("session_id")
+    if session_id is not None and not isinstance(session_id, str):
+        raise RuntimeError("rlm.spawn returned an invalid session_id")
     return Agent(
         name=payload["name"],
-        session_id=None,
+        session_id=session_id,
         relationship="child",
         status="running",
         model=payload["model"],
@@ -204,7 +210,7 @@ async def broadcast(text: str) -> list[Receipt]:
 
     payload = await host_request("agent_message.send", {"target": "all", "message": text})
     receipts = payload.get("receipts")
-    if not isinstance(receipts, list):
+    if not isinstance(receipts, _builtin_list):
         raise RuntimeError("agent_message.send returned an invalid receipts list")
     out: list[Receipt] = []
     for row in receipts:
@@ -252,6 +258,7 @@ class _SpawnRow:
     name: str
     session_dir: Path
     model: str
+    session_id: str | None
 
 
 @dataclass(frozen=True)
@@ -297,11 +304,15 @@ async def _spawn_child(
         kwargs["thinking"] = thinking
     payload = await host_request("rlm.run", {"prompt": prompt, "kwargs": kwargs})
     _require_fields(payload, ("rlm_child_id", "name", "session_dir", "model"), "rlm.spawn")
+    session_id = payload.get("session_id")
+    if session_id is not None and not isinstance(session_id, str):
+        raise RuntimeError("rlm.spawn returned an invalid session_id")
     return _SpawnRow(
         rlm_child_id=payload["rlm_child_id"],
         name=payload["name"],
         session_dir=Path(payload["session_dir"]),
         model=payload["model"],
+        session_id=session_id,
     )
 
 
@@ -310,7 +321,7 @@ async def _list_children() -> list[_ChildRow]:
 
     payload = await host_request("rlm.list_subagents")
     rows = payload.get("subagents")
-    if not isinstance(rows, list):
+    if not isinstance(rows, _builtin_list):
         raise RuntimeError("rlm.list_subagents returned an invalid subagents registry")
     return [_child_row(entry) for entry in rows]
 
@@ -318,7 +329,7 @@ async def _list_children() -> list[_ChildRow]:
 async def _collect_children(targets: list[str], timeout_ms: int = 0) -> list[_CollectRow]:
     if isinstance(timeout_ms, bool) or not isinstance(timeout_ms, int) or timeout_ms < 0:
         raise TypeError("timeout_ms must be a non-negative int")
-    if not isinstance(targets, list) or not all(isinstance(target, str) and target.strip() for target in targets):
+    if not isinstance(targets, _builtin_list) or not all(isinstance(target, str) and target.strip() for target in targets):
         raise TypeError("targets must be a list of child ids or names")
     from . import host_request
 
@@ -326,7 +337,7 @@ async def _collect_children(targets: list[str], timeout_ms: int = 0) -> list[_Co
         "rlm.collect", {"targets": [target.strip() for target in targets], "timeout_ms": timeout_ms}
     )
     rows = payload.get("results")
-    if not isinstance(rows, list):
+    if not isinstance(rows, _builtin_list):
         raise RuntimeError("rlm.collect returned an invalid results list")
     return [_collect_row(entry) for entry in rows]
 
@@ -361,7 +372,7 @@ async def _roster() -> list[Any]:
 
     payload = await host_request("agent_observe.list")
     rows = payload.get("agents")
-    if not isinstance(rows, list):
+    if not isinstance(rows, _builtin_list):
         raise RuntimeError("agent_observe.list returned an invalid agents list")
     return rows
 
