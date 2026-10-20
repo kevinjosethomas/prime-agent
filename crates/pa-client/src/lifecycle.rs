@@ -1976,8 +1976,10 @@ mod tests {
         });
         let (session, mut events) = DaemonClientSession::start(config(&socket)).await.unwrap();
         wait_connected(&mut events).await;
-        // The OLD epoch's outcomes, queued at the channel layer.
+        // The OLD epoch captured; the boundary moves BEFORE the outcomes
+        // are processed (queued pre-loss, delivered post-boundary).
         let old_epoch = session.state.registry.lock().unwrap().current_epoch();
+        session.state.registry.lock().unwrap().bump_epoch();
         deliver_outcome(
             &session.state,
             Some(RestoreOutcome::Done {
@@ -1994,8 +1996,6 @@ mod tests {
                 epoch: old_epoch,
             }),
         );
-        // The boundary.
-        session.state.registry.lock().unwrap().bump_epoch();
         // A CURRENT-epoch outcome delivers (the positive case).
         let current_epoch = session.state.registry.lock().unwrap().current_epoch();
         deliver_outcome(
@@ -2295,7 +2295,7 @@ mod tests {
         .await
         .expect("the driver reconnected");
         // A POST-swap request on the NEW client adopts validly.
-        session
+        let adopted = session
             .request_ok(DaemonCommand::Attach {
                 id: None,
                 active_session_id: "s1".to_string(),
@@ -2310,6 +2310,10 @@ mod tests {
             })
             .await
             .unwrap();
+        assert_eq!(
+            adopted["lastEventCursor"]["generation"], "gnew",
+            "the new client's response: {adopted}"
+        );
         let entries = session.state.registry.lock().unwrap().restore_entries();
         assert_eq!(entries.len(), 1);
         let cursor = entries[0].1.cursor.as_ref().unwrap();
