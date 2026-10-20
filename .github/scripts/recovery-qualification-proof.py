@@ -14,7 +14,7 @@ source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(
 canonical = (tmp / 'import-canonical.rs').read_text()
 (out / 'import-canonical.sha256').write_text(hashlib.sha256(canonical.encode()).hexdigest() + '\n')
 path = root / 'crates/pa-daemon/tests/import_compaction_e2e.rs'
-old = subprocess.check_output(['git', 'show', '204cfaa71e1d9eb409239f599a102cf0ec7dd65c:crates/pa-daemon/tests/import_compaction_e2e.rs'], text=True)
+old = (tmp / 'import-legacy.rs').read_text()
 def helper(text):
     start = text.index('fn session_rows(')
     end = text.index('\n#[test]\nfn imported_session_compacts()', start)

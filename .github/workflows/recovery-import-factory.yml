@@ -23,6 +23,12 @@ jobs:
         run: cp .github/scripts/recovery-qualification-proof.py "$RUNNER_TEMP/qualification-proof.py"
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: 204cfaa71e1d9eb409239f599a102cf0ec7dd65c
+          persist-credentials: false
+      - name: Retain historical selector without relying on shallow Git ancestry
+        run: cp crates/pa-daemon/tests/import_compaction_e2e.rs "$RUNNER_TEMP/import-legacy.rs"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
           ref: 7a441174eb4fc4aa3f74c2798f18d95e56785b3b
           persist-credentials: false
       - name: Retain identical corrected test and factory fixtures
