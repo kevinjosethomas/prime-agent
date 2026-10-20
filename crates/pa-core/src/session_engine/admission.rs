@@ -26,7 +26,7 @@ impl AgentSession {
     ///
     /// # Errors
     ///
-    /// Error when the session is busy, the digest capture fails, or the
+    /// Error when the session is busy, or the
     /// agent rejects the prompt.
     pub async fn prompt_injected_message(
         &self,
@@ -40,9 +40,6 @@ impl AgentSession {
             );
         }
         let mut prompt_messages = Vec::new();
-        if let Some(digest_row) = self.pending_digest_prompt_row().await? {
-            prompt_messages.push(digest_row);
-        }
         prompt_messages.extend(self.take_next_turn_rows().await);
         let custom_row = session_message_to_loop(&SessionAgentMessage::Custom(message.clone()))
             .ok_or_else(|| anyhow::anyhow!("injected custom message conversion failed"))?;
@@ -139,13 +136,9 @@ impl AgentSession {
             // downgrading the images to placeholders.
             self.apply_image_model_routing(&images, &options.batch)
                 .await?;
-            // The turn's prompt messages: the deferred first-turn harness
-            // digest rides first when one is due, streamed ahead of the user
-            // prompt and carried on `agent_end`.
+            // The turn's prompt messages, streamed ahead of the user prompt
+            // and carried on `agent_end`.
             let mut prompt_messages = Vec::new();
-            if let Some(digest_row) = self.pending_digest_prompt_row().await? {
-                prompt_messages.push(digest_row);
-            }
             prompt_messages.extend(self.take_next_turn_rows().await);
             prompt_messages.push(super::focused_user_prompt_message(
                 &normalized,

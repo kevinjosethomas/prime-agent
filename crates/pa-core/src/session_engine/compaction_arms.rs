@@ -181,10 +181,6 @@ impl AgentSession {
             custom_instructions,
             settings: self.compaction_settings(),
             abort,
-            // Captured per attempt inside `compaction_attempts`: a
-            // conflict retry summarizes a new branch, and inputs captured
-            // here would rank the abandoned branch's terms.
-            harness_digest: None,
             auxiliary: self.auxiliary_model.as_ref(),
             summary_delta,
             semantic_edges: self.semantic_edges(),
@@ -262,25 +258,17 @@ impl AgentSession {
                     Err(skip) => return Ok(CompactOutcome::Skipped(skip.user_message())),
                 }
             };
-            // The digest ranks the branch THIS attempt summarizes: a
-            // conflict retry prepares a new tree, and inputs captured
-            // once before the loop would rank the abandoned branch's
-            // terms. The capture takes the session lock itself, so it
-            // runs off the prepare hold.
             if !self.harness_refinements_enabled() {
                 attempt.history = super::refinement_gate::without_refinements(attempt.history);
                 attempt.turn_prefix_messages =
                     super::refinement_gate::without_refinements(attempt.turn_prefix_messages);
             }
-            let digest_inputs = self.harness_digest_inputs().await;
-            compaction_trace::trace("compact.digest_captured", &serde_json::Value::Null);
             let attempt_options = crate::session_engine::compact_session::CompactOptions {
                 model: options.model.clone(),
                 api_key: options.api_key.clone(),
                 custom_instructions: options.custom_instructions,
                 settings: options.settings,
                 abort: options.abort,
-                harness_digest: digest_inputs,
                 auxiliary: options.auxiliary,
                 summary_delta: options.summary_delta.clone(),
                 semantic_edges: options.semantic_edges.clone(),
@@ -290,11 +278,6 @@ impl AgentSession {
                 &attempt_options,
             )
             .await?;
-            // A toggle during the summarizer request must not re-inject the captured digest.
-            if !self.harness_refinements_enabled() {
-                prepared.entry.harness_digest = None;
-                prepared.entry.harness_state_fingerprint = None;
-            }
             let committed = {
                 let mut session = self.session.lock().await;
                 crate::session_engine::compact_session::commit_attempt(

@@ -109,7 +109,6 @@ async fn split_turn_compaction_runs_two_summarizer_calls_and_merges_the_turn_con
                 ..Default::default()
             },
             abort: None,
-            harness_digest: None,
             auxiliary: None,
             semantic_edges: None,
             summary_delta: None,
@@ -273,7 +272,6 @@ async fn injected_custom_turn_cuts_whole_turns_the_double_row_splits() {
             custom_instructions: None,
             settings: settings(2),
             abort: None,
-            harness_digest: None,
             auxiliary: None,
             semantic_edges: None,
             summary_delta: None,
@@ -324,7 +322,6 @@ async fn injected_custom_turn_cuts_whole_turns_the_double_row_splits() {
             custom_instructions: None,
             settings: settings(2),
             abort: None,
-            harness_digest: None,
             auxiliary: None,
             semantic_edges: None,
             summary_delta: None,
@@ -440,7 +437,6 @@ async fn split_turn_without_history_makes_only_the_prefix_call() {
                 ..Default::default()
             },
             abort: None,
-            harness_digest: None,
             auxiliary: None,
             semantic_edges: None,
             summary_delta: None,
@@ -605,7 +601,6 @@ async fn a_split_turn_compaction_commits_both_summary_slices_before_its_entry() 
                 ..Default::default()
             },
             abort: None,
-            harness_digest: None,
             auxiliary: None,
             semantic_edges: Some(Arc::clone(&recorder)),
             summary_delta: None,
@@ -709,7 +704,6 @@ async fn an_aborted_compaction_fails_its_slices_and_records_cancelled() {
                 ..Default::default()
             },
             abort: Some(&signal),
-            harness_digest: None,
             auxiliary: None,
             semantic_edges: Some(Arc::clone(&recorder)),
             summary_delta: None,

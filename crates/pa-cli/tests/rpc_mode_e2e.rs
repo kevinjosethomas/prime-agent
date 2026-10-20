@@ -936,9 +936,9 @@ fn write_corpus_fixture(path: &std::path::Path, size_mib: usize) {
             &mut counter,
             &mut parent,
             json!({
-                "customType": "harness_digest",
+                "customType": "corpus_note",
                 "content": format!(
-                    "[harness-digest] base note {base}: persistent state summary for the corpus."
+                    "[corpus-note] base note {base}: persistent state summary for the corpus."
                 ),
                 "type": "custom_message",
             }),
@@ -1017,9 +1017,9 @@ fn write_corpus_fixture(path: &std::path::Path, size_mib: usize) {
                 &mut counter,
                 &mut parent,
                 json!({
-                    "customType": "harness_digest",
+                    "customType": "corpus_note",
                     "content": format!(
-                        "[harness-digest] note {turn}: persistent state summary for the corpus."
+                        "[corpus-note] note {turn}: persistent state summary for the corpus."
                     ),
                     "type": "custom_message",
                 }),

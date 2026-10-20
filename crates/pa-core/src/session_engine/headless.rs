@@ -7,7 +7,6 @@ use pa_types::session::{AgentMessage, FileEntry};
 use super::messages::SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE;
 
 pub const COMPACTION_OUTCOME_CUSTOM_TYPE: &str = "compaction_outcome";
-pub const HARNESS_DIGEST_CUSTOM_TYPE: &str = "harness_digest";
 pub const REFINEMENT_OUTCOME_CUSTOM_TYPE: &str = "refinement_outcome";
 pub const REFINEMENT_NOTICE_CUSTOM_TYPE: &str = "refinement_notice";
 
@@ -126,9 +125,7 @@ pub fn select_headless_terminal_result(messages: &[AgentMessage]) -> HeadlessTer
                 }
                 // A corrupt outcome is still part of the suffix; skip it
                 // without letting it hide earlier valid outcomes.
-                REFINEMENT_OUTCOME_CUSTOM_TYPE
-                | REFINEMENT_NOTICE_CUSTOM_TYPE
-                | HARNESS_DIGEST_CUSTOM_TYPE => {
+                REFINEMENT_OUTCOME_CUSTOM_TYPE | REFINEMENT_NOTICE_CUSTOM_TYPE => {
                     index -= 1;
                 }
                 _ => break,
@@ -281,7 +278,6 @@ mod tests {
                 Some("success"),
             ),
             custom(REFINEMENT_NOTICE_CUSTOM_TYPE, "[self-refinement]", None),
-            custom(HARNESS_DIGEST_CUSTOM_TYPE, "digest", None),
             custom(
                 COMPACTION_OUTCOME_CUSTOM_TYPE,
                 "compacted again",
@@ -335,8 +331,6 @@ mod tests {
                 tokens_before: 0,
                 retained_message_count: None,
                 custom_instructions: None,
-                harness_digest: None,
-                harness_state_fingerprint: None,
                 timestamp: 0,
             }),
             custom(COMPACTION_OUTCOME_CUSTOM_TYPE, "later", Some("success")),

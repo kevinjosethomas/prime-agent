@@ -29,7 +29,7 @@ mod prepare;
 pub use prepare::{compute_cut, prepare_compaction, CompactSkip, CompactionPreparation};
 
 #[cfg(test)]
-use super::{compaction, harness_digest, messages, session_message_to_loop};
+use super::{compaction, messages, session_message_to_loop};
 #[cfg(test)]
 mod tests;
 
@@ -43,9 +43,6 @@ pub struct CompactOptions<'a> {
     /// Checked before the summarizer request and again before the commit — a
     /// late abort never lands a committed compaction; `None` without a trigger.
     pub abort: Option<&'a pa_agent::abort::AbortSignal>,
-    /// The snapshot rides the durable row as `harnessDigest`; the disk read
-    /// happens at the commit, so mid-run state is a fresh read.
-    pub harness_digest: Option<super::harness_digest::HarnessDigestInputs>,
     /// When present, the summarizer calls resolve their model through the `auxiliaryModel`
     /// setting with a context-window fit check, falling back to the session model.
     pub auxiliary: Option<&'a super::auxiliary_model::AuxiliaryModelContext>,
@@ -67,9 +64,6 @@ fn message_from_entry(entry: &FileEntry) -> Option<AgentMessage> {
             _ => Some(message.clone()),
         },
         FileEntry::CustomMessage { payload, .. } => {
-            if payload.custom_type == "harness_digest" {
-                return None;
-            }
             Some(AgentMessage::Custom(pa_types::session::CustomMessage {
                 custom_type: payload.custom_type.clone(),
                 content: payload.content.clone(),
@@ -415,28 +409,7 @@ pub(crate) async fn summarize_attempt(
         tokens_before: attempt.tokens_before,
         usage: summed_usage(&slices),
     };
-    // The digest snapshot and its fingerprint attach at the commit and never flow
-    // through the summarizer; the read happens after the summarizer resolved.
-    let (harness_digest, harness_state_fingerprint) = options
-        .harness_digest
-        .as_ref()
-        .map(|inputs| {
-            let render =
-                super::harness_digest::HarnessDigestInputs::render_with_fingerprint(inputs);
-            (Some(render.digest), Some(render.state_fingerprint))
-        })
-        .unwrap_or_default();
-    super::compaction_trace::trace(
-        "compact.digest_rendered",
-        &serde_json::json!({ "digest": harness_digest.is_some() }),
-    );
-    let entry = compaction_entry_for(
-        &result,
-        &attempt.details,
-        options.custom_instructions,
-        harness_digest,
-        harness_state_fingerprint,
-    );
+    let entry = compaction_entry_for(&result, &attempt.details, options.custom_instructions);
     Ok(PreparedCompaction { result, entry })
 }
 
@@ -467,8 +440,8 @@ pub(crate) fn commit_attempt(
         compaction.commit();
     }
     // TS `appendCompaction` persists the full record: `details`,
-    // `fromHook`, `customInstructions`, `usage`, and the `harnessDigest`
-    // snapshot ride on the durable row alongside the summary, boundary,
+    // `fromHook`, `customInstructions`, and `usage` ride on the durable
+    // row alongside the summary, boundary,
     // and token count. The row's parent is the CURRENT leaf, so the
     // mid-window tail sits between `first_kept_entry` and the compaction
     // row and rides the retained tail.

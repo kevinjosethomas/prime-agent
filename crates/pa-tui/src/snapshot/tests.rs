@@ -1556,8 +1556,8 @@ fn session_command_rows_respect_display_and_shape() {
     );
     let other = json!({
         "role": "custom",
-        "customType": "harness_digest",
-        "content": "digest",
+        "customType": "engine_note",
+        "content": "a note",
         "display": true,
     });
     assert!(matches!(

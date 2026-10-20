@@ -1115,7 +1115,7 @@ fn skips_malformed_lines() {
 /// The durable compaction row must byte-serialize in the TS key order
 /// (verified against the TS binary's session file, battery run
 /// 20260921T140248Z): type, id, parentId, timestamp, summary, firstKeptEntryId,
-/// tokensBefore, details, fromHook, customInstructions?, usage, harnessDigest.
+/// tokensBefore, details, fromHook, customInstructions?, usage.
 #[test]
 fn durable_compaction_row_serializes_in_the_ts_key_order() {
     let entry = pa_types::session::CompactionEntry {
@@ -1141,8 +1141,6 @@ fn durable_compaction_row_serializes_in_the_ts_key_order() {
             total_tokens: 110,
             cost: pa_types::ai::UsageCost::default(),
         }),
-        harness_digest: Some("# Continual Harness State".to_string()),
-        harness_state_fingerprint: None,
     };
     let fields = serde_json::to_value(&entry).unwrap();
     let mut session = SessionFile::create("/tmp", None, 0);
@@ -1168,7 +1166,6 @@ fn durable_compaction_row_serializes_in_the_ts_key_order() {
             "details",
             "fromHook",
             "usage",
-            "harnessDigest",
         ]
     );
     // The details block is the TS `readFiles`-first literal order, and usage keeps the TS
