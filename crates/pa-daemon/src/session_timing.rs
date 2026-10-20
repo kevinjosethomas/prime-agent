@@ -201,13 +201,14 @@ struct ToolDurationsById {
 }
 
 impl ToolDurationsById {
-    /// Insert or replace by id; the displaced duration is `Some` when the id
-    /// existed and carried one.
-    fn replace(&mut self, id: &str, duration_ms_bits: Option<u64>) -> Option<Option<u64>> {
+    /// Insert or replace by id; the displaced row is `Some` when the id
+    /// existed, carrying its previous duration.
+    fn replace(&mut self, id: &str, duration_ms_bits: Option<u64>) -> Option<PersistedToolRow> {
         if let Some(at) = self.index.get(id) {
-            let previous = self.entries[*at].1.duration_ms_bits;
-            self.entries[*at].1.duration_ms_bits = duration_ms_bits;
-            return Some(previous);
+            return Some(std::mem::replace(
+                &mut self.entries[*at].1,
+                PersistedToolRow { duration_ms_bits },
+            ));
         }
         self.index.insert(id.to_string(), self.entries.len());
         self.entries
@@ -298,13 +299,14 @@ impl ResponseTimingScan {
     /// id replaces its earlier contribution.
     pub fn fold_tool_result(&mut self, id: &str, duration_ms: Option<f64>) {
         let duration_ms_bits = duration_ms.map(f64::to_bits);
-        if let Some(previous_bits) = self.tool_rows.replace(id, duration_ms_bits) {
-            if let Some(bits) = previous_bits {
-                self.tool_time_ms_sum_bits = f64::to_bits(
-                    (f64::from_bits(self.tool_time_ms_sum_bits) - f64::from_bits(bits)).max(0.0),
-                );
-                self.tool_count = self.tool_count.saturating_sub(1);
-            }
+        if let Some(PersistedToolRow {
+            duration_ms_bits: Some(bits),
+        }) = self.tool_rows.replace(id, duration_ms_bits)
+        {
+            self.tool_time_ms_sum_bits = f64::to_bits(
+                (f64::from_bits(self.tool_time_ms_sum_bits) - f64::from_bits(bits)).max(0.0),
+            );
+            self.tool_count = self.tool_count.saturating_sub(1);
         }
         if let Some(duration_ms) = duration_ms {
             self.tool_time_ms_sum_bits =
