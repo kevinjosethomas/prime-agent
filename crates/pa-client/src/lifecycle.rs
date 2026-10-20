@@ -2222,7 +2222,7 @@ mod tests {
                         .await
                         .unwrap();
                 }
-                });
+            });
         }
         let (session, mut events) = DaemonClientSession::start(config(&socket)).await.unwrap();
         wait_connected(&mut events).await;
