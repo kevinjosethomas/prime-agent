@@ -26,21 +26,30 @@
 //!   down by overflow settle as `Uncertain` with cause `overflow` (never
 //!   re-classified as the channel's `Overflow`), new requests after
 //!   overflow fail as `NotSent` with the overflow cause surfaced.
-//! - **Interim teardown honesty (pre shutdown-PR):** explicit `close()`
-//!   stops the binding's pumps, wakes every pending pull, severs the JS
-//!   queues, and calls core `close()`. Synchronous joining of the core's
-//!   reader/writer tasks is NOT claimed here — that is the shutdown-core
-//!   work this binding will call once it lands, and the crate is explicitly
-//!   marked non-mergeable until then. Dropping the JS handle without
-//!   `close()` leaks the connection (runtime threads + core tasks persist
-//!   until process exit); the napi finalizer performs no core teardown.
+//! - **Teardown joins the core:** explicit `close()` stops the binding's
+//!   pumps, wakes every pending pull, severs the JS queues, shuts the core
+//!   transport down, drains the binding-owned operation registry, and then
+//!   joins the core's registered task set (`shutdown()` + `join_tasks()`,
+//!   the landed shutdown-core PR) to a real completion. Dropping the JS
+//!   handle without `close()` schedules the SAME full close chain on the
+//!   binding-owned runtime from the napi finalizer (async-safe; no core
+//!   calls from the GC thread) — nothing leaks past a GC.
 //!
-//! See `README.md` for the crate's scope, non-goals, and public API.
+//! The managed session binding ([`managed`], `startSession`) exposes the
+//! shared Rust lifecycle (`pa-client` `lifecycle` + `registry`) the same
+//! way: reconnect/restore-attach/dedupe stay in Rust; JS pulls serialized
+//! events through one bounded fail-closed queue and stops explicitly. See
+//! `README.md` for the crate's scope, non-goals, and public API.
 
 mod client;
 mod errors;
+mod managed;
 mod meta;
 mod runtime;
 
 pub use client::{connect, Caps, ConnectOptions, PrimeDaemonClient};
+pub use managed::{
+    start_session, ManagedCaps, ManagedDaemonSession, ManagedReconnectPolicy,
+    ManagedReconnectWindow, ManagedSessionOptions,
+};
 pub use meta::client_metadata;
