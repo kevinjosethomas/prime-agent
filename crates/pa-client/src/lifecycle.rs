@@ -1467,16 +1467,13 @@ mod tests {
         let mut attempts = 0u64;
         let expired = tokio::time::timeout(Duration::from_secs(15), async {
             loop {
-                match next_event(&mut events).await {
-                    ConnectionEvent::Status(status) => {
-                        if status.state == ConnectionState::Disconnected {
-                            attempts += 1;
-                        }
-                        if status.state == ConnectionState::Expired {
-                            return;
-                        }
+                if let ConnectionEvent::Status(status) = next_event(&mut events).await {
+                    if status.state == ConnectionState::Disconnected {
+                        attempts += 1;
                     }
-                    ConnectionEvent::ReconnectExpired { .. } | _ => {}
+                    if status.state == ConnectionState::Expired {
+                        return;
+                    }
                 }
             }
         })
