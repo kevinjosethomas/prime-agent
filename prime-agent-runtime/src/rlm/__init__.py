@@ -517,20 +517,16 @@ async def rename(new_name: str, *, session_id: str | RLMSpawnHandle | RLMSubagen
 
 
 class _RLMFactoryNamespace:
-    """Run stored state-machine factories: rlm.factory.run/status/stop/resume,
+    """Run library machines through rlm.factory.run/status/stop/resume,
     plus graph/watch for live monitoring.
 
-    ``run('<spec_id>')`` validates a stored factory entry (machine form, or
-    dag sugar that compiles to one), enters the entry states up to the
-    spec's max_parallel, and returns immediately; a kernel asyncio task
-    continues the run (nonblocking control loop). Runs live in kernel
-    memory only; children stay supervisor-owned. Every call is async, so
-    always await it: ``await rlm.factory.run('<id>')``.
-
-    When no stored entry carries the id, ``run`` falls back to the machine
-    library: the bundled seeds ship inside the runtime (the personal
-    library lives under the agent dir), and the template runs directly
-    without creating a harness entry:
+    ``run('<name>')`` resolves the machine from the library (the bundled
+    seeds ship inside the runtime; the personal library lives under the
+    agent dir), re-validates it (machine form, or dag sugar that compiles
+    to one), enters the entry states up to the spec's max_parallel, and
+    returns immediately; a kernel asyncio task continues the run
+    (nonblocking control loop). Runs live in kernel memory only; children
+    stay supervisor-owned. Every call is async, so always await it:
     ``await rlm.factory.run('review-sweep')``.
     ``prime-agent factory list | import | export`` manages the library (a
     broken machine names its exact errors; a missing one lists what the
@@ -538,8 +534,8 @@ class _RLMFactoryNamespace:
 
     ``graph()`` returns the machine structure fused with live runtime state
     (``status()``'s data plus the static graph): pass a live run id for one
-    run's snapshot, a stored spec id for the static structure, or nothing
-    for every live run. ``watch('<run_id>', timeout)`` blocks until the
+    run's snapshot, a library machine name for the static structure, or
+    nothing for every live run. ``watch('<run_id>', timeout)`` blocks until the
     run's state/instance shape changes or the timeout elapses (bounded),
     then returns the same snapshot with ``changed`` — an agent can stream
     progress and drive orchestration programmatically, and the emitted

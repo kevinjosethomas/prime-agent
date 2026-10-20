@@ -8,19 +8,19 @@ from review_factory_validation_parity import validate, Handler
 class FactoryValidationGuards(unittest.TestCase):
     def value(self):
         return [
-            {'case': 'positive', 'stored': False, 'error': 'resident node watcher cannot declare retries'},
-            {'case': 'zero', 'stored': True},
-            {'case': 'malformed', 'stored': False, 'error': 'node watcher retries must be an integer between 0 and 10'}]
+            {'case': 'positive', 'resolved': False, 'error': 'resident node watcher cannot declare retries'},
+            {'case': 'zero', 'resolved': True},
+            {'case': 'malformed', 'resolved': False, 'error': 'node watcher retries must be an integer between 0 and 10'}]
 
-    def test_rejects_acceptance_or_storage_of_invalid_specs(self):
+    def test_rejects_acceptance_or_resolution_of_invalid_specs(self):
         validate(self.value())
         for index in (0, 2):
             value = self.value()
-            value[index]['stored'] = True
+            value[index]['resolved'] = True
             with self.assertRaises(AssertionError):
                 validate(value)
         value = self.value()
-        value[1]['stored'] = False
+        value[1]['resolved'] = False
         with self.assertRaises(AssertionError):
             validate(value)
 
