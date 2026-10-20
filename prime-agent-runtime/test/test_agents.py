@@ -208,12 +208,10 @@ class AgentsNoteTest(unittest.TestCase):
             asyncio.run(agents_module.note("🎉" * 512))
 
     def test_rename_dispatches_self_and_child_selectors(self) -> None:
-        for session_id, expected in ((None, None), ("sub-a1b2c3d4", "sub-a1b2c3d4")):
-            host_request = AsyncMock(return_value={"name": "bench-runner"})
-            with patch.object(rlm_module, "host_request", host_request):
-                self.assertEqual(asyncio.run(agents_module.rename("bench-runner")), "bench-runner")
-            payload = host_request.await_args.args[1]
-            self.assertEqual(payload.get("session_id"), expected)
+        host_request = AsyncMock(return_value={"name": "bench-runner"})
+        with patch.object(rlm_module, "host_request", host_request):
+            self.assertEqual(asyncio.run(agents_module.rename("bench-runner")), "bench-runner")
+        host_request.assert_awaited_once_with("rlm.rename", {"name": "bench-runner"})
 
         child = Agent(name="w", session_id=None, relationship="child", status="running", child_id="sub-a1b2c3d4")
         host_request = AsyncMock(return_value={"name": "bench-runner"})
@@ -230,9 +228,9 @@ CHILD = Agent(name="api-reviewer", session_id=None, relationship="child", status
 class AgentMessagingTest(unittest.TestCase):
     def test_send_addresses_each_relationship(self) -> None:
         cases = [
-            (Agent(name="orchestrator", session_id="s-parent", relationship="parent", status="running"), {"message": "done", "receiver_role": "parent"}),
-            (Agent(name="peer", session_id="s-peer", relationship="sibling", status="running"), {"message": "hi", "receiver_role": "sibling", "receiver_name": "s-peer"}),
-            (CHILD, {"message": "hi", "receiver_role": "child", "receiver_name": "sub-a1b2c3d4"}),
+            (Agent(name="orchestrator", session_id="s-parent", relationship="parent", status="running"), {"receiver_role": "parent"}),
+            (Agent(name="peer", session_id="s-peer", relationship="sibling", status="running"), {"receiver_role": "sibling", "receiver_name": "s-peer"}),
+            (CHILD, {"receiver_role": "child", "receiver_name": "sub-a1b2c3d4"}),
         ]
         for agent, expected in cases:
             with self.subTest(relationship=agent.relationship):
@@ -388,8 +386,11 @@ class AgentWaitStopTest(unittest.TestCase):
             self.assertEqual(request_type, "rlm.collect")
             return {"results": [replies[payload["targets"][0]]]}
 
-        with patch.object(rlm_module, "host_request", AsyncMock(side_effect=fake_host)):
-            results = asyncio.run(asyncio.gather(*(kid.wait(1) for kid in kids)))
+        async def scenario():
+            with patch.object(rlm_module, "host_request", AsyncMock(side_effect=fake_host)):
+                return await asyncio.gather(*(kid.wait(1) for kid in kids))
+
+        results = asyncio.run(scenario())
         self.assertEqual([result.status for result in results], ["done", "error"])
 
 
