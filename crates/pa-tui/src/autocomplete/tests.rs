@@ -161,8 +161,8 @@ fn slash_completion_applies_separator_by_argument() {
     assert_eq!(result.lines[0], "/goal ");
     assert_eq!(result.cursor_col, 6);
     // Bare command: no trailing separator.
-    let result = provider.apply_completion(&["/refi".to_string()], 0, 5, &item("refine"), "/refi");
-    assert_eq!(result.lines[0], "/refine");
+    let result = provider.apply_completion(&["/conf".to_string()], 0, 5, &item("config"), "/conf");
+    assert_eq!(result.lines[0], "/config");
     assert_eq!(result.cursor_col, 7);
 }
 

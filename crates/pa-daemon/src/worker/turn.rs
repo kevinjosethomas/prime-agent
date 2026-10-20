@@ -868,8 +868,7 @@ impl TurnRunner {
                     }
                     EngineEvent::AgentEnd { messages } => {
                         // Rows this run emitted carry their stamped identity and ownership;
-                        // rows it never emitted (the deferred harness digest) keep the
-                        // engine's form.
+                        // rows it never emitted keep the engine's form.
                         for message in messages.iter_mut() {
                             if let Some(decorated) = aggregate_rows
                                 .iter()
