@@ -1,19 +1,4 @@
-"""Kernel-owned generic MCP client registry.
-
-Two surfaces, one module:
-
-- Dispatch: ``list_tools(connection)`` / ``call_tool(connection, tool, arguments)``
-  open a configured MCP server (host-resolved via ``mcp.config``), discover its
-  tools, and call them. Adding a service is data, not a new Python module.
-- Discovery: ``list_plugins`` / ``search_plugins`` (host-owned catalog),
-  ``list_connections`` (the user's actual connections), ``search_tools`` /
-  ``describe_tool`` (live tool metadata). Inventory calls are bounded and never
-  return credentials; live tool schemas and results are passed through
-  unmodified.
-- Host view: ``status(servers, timeout_ms)`` feeds the daemon's MCP
-  connections view (one bounded per-server listing, errors reported per
-  server).
-"""
+"""Kernel-owned generic MCP client: dispatch, connections, and live tool calls."""
 
 from __future__ import annotations
 
@@ -28,6 +13,7 @@ import threading
 import time
 from contextlib import AsyncExitStack
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -35,19 +21,17 @@ from . import host_request
 from .mcp_base import McpToolError
 
 __all__ = [
+    "Connection",
     "McpCredentialsUnavailable",
     "McpDiscoveryError",
     "McpStartupError",
     "McpToolError",
-    "call_tool",
+    "Tool",
+    "call",
     "close",
-    "describe_tool",
-    "list_connections",
-    "list_plugins",
-    "list_tools",
-    "reload",
-    "search_plugins",
-    "search_tools",
+    "connections",
+    "status",
+    "tools",
 ]
 
 _DEFAULT_STARTUP_TIMEOUT = 20.0
@@ -62,21 +46,11 @@ _ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)
 _CONTROL_CHAR = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 # Host-backed inventory requests are interactive-sized, not tool-call-sized.
 _INVENTORY_TIMEOUT = 15.0
-_DEFAULT_PLUGIN_LIMIT = 50
-_MAX_PLUGIN_LIMIT = 200
-_DEFAULT_PLUGIN_SEARCH_LIMIT = 10
-_MAX_PLUGIN_SEARCH_LIMIT = 50
-_MAX_CURSOR_CHARS = 512
-_PLUGIN_CONNECTION_STATUSES = ("connected", "not_connected")
 # tools/list pagination: a server that paginates must not wedge discovery.
 _MAX_TOOL_PAGES = 25
 _DEFAULT_TOOL_SEARCH_LIMIT = 20
 _MAX_TOOL_SEARCH_LIMIT = 50
 _MAX_TOOL_SEARCH_SERVERS = 8
-# Defensive only: the host must already whitelist safe metadata in inventory
-# entries. Never applied to live tool schemas or results — argument names there
-# are server-defined and legitimately credential-like.
-_SECRET_KEY_PATTERN = re.compile(r"token|secret|password|credential|authorization|api[_-]?key|private[_-]?key", re.I)
 
 
 class McpStartupError(RuntimeError):
@@ -515,16 +489,6 @@ class _Registry:
 
         return await self._tracked(operation)
 
-    async def reload(self, server: str | None = None) -> None:
-        async def operation() -> None:
-            names = [server] if server is not None else list(set(self._locks) | set(self._generations))
-            results = await asyncio.gather(*(self._close_name(name) for name in names), return_exceptions=True)
-            for result in results:
-                if isinstance(result, BaseException):
-                    raise result
-
-        await self._tracked(operation)
-
     async def _close_name(self, name: str) -> None:
         self._assert_owner()
         lock = self._locks.setdefault(name, asyncio.Lock())
@@ -590,23 +554,110 @@ async def _dispatch(
             wrapped.cancel()
 
 
-async def list_tools(server: str) -> list[dict[str, Any]]:
-    return await _dispatch(lambda: _registry.tools(server))
+@dataclass(frozen=True)
+class Connection:
+    """One configured MCP connection (host-owned record, no secrets)."""
+
+    id: str
+    label: str | None = None
+    service: str | None = None
+    status: str | None = None
+    account: str | None = None
+
+
+@dataclass(frozen=True)
+class Tool:
+    """One MCP tool; ``server`` is set on search results, ``input_schema`` on describes."""
+
+    name: str
+    description: str
+    server: str | None = None
+    input_schema: dict[str, Any] | None = None
+
+
+async def tools(
+    server: str | None = None,
+    *,
+    tool: str | None = None,
+    query: str | None = None,
+    limit: int = _DEFAULT_TOOL_SEARCH_LIMIT,
+) -> "list[Tool] | Tool":
+    """List one server's tools, describe one tool, or search live tools by query."""
+    if tool is not None and query is not None:
+        raise TypeError("tools(tool=...) and tools(query=...) are exclusive")
+    if tool is not None:
+        if server is None:
+            raise TypeError("tools(tool=...) requires a server")
+        _validate_name(server, "server")
+        _validate_name(tool, "tool")
+        described = await _dispatch(lambda: _registry.describe(server, tool))
+        return Tool(
+            name=described["name"],
+            description=described["description"],
+            server=server,
+            input_schema=described["inputSchema"],
+        )
+    if query is not None:
+        return await _search_tools(query, connection_id=server, limit=limit)
+    if server is not None:
+        _validate_name(server, "server")
+        return [
+            Tool(name=entry["name"], description=entry["description"], server=server)
+            for entry in await _dispatch(lambda: _registry.tools(server))
+        ]
+    raise TypeError("tools() needs a server, a tool, or a query")
+
+
+async def call(server: str, tool: str, **args: Any) -> Any:
+    """Call one MCP tool; the result passes through unmodified."""
+    _validate_name(server, "server")
+    _validate_name(tool, "tool")
+    return await _dispatch(lambda: _registry.call(server, tool, dict(args)))
+
+
+async def _search_tools(
+    query: str,
+    connection_id: str | None = None,
+    limit: int = _DEFAULT_TOOL_SEARCH_LIMIT,
+) -> list[Tool]:
+    if not isinstance(query, str) or not query.strip():
+        raise TypeError("query must be a non-empty string")
+    _validate_limit(limit, "limit", _MAX_TOOL_SEARCH_LIMIT)
+    needle = query.strip()
+    if connection_id is not None:
+        _validate_name(connection_id, "connection")
+        found = await _dispatch(lambda: _registry.search(connection_id, needle, limit))
+        return [
+            Tool(name=entry["name"], description=entry["description"], server=connection_id)
+            for entry in found
+        ]
+    candidates = [
+        connection.id
+        for connection in await connections()
+        if connection.status == "connected"
+    ]
+    scoped = candidates[:_MAX_TOOL_SEARCH_SERVERS]
+    out: list[Tool] = []
+    for connection in scoped:
+        try:
+            found = await _dispatch(lambda cid=connection: _registry.search(cid, needle, limit))
+        except Exception:
+            continue
+        if len(out) < limit:
+            out.extend(
+                Tool(name=entry["name"], description=entry["description"], server=connection)
+                for entry in found[: limit - len(out)]
+            )
+    return out
 
 
 async def status(servers: list[str], timeout_ms: float) -> list[dict[str, Any]]:
-    """Per-server tool listing for the host's MCP connections view.
-
-    Each requested server is listed concurrently, bounded by `timeout_ms`
-    per server; a server that fails or times out reports its error instead
-    of failing the whole request. Opening a not-yet-connected server is
-    intended: the view exists to show what each connection offers.
-    """
+    """Per-server tool listing for the host's MCP connections view (the mcp_status lane)."""
     timeout = max(timeout_ms, 1.0) / 1000.0
 
     async def _one(server: str) -> dict[str, Any]:
         try:
-            tools = await asyncio.wait_for(list_tools(server), timeout=timeout)
+            tools = await asyncio.wait_for(_dispatch(lambda: _registry.tools(server)), timeout=timeout)
         except BaseException as exc:  # noqa: BLE001 - one broken server reports alone
             return {"server": server, "tools": None, "error": f"{type(exc).__name__}: {exc}"}
         return {
@@ -622,19 +673,6 @@ async def status(servers: list[str], timeout_ms: float) -> list[dict[str, Any]]:
     return list(results)
 
 
-async def call_tool(server: str, tool: str, arguments: dict[str, Any] | None = None) -> Any:
-    _validate_name(tool, "tool")
-    if arguments is not None and not isinstance(arguments, dict):
-        raise TypeError("arguments must be a dict or None")
-    return await _dispatch(lambda: _registry.call(server, tool, arguments or {}))
-
-
-async def reload(server: str | None = None) -> None:
-    if server is not None:
-        _validate_name(server, "server")
-    await _dispatch(lambda: _registry.reload(server), timeout=_SHUTDOWN_TIMEOUT + 1)
-
-
 async def close() -> None:
     await _dispatch(_registry.shutdown, timeout=_SHUTDOWN_TIMEOUT + 1)
 
@@ -642,118 +680,28 @@ async def close() -> None:
 # -- discovery / inventory surface ---------------------------------------------
 
 
-async def list_connections() -> list[dict[str, Any]]:
-    """The user's current MCP connections (host-owned records, no secrets).
-
-    Each entry carries at least ``connectionId``; other fields are host-defined
-    (label, service, status, account). ``connectionId`` is the name
-    ``list_tools``/``call_tool`` accept.
-    """
+async def connections() -> list[Connection]:
+    """The user's current MCP connections; ``id`` is the name tools()/call() accept."""
     result = await _host_inventory("mcp.list_connections", {})
-    connections = _inventory_entries(result, "connections")
-    for entry in connections:
+    entries = _inventory_entries(result, "connections")
+    out: list[Connection] = []
+    for entry in entries:
         connection_id = entry.get("connectionId")
         if not isinstance(connection_id, str) or not connection_id:
             raise RuntimeError("MCP connection inventory from the host is malformed")
-    return [_sanitize_inventory_entry(entry) for entry in connections]
+        out.append(Connection(
+            id=connection_id,
+            label=_optional_inventory_str(entry, "label"),
+            service=_optional_inventory_str(entry, "service"),
+            status=_optional_inventory_str(entry, "status"),
+            account=_optional_inventory_str(entry, "account"),
+        ))
+    return out
 
 
-async def list_plugins(
-    connection_status: str | None = None,
-    limit: int = _DEFAULT_PLUGIN_LIMIT,
-    cursor: str | None = None,
-) -> dict[str, Any]:
-    """One bounded page of the supported-service catalog (host-owned).
-
-    Returns ``{"plugins": [...], "nextCursor": str | None}``; while
-    ``nextCursor`` is not None, more entries exist — pass it back as ``cursor``.
-    ``connection_status`` filters to ``"connected"`` or ``"not_connected"``.
-    """
-    if connection_status is not None and connection_status not in _PLUGIN_CONNECTION_STATUSES:
-        raise ValueError("connection_status must be None, 'connected' or 'not_connected'")
-    _validate_limit(limit, "limit", _MAX_PLUGIN_LIMIT)
-    payload: dict[str, Any] = {"limit": limit}
-    if connection_status is not None:
-        payload["connectionStatus"] = connection_status
-    if cursor is not None:
-        _validate_cursor(cursor)
-        payload["cursor"] = cursor
-    result = await _host_inventory("mcp.list_plugins", payload)
-    return _plugin_page(result)
-
-
-async def search_plugins(query: str, limit: int = _DEFAULT_PLUGIN_SEARCH_LIMIT) -> dict[str, Any]:
-    """Bounded search of the supported-service catalog by the host.
-
-    Matches service ids, labels, aliases, descriptions, categories and
-    publishers. Returns ``{"plugins": [...], "nextCursor": None}``; narrow the
-    query rather than expecting exhaustive pages.
-    """
-    if not isinstance(query, str) or not query.strip():
-        raise TypeError("query must be a non-empty string")
-    _validate_limit(limit, "limit", _MAX_PLUGIN_SEARCH_LIMIT)
-    payload: dict[str, Any] = {"query": query.strip(), "limit": limit}
-    result = await _host_inventory("mcp.search_plugins", payload)
-    return _plugin_page(result)
-
-
-async def search_tools(
-    query: str,
-    connection_id: str | None = None,
-    limit: int = _DEFAULT_TOOL_SEARCH_LIMIT,
-) -> dict[str, Any]:
-    """Search live tool names/descriptions and report the search scope.
-
-    With ``connection_id`` only that connection is searched and its errors
-    propagate. Without it, at most ``_MAX_TOOL_SEARCH_SERVERS`` connections the
-    host reports as connected are searched in host order; per-connection
-    failures are reported as fixed, redaction-safe summaries, not raised.
-
-    Returns ``{"tools": [{connectionId, name, description}, ...], "searched":
-    [connectionId, ...], "unavailable": [{connectionId, error}, ...],
-    "truncated": bool}``. ``truncated`` means matches or servers may remain —
-    narrow the query or search a specific connection.
-    """
-    if not isinstance(query, str) or not query.strip():
-        raise TypeError("query must be a non-empty string")
-    _validate_limit(limit, "limit", _MAX_TOOL_SEARCH_LIMIT)
-    needle = query.strip()
-    if connection_id is not None:
-        _validate_name(connection_id, "connection")
-        tools = await _dispatch(lambda: _registry.search(connection_id, needle, limit))
-        return {"tools": tools, "searched": [connection_id], "unavailable": [], "truncated": len(tools) >= limit}
-    candidates = [
-        entry["connectionId"]
-        for entry in await list_connections()
-        if entry.get("status") == "connected"
-    ]
-    scoped = candidates[:_MAX_TOOL_SEARCH_SERVERS]
-    tools: list[dict[str, Any]] = []
-    searched: list[str] = []
-    unavailable: list[dict[str, Any]] = []
-    for connection in scoped:
-        try:
-            found = await _dispatch(lambda cid=connection: _registry.search(cid, needle, limit))
-        except Exception as exc:
-            unavailable.append({"connectionId": connection, "error": _bounded_error(exc)})
-            continue
-        searched.append(connection)
-        if len(tools) < limit:
-            tools.extend(found[: limit - len(tools)])
-    truncated = len(tools) >= limit or len(candidates) > len(scoped)
-    return {"tools": tools, "searched": searched, "unavailable": unavailable, "truncated": truncated}
-
-
-async def describe_tool(connection_id: str, tool: str) -> dict[str, Any]:
-    """One live tool's ``{"name", "description", "inputSchema"}``.
-
-    Raises ``KeyError`` when the tool or connection is unknown and
-    ``PermissionError`` when policy (``enabledTools``/``disabledTools``)
-    excludes the tool. Schemas pass through unmodified.
-    """
-    _validate_name(connection_id, "connection")
-    _validate_name(tool, "tool")
-    return await _dispatch(lambda: _registry.describe(connection_id, tool))
+def _optional_inventory_str(entry: dict[str, Any], field: str) -> str | None:
+    value = entry.get(field)
+    return value if isinstance(value, str) else None
 
 
 async def _host_inventory(request_type: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -783,40 +731,6 @@ def _inventory_entries(result: dict[str, Any], key: str) -> list[dict[str, Any]]
     return entries
 
 
-def _plugin_page(result: dict[str, Any]) -> dict[str, Any]:
-    entries = _inventory_entries(result, "plugins")
-    next_cursor = result.get("nextCursor")
-    if next_cursor is not None and (not isinstance(next_cursor, str) or not next_cursor):
-        raise RuntimeError("MCP plugin inventory from the host is malformed")
-    return {
-        "plugins": [_sanitize_inventory_entry(entry) for entry in entries],
-        "nextCursor": next_cursor,
-    }
-
-
-def _sanitize_inventory_entry(entry: dict[str, Any]) -> dict[str, Any]:
-    """Copy one inventory entry, dropping secret-looking keys defensively.
-
-    The host must already whitelist safe metadata; this is a second line of
-    defense for catalog and connection records only. Never applied to live tool
-    schemas or tool results.
-    """
-    cleaned: dict[str, Any] = {}
-    for key, value in entry.items():
-        if isinstance(key, str) and _SECRET_KEY_PATTERN.search(key):
-            continue
-        cleaned[key] = _sanitize_inventory_value(value)
-    return cleaned
-
-
-def _sanitize_inventory_value(value: Any) -> Any:
-    if isinstance(value, dict):
-        return _sanitize_inventory_entry(value)
-    if isinstance(value, list):
-        return [_sanitize_inventory_value(item) for item in value]
-    return value
-
-
 def _match_tools(generation: _Generation, query: str, limit: int) -> list[dict[str, Any]]:
     needle = query.lower()
     matches: list[dict[str, Any]] = []
@@ -834,38 +748,11 @@ def _match_tools(generation: _Generation, query: str, limit: int) -> list[dict[s
     return matches
 
 
-_SEARCH_FAILURE_HINTS: tuple[tuple[type[BaseException], str], ...] = (
-    (McpCredentialsUnavailable, "credentials for this connection are not available; the user must connect it"),
-    (McpStartupError, "the MCP server failed during startup"),
-    (KeyError, "the connection or tool is not declared"),
-    (PermissionError, "policy excludes this connection or tool"),
-    (TimeoutError, "opening or querying the connection timed out"),
-)
-
-
-def _bounded_error(exc: BaseException) -> str:
-    """A fixed, redaction-safe summary of one connection's search failure.
-
-    Raw exception text can embed credential-bearing URLs and HTTP bodies, so
-    only the exception type name and a fixed hint are ever surfaced.
-    """
-    hint = "the connection could not be opened or searched"
-    for failure_type, message in _SEARCH_FAILURE_HINTS:
-        if isinstance(exc, failure_type):
-            hint = message
-            break
-    return f"{type(exc).__name__}: {hint}"
-
-
-
 def _validate_limit(value: Any, label: str, maximum: int) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= maximum:
         raise ValueError(f"{label} must be an integer between 1 and {maximum}")
 
 
-def _validate_cursor(value: Any) -> None:
-    if not isinstance(value, str) or not value or len(value) > _MAX_CURSOR_CHARS:
-        raise ValueError(f"cursor must be a non-empty string of at most {_MAX_CURSOR_CHARS} characters")
 
 
 def _validate_name(value: str, label: str) -> None:
