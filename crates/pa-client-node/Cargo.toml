@@ -23,12 +23,15 @@ doctest = false
 [dependencies]
 pa-client = { path = "../pa-client" }
 pa-types = { path = "../pa-types" }
+# napi-rs v3 line: napi/napi-derive are 3.x stable; the build helper
+# napi-build stays on its 2.x stable line (3.x of the runtime pairs with
+# napi-build 2.6.0 — verified against crates.io in the platform spike).
 napi = { version = "3", default-features = false, features = ["tokio_rt", "serde-json"] }
 napi-derive = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "time", "sync"] }
 
 [build-dependencies]
-napi-build = "3"
+napi-build = "2.6"
 
 [lints.rust]
 # Spike question: does the napi-derive macro output keep this enforceable, or
