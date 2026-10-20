@@ -1,0 +1,5 @@
+{"schemaRoot":"daemon-event-envelope","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false}}}
+{"schemaRoot":"daemon-event-envelope","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false},"activeSessionId":"wire"}}
+{"schemaRoot":"daemon-event-envelope","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false},"sequence":0}}
+{"schemaRoot":"daemon-event-envelope","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false},"cursor":{"generation":"wire","sequence":0}}}
+{"schemaRoot":"daemon-event-envelope","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","event":{"type":"response","command":"wire","success":false},"__contractUnknownExtra":{"kept":true}}}

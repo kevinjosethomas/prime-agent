@@ -1,0 +1,2 @@
+{"schemaRoot":"daemon-command-wire","sample":{"type":"get_global_harness_defaults"}}
+{"schemaRoot":"daemon-command-wire","sample":{"type":"command","id":"wire","protocol":{"name":"wire","version":0},"command":{"type":"get_global_harness_defaults"}}}

@@ -1,0 +1,6 @@
+{"schemaRoot":"daemon-resume-cursor","sample":{}}
+{"schemaRoot":"daemon-resume-cursor","sample":{"activeSessionId":"wire"}}
+{"schemaRoot":"daemon-resume-cursor","sample":{"generation":"wire"}}
+{"schemaRoot":"daemon-resume-cursor","sample":{"sequence":0}}
+{"schemaRoot":"daemon-resume-cursor","sample":{"eventSequence":0}}
+{"schemaRoot":"daemon-resume-cursor","sample":{"__contractUnknownExtra":{"kept":true}}}

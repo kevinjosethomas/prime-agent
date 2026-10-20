@@ -207,6 +207,33 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all --check
 
+  # The generated client contract's Node gate: the package's own drift
+  # check (regeneration must byte-match the committed TS), the strict
+  # typecheck (including the committed corpus type-check module), and the
+  # Ajv conformance tests. Rust-side drift/corpus gates live in the cargo
+  # batteries (pa-contract); this leg is the Node half.
+  client-contract-node:
+    name: client contract node gate
+    needs: trust
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    if: needs.trust.result == 'success' && needs.trust.outputs.allowed == 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@499339e89f1e7e262f5c1cd4d4070f1ebd4f2cd1 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/client-contract/package-lock.json
+      - name: npm ci
+        working-directory: packages/client-contract
+        run: npm ci --no-audit --no-fund
+      - name: npm test (drift + typecheck + conformance)
+        working-directory: packages/client-contract
+        run: npm test
+
   discussion-notifier:
     name: discussion notification contract
     needs: trust

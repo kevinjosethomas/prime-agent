@@ -1,0 +1,15 @@
+{"schemaRoot":"daemon-command-wire","case":"drop-type","sample":{},"rustAccepts":false}
+{"schemaRoot":"daemon-command-wire","case":"wrong-type-type","sample":{"type":"wrong-type"},"rustAccepts":false}
+{"schemaRoot":"daemon-command-wire","case":"null-type","sample":{"type":null},"rustAccepts":false}
+{"schemaRoot":"daemon-command-wire","case":"drop-type","sample":{"command":{"type":"get_global_harness_defaults"},"id":"wire","protocol":{"name":"wire","version":0}},"rustAccepts":false}
+{"schemaRoot":"daemon-command-wire","case":"wrong-type-type","sample":{"type":"wrong-type","id":"wire","protocol":{"name":"wire","version":0},"command":{"type":"get_global_harness_defaults"}},"rustAccepts":false}
+{"schemaRoot":"daemon-command-wire","case":"null-type","sample":{"type":null,"id":"wire","protocol":{"name":"wire","version":0},"command":{"type":"get_global_harness_defaults"}},"rustAccepts":false}
+{"schemaRoot":"daemon-command-wire","case":"drop-id","sample":{"type":"command","command":{"type":"get_global_harness_defaults"},"protocol":{"name":"wire","version":0}},"rustAccepts":false}
+{"schemaRoot":"daemon-command-wire","case":"wrong-type-id","sample":{"type":"command","id":"wrong-type","protocol":{"name":"wire","version":0},"command":{"type":"get_global_harness_defaults"}},"rustAccepts":true}
+{"schemaRoot":"daemon-command-wire","case":"null-id","sample":{"type":"command","id":null,"protocol":{"name":"wire","version":0},"command":{"type":"get_global_harness_defaults"}},"rustAccepts":false}
+{"schemaRoot":"daemon-command-wire","case":"drop-protocol","sample":{"type":"command","id":"wire","command":{"type":"get_global_harness_defaults"}},"rustAccepts":false}
+{"schemaRoot":"daemon-command-wire","case":"wrong-type-protocol","sample":{"type":"command","id":"wire","protocol":"wrong-type","command":{"type":"get_global_harness_defaults"}},"rustAccepts":false}
+{"schemaRoot":"daemon-command-wire","case":"null-protocol","sample":{"type":"command","id":"wire","protocol":null,"command":{"type":"get_global_harness_defaults"}},"rustAccepts":false}
+{"schemaRoot":"daemon-command-wire","case":"drop-command","sample":{"type":"command","id":"wire","protocol":{"name":"wire","version":0}},"rustAccepts":false}
+{"schemaRoot":"daemon-command-wire","case":"wrong-type-command","sample":{"type":"command","id":"wire","protocol":{"name":"wire","version":0},"command":"wrong-type"},"rustAccepts":false}
+{"schemaRoot":"daemon-command-wire","case":"null-command","sample":{"type":"command","id":"wire","protocol":{"name":"wire","version":0},"command":null},"rustAccepts":false}

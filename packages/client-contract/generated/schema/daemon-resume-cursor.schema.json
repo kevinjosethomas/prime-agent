@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DaemonResumeCursor",
+  "description": "Resume cursor accepted on attach. The TS wire shape is a union (`DaemonEventCursor`, or a bare\n`eventSequence`, each with optional `activeSessionId`); this optional-field struct accepts both\nforms and serializes each back to its original shape.",
+  "type": "object",
+  "properties": {
+    "activeSessionId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "generation": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sequence": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "eventSequence": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    }
+  }
+}

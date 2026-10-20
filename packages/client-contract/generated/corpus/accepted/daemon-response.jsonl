@@ -1,0 +1,7 @@
+{"schemaRoot":"daemon-response","sample":{"command":"wire","success":false}}
+{"schemaRoot":"daemon-response","sample":{"command":"wire","success":false,"id":"wire"}}
+{"schemaRoot":"daemon-response","sample":{"command":"wire","success":false,"data":{}}}
+{"schemaRoot":"daemon-response","sample":{"command":"wire","success":false,"error":"wire"}}
+{"schemaRoot":"daemon-response","sample":{"command":"wire","success":false,"errorInfo":null}}
+{"schemaRoot":"daemon-response","sample":{"command":"wire","success":false,"__contractUnknownExtra":{"kept":true}}}
+{"schemaRoot":"daemon-response","sample":{"command":"wire","success":false,"errorInfo":{"code":"__contract_unknown_code__","detail":{"kept":true}}}}

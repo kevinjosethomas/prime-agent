@@ -1,0 +1,23 @@
+{
+  "name": "prime-agent-client-contract",
+  "version": "0.10.0",
+  "private": true,
+  "description": "Generated Prime Agent daemon client contract: wire schemas, TypeScript types, validators, and command metadata. Derived from pa-types; do not edit generated output by hand.",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "src/index.ts",
+  "scripts": {
+    "gen:ts": "node scripts/gen-ts.mjs",
+    "verify": "node scripts/verify-drift.mjs",
+    "build:validators": "tsc -p tsconfig.build.json",
+    "test": "npm run build:validators && npm run verify && tsc --noEmit && node --test tests/"
+  },
+  "devDependencies": {
+    "ajv": "^8.17.1",
+    "json-schema-to-typescript": "^15.0.0",
+    "typescript": "^5.6.0",
+    "@types/node": "^18.19.0"
+  }
+}

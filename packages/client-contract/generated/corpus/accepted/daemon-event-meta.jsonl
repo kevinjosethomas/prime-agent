@@ -1,0 +1,6 @@
+{"schemaRoot":"daemon-event-meta","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire"}}
+{"schemaRoot":"daemon-event-meta","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","activeSessionId":"wire"}}
+{"schemaRoot":"daemon-event-meta","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","sequence":0}}
+{"schemaRoot":"daemon-event-meta","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","cursor":{"generation":"wire","sequence":0}}}
+{"schemaRoot":"daemon-event-meta","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","replayed":false}}
+{"schemaRoot":"daemon-event-meta","sample":{"id":"wire","protocol":{"name":"wire","version":0},"emittedAt":"wire","__contractUnknownExtra":{"kept":true}}}

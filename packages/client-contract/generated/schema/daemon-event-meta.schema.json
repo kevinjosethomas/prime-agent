@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DaemonEventMeta",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "protocol": {
+      "$ref": "#/$defs/DaemonProtocolInfo"
+    },
+    "activeSessionId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sequence": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "cursor": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DaemonEventCursor"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "emittedAt": {
+      "type": "string"
+    },
+    "replayed": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "protocol",
+    "emittedAt"
+  ],
+  "$defs": {
+    "DaemonProtocolInfo": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ]
+    },
+    "DaemonEventCursor": {
+      "type": "object",
+      "properties": {
+        "generation": {
+          "type": "string"
+        },
+        "sequence": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "generation",
+        "sequence"
+      ]
+    }
+  }
+}

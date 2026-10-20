@@ -1,0 +1,5002 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DaemonCommandWire",
+  "description": "A bare command or a command envelope, both accepted on one socket line.",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/DaemonCommand"
+    },
+    {
+      "$ref": "#/$defs/DaemonCommandEnvelope"
+    }
+  ],
+  "$defs": {
+    "DaemonCommand": {
+      "description": "Client commands, tagged by `type`. Every variant carries `id` (bare\ncommands) and a catch-all for unknown fields, so round-trips stay lossless.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_global_harness_defaults"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "set_global_harness_defaults"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "patch": {
+              "$ref": "#/$defs/GlobalHarnessDefaultsPatch"
+            }
+          },
+          "required": [
+            "type",
+            "patch"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_subagent_model_default"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "set_subagent_model_default"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "model"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "list"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "all": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sessionDir": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "includeClientOwned": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "`list_saved_sessions` (session- and cwd-addressed forms share this shape).",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "list_saved_sessions"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sessionDir": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "scope": {
+              "default": null
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "list_agent_peers"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "workerToken": {
+              "description": "The requester's worker token; optional on the wire (an absent\ntoken is an auth failure, not a parse one).",
+              "type": "string",
+              "default": ""
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_direct_worker_transport"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "description": "Worker-to-worker peer ticket: mint a single-use `worker`-purpose grant for a target worker's\ndirect socket, bypassing the supervisor's route plane; authenticated by the requester's\nworker token, like `list_agent_peers`.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_worker_peer_transport"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "workerToken": {
+              "type": "string"
+            },
+            "targetActiveSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "workerToken",
+            "targetActiveSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "roster_subscribe"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Worker -> supervisor idle-passivation request: a parent-owned child whose idle clock crossed\n`idleEvictionMinutes` asks for the graceful stop; the supervisor verifies the worker token\nand the parent-owned descriptor. Clients never send this.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "worker_idle_passivation"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "workerToken": {
+              "type": "string"
+            },
+            "idleMinutes": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "workerToken"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "description": "Worker -> supervisor roster delta (TS `roster_delta`): the worker pushes its slim session\nsummary so the roster tracks live status without polling.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "worker_roster_delta"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "workerToken": {
+              "type": "string"
+            },
+            "summary": true,
+            "removed": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "sequence": {
+              "description": "Monotonic per-worker sequence; the supervisor drops a delta older\nthan one already applied. Absent means unsequenced (always applied).",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "workerInstanceId": {
+              "description": "The sending worker process instance: a replacement reuses the\nworker id but restarts its sequence, so the stale-delta gate keeps\none generation slot per worker and drops a predecessor's deltas.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "workerToken",
+            "summary"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "roster_unsubscribe"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "create"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sessionPath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "continueRecent": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "noSession": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "config": true,
+            "telemetryDisabled": {
+              "description": "Telemetry opt-out: only ever `Some(true)`; absent means enabled.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "runtimeMetadata": true,
+            "lifecycle": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DaemonSessionLifecycle"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "env": {
+              "description": "Allowlisted client env vars (`env`), carried on create only.",
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "launchEnv": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "attach"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "clientId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "capabilities": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "resumeCursor": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DaemonResumeCursor"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "telemetryDisabled": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "recoveryConfig": true,
+            "env": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "launchEnv": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "reattach"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "targetActiveSessionId": {
+              "type": "string"
+            },
+            "clientId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "capabilities": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "resumeCursor": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DaemonResumeCursor"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "telemetryDisabled": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "recoveryConfig": true,
+            "env": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "launchEnv": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "targetActiveSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "detach"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "complete_owned_session"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "promote_owned_session"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "kill"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "rename"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "renamedBy": {
+              "description": "Who directed the rename (`renamedBy` on the wire, TS\n`AgentFamilyRelationship` — only `\"parent\"` is sent): set when a\nparent session renames one of its direct children, so the\nrenamed session's transcript notice can name it.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "name"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "description": "`prompt`/`steer`/`follow_up`-family input payload.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "prompt"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "clientInputId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "replyToMessageId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "replyContext": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/$defs/FocusedThreadContextRow"
+              }
+            },
+            "content": true,
+            "images": true,
+            "streamingBehavior": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StreamingBehavior"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "queueIfBusy": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "expandPromptTemplates": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "source": true,
+            "agentMessageId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "customMessage": true,
+            "queueKey": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "prefixMessages": true,
+            "admissionId": {
+              "description": "Unique only when the caller needs cancellable pre-ownership admission.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "rlmNoticeNonce": {
+              "description": "One-shot capability only the daemon's own RLM children delivery mints; never a client field:\na caller-supplied value can never name a live mint.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "message"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "cancel_prompt_admission"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "admissionId": {
+              "type": "string"
+            },
+            "cancelOwned": {
+              "description": "Cancel session-owned work too when it has not started delivery.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "admissionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "description": "`prompt`/`steer`/`follow_up`-family input payload.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "prompt_and_wait"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "clientInputId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "replyToMessageId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "replyContext": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/$defs/FocusedThreadContextRow"
+              }
+            },
+            "content": true,
+            "images": true,
+            "streamingBehavior": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StreamingBehavior"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "queueIfBusy": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "expandPromptTemplates": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "source": true,
+            "agentMessageId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "customMessage": true,
+            "queueKey": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "prefixMessages": true,
+            "admissionId": {
+              "description": "Unique only when the caller needs cancellable pre-ownership admission.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "rlmNoticeNonce": {
+              "description": "One-shot capability only the daemon's own RLM children delivery mints; never a client field:\na caller-supplied value can never name a live mint.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "message"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "description": "`prompt`/`steer`/`follow_up`-family input payload.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "steer"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "clientInputId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "replyToMessageId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "replyContext": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/$defs/FocusedThreadContextRow"
+              }
+            },
+            "content": true,
+            "images": true,
+            "streamingBehavior": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StreamingBehavior"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "queueIfBusy": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "expandPromptTemplates": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "source": true,
+            "agentMessageId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "customMessage": true,
+            "queueKey": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "prefixMessages": true,
+            "admissionId": {
+              "description": "Unique only when the caller needs cancellable pre-ownership admission.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "rlmNoticeNonce": {
+              "description": "One-shot capability only the daemon's own RLM children delivery mints; never a client field:\na caller-supplied value can never name a live mint.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "message"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "description": "`prompt`/`steer`/`follow_up`-family input payload.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "follow_up"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "clientInputId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "replyToMessageId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "replyContext": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/$defs/FocusedThreadContextRow"
+              }
+            },
+            "content": true,
+            "images": true,
+            "streamingBehavior": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StreamingBehavior"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "queueIfBusy": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "expandPromptTemplates": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "source": true,
+            "agentMessageId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "customMessage": true,
+            "queueKey": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "prefixMessages": true,
+            "admissionId": {
+              "description": "Unique only when the caller needs cancellable pre-ownership admission.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "rlmNoticeNonce": {
+              "description": "One-shot capability only the daemon's own RLM children delivery mints; never a client field:\na caller-supplied value can never name a live mint.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "message"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "restore_next_turn"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "messages": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentMessage"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "messages"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "restore_actions"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "snapshot": true
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "snapshot"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "append_custom_message"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "message": true
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "message"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "resume_queue"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "send_message"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "targetActiveSessionId": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "fromActiveSessionId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "agentOrigin": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "deliveryMode": true
+          },
+          "required": [
+            "type",
+            "targetActiveSessionId",
+            "message"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "agent_messages_status"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "agent_messages_pause"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "agent_messages_resume"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "agent_messages_clear"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "abort"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "description": "`abort_and_send_queued` (schema 29, capability-gated in TS): abort the run and deliver the\nqueued steering batch at the turn boundary (TS `AgentSession.abortAndSendQueued`).",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "abort_and_send_queued"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "start_side_question"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "sideQuestionId": {
+              "type": "string",
+              "default": ""
+            },
+            "question": {
+              "type": "string",
+              "default": ""
+            },
+            "previousTurns": true
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "abort_side_question"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "sideQuestionId": {
+              "type": "string",
+              "default": ""
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "execute_bash"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "command": {
+              "type": "string"
+            },
+            "excludeFromContext": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "transient": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "runId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "command"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "abort_bash"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "description": "Rust-native extension, advertised by the `kernel_bash_activity` capability.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "list_kernel_bash"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "tail_kernel_bash"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "activityId": {
+              "type": "string"
+            },
+            "lines": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "activityId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "kill_kernel_bash"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "activityId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "activityId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "description": "The `/factory` view's bridge lane over the session kernel's factory\nexecutor (`graph`/`status`/`watch`/`run`/`stop`/`resume`).\nRust-native extension, advertised by the `factory_activity` capability.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "factory_activity"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "action": {
+              "type": "string"
+            },
+            "runId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "specId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "timeoutMs": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "action"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "cancel_rlm_child"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "childId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "childId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "delete_rlm_subagent"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "childId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "childId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "wait_for_idle"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "waitForRlmQuiescence": {
+              "description": "Also hold until every RLM child run of the session settled\n(the `wait_for_headless_completion` barrier of the same name).",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "wait_for_headless_completion"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "waitForRlmQuiescence": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_session_header"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_state"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_connection_state"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_messages"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "before": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "capabilities": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_rlm_children"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_session_stats"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_context_tree"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_commands"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_resource_snapshot"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_mcp_connections"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "description": "The inline paste flow: install a pasted static token for one\npasteable catalog service, verifying with a real MCP handshake.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "set_mcp_static_token"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "server": {
+              "type": "string"
+            },
+            "token": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "server",
+            "token"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "description": "Remove one MCP connection: credential and connection record (the\ndurable endpoint pin) in one step.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "remove_mcp_connection"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "server": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "server"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "replace_acp_mcp_servers"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "ownerId": {
+              "type": "string"
+            },
+            "servers": true
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "ownerId",
+            "servers"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_model_catalog"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "description": "Stateless, bounded workstream classification through the authenticated model registry.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "classify_workstream"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_available_models"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_queue"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "mutate_queued_message"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "lane": true,
+            "index": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "expectedText": {
+              "type": "string"
+            },
+            "mutation": true
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "lane",
+            "index",
+            "expectedText",
+            "mutation"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "list_queued_inputs"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "description": "`inputId`, `action` and `text` ride `rest`.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "mutate_queued_input"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "clear_queue"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "abort_and_clear_queue"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "acquire_session_input_pause"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "leaseKey": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "leaseKey"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "release_session_input_pause"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "pauseId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "pauseId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "cron_list"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "includeInactive": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "heartbeats_list"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "heartbeat_manage"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "jobId": {
+              "type": "string"
+            },
+            "action": true
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "jobId",
+            "action"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "cron_add"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "schedule": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "promoteOwnedSession": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "schedule",
+            "prompt"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "cron_cancel"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "jobId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "jobId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "heartbeat_get"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "heartbeat_set"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "schedule": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "deliveryMode": true,
+            "promoteOwnedSession": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "schedule",
+            "prompt"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "heartbeat_update"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "action": true
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "action"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "heartbeat_update_job"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "jobId": {
+              "type": "string"
+            },
+            "instruction": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "interval": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "deliveryMode": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "jobId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "set_model"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "modelId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "provider",
+            "modelId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "cycle_model"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "direction": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CycleDirection"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "set_scoped_models"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "scopedModels": true
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "scopedModels"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "set_thinking_level"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "level": {
+              "type": "string",
+              "default": ""
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "set_service_tier"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "serviceTier": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ServiceTier"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "cycle_thinking_level"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "set_transport"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "transport": {
+              "$ref": "#/$defs/Transport"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "transport"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "set_steering_mode"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "mode": true
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "mode"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "set_follow_up_mode"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "mode": true
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "mode"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "set_auto_compaction"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "enabled"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "set_auto_retry"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "enabled"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "compact"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "customInstructions": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "refine"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "instructions": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "rollbackId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "global": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "abort_compaction"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "abort_branch_summary"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "abort_retry"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "execute_bash_and_wait"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "command": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "command"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "reload"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "new_session"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "parentSession": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "switch_session"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "sessionPath": {
+              "type": "string"
+            },
+            "cwdOverride": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "sessionPath"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "fork"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "entryId": {
+              "type": "string"
+            },
+            "position": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ForkPosition"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "entryId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "navigate_tree"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "targetId": {
+              "type": "string"
+            },
+            "summarize": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "customInstructions": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "replaceInstructions": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "targetId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "import_jsonl"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "inputPath": {
+              "type": "string"
+            },
+            "cwdOverride": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "inputPath"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "export_html"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "outputPath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "export_jsonl"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "outputPath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "set_session_name"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "workerToken": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "name"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_rlm_max_depth_status"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "set_rlm_max_depth"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "maxDepth": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "global": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "maxDepth"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "rename_saved_session"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sessionPath": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "sessionPath",
+            "name"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "delete_saved_session"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sessionPath": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "sessionPath"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_session_context"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_session_tree"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_user_messages_for_forking"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_last_assistant_text"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_system_prompt"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "get_tool_definition"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "name"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "set_session_entry_label"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "entryId": {
+              "type": "string"
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "entryId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "description": "Rust-native client command (operator directive 2026-09-29): the\ninteractive client's report that it just drew the Anthropic\nsubscription ban-risk warning — the worker persists the session's\nonce-per-lifecycle marker row so a reattach, a resume, or a worker\nreplacement of the same session skips the warning (the TS gate is\nper interactive-mode instance, so the TS protocol has no\ncounterpart; an older daemon rejects the frame and the client\ndegrades to its per-instance gate).",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "mark_anthropic_warning_shown"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "description": "Rust-native client command (the desktop's inline prompt guidelines):\nstage appended sources for the next successful compaction; a rebind\nof an existing worker skips the source refresh, so the client pushes\nits current list.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "set_prompt_guidelines"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "appendSystemPrompt": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "appendSystemPrompt"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "ack_result"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "commandId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "commandId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "description": "Coordinator -> supervisor: start (or idempotently poll) the prepare transaction for\n`updateId`; same id returns the current state, a different id is refused.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "prepare_update_restart"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "updateId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Coordinator -> supervisor: consume the prepared transaction and stop\ngracefully (the only consumption of the prepared artifact).",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "commit_update_restart"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "updateId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "retry_worker"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "description": "Query the supervisor's boot-time restore pass (spec §6/§9): whether the restore is in flight\nand the per-session counts/failures for the coordinator's `Restoring` phase. Read-only.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "update_restore_status"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "updateId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "restart"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "shutdown"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "force": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Session-worker self-registration (worker -> supervisor); the same\ncommand re-registers after a supervisor restart. The token was issued\nby the supervisor, so only the real worker can present it.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "worker_register"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "sessionId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "socketPath": {
+              "type": "string"
+            },
+            "workerInstanceId": {
+              "type": "string"
+            },
+            "token": {
+              "type": "string"
+            },
+            "pid": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "socketPath",
+            "workerInstanceId",
+            "token",
+            "pid"
+          ],
+          "additionalProperties": true
+        }
+      ]
+    },
+    "GlobalHarnessDefaultsPatch": {
+      "description": "Omitted fields stay unchanged. Explicit null is not a reset operation.",
+      "type": "object",
+      "properties": {
+        "autoCompactionEnabled": {
+          "type": "boolean"
+        },
+        "steeringMode": {
+          "$ref": "#/$defs/HarnessQueueMode"
+        },
+        "followUpMode": {
+          "$ref": "#/$defs/HarnessQueueMode"
+        },
+        "maxDepth": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "HarnessQueueMode": {
+      "type": "string",
+      "enum": [
+        "all",
+        "one-at-a-time"
+      ]
+    },
+    "DaemonSessionLifecycle": {
+      "type": "string",
+      "enum": [
+        "resident",
+        "client_owned"
+      ]
+    },
+    "DaemonResumeCursor": {
+      "description": "Resume cursor accepted on attach. The TS wire shape is a union (`DaemonEventCursor`, or a bare\n`eventSequence`, each with optional `activeSessionId`); this optional-field struct accepts both\nforms and serializes each back to its original shape.",
+      "type": "object",
+      "properties": {
+        "activeSessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "generation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sequence": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "eventSequence": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      }
+    },
+    "FocusedThreadContextRow": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "role",
+        "text"
+      ]
+    },
+    "StreamingBehavior": {
+      "type": "string",
+      "enum": [
+        "steer",
+        "followUp"
+      ]
+    },
+    "AgentMessage": {
+      "description": "Conversation message stored in `message` entries: the provider-facing\nmessages from [`crate::ai`] plus the coding-agent-only roles.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string",
+              "const": "user"
+            }
+          },
+          "$ref": "#/$defs/UserMessage",
+          "required": [
+            "role"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string",
+              "const": "assistant"
+            }
+          },
+          "$ref": "#/$defs/AssistantMessage",
+          "required": [
+            "role"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string",
+              "const": "toolResult"
+            }
+          },
+          "$ref": "#/$defs/ToolResultMessage",
+          "required": [
+            "role"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string",
+              "const": "bashExecution"
+            }
+          },
+          "$ref": "#/$defs/BashExecutionMessage",
+          "required": [
+            "role"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string",
+              "const": "custom"
+            }
+          },
+          "$ref": "#/$defs/CustomMessage",
+          "required": [
+            "role"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string",
+              "const": "branchSummary"
+            }
+          },
+          "$ref": "#/$defs/BranchSummaryMessage",
+          "required": [
+            "role"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string",
+              "const": "compactionSummary"
+            }
+          },
+          "$ref": "#/$defs/CompactionSummaryMessage",
+          "required": [
+            "role"
+          ]
+        }
+      ]
+    },
+    "UserContent": {
+      "description": "User/tool-result content: a plain string or a list of text/image blocks.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UserContentBlock"
+          }
+        }
+      ]
+    },
+    "UserContentBlock": {
+      "description": "Content blocks in user/tool-result messages: a `text` block, an `image` block, or any other JSON shape (unknown kinds preserved verbatim).",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "text"
+            },
+            "text": {
+              "type": "string"
+            },
+            "textSignature": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "image"
+            },
+            "data": {
+              "type": "string"
+            },
+            "mimeType": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "data",
+            "mimeType"
+          ],
+          "additionalProperties": true
+        },
+        {}
+      ]
+    },
+    "UserMessage": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/UserContent"
+        },
+        "timestamp": {
+          "description": "Unix timestamp in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "content",
+        "timestamp"
+      ],
+      "additionalProperties": true
+    },
+    "AssistantContentBlock": {
+      "description": "Content blocks allowed in assistant messages.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "text"
+            }
+          },
+          "$ref": "#/$defs/TextContent",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "thinking"
+            }
+          },
+          "$ref": "#/$defs/ThinkingContent",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "toolCall"
+            }
+          },
+          "$ref": "#/$defs/ToolCall",
+          "required": [
+            "type"
+          ]
+        }
+      ]
+    },
+    "TextContent": {
+      "description": "Text content block (`type: \"text\"`).",
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "textSignature": {
+          "description": "`OpenAI` Responses metadata: a legacy id string or a [`TextSignatureV1`] JSON payload (TS\nwire key `textSignature`; the camelCase rename keeps it attached across the pa-ai <->\npa-agent round trips, which have no catch-all).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "additionalProperties": true
+    },
+    "ThinkingContent": {
+      "description": "Thinking content block (`type: \"thinking\"`).",
+      "type": "object",
+      "properties": {
+        "thinking": {
+          "type": "string"
+        },
+        "thinkingSignature": {
+          "description": "Provider reasoning item id, or the encoded reasoning-details payload for redacted blocks (TS\nwire key `thinkingSignature`; the camelCase rename keeps it attached across the pa-ai <->\npa-agent round trips, where a `snake_case` key was silently dropped).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "redacted": {
+          "description": "True when the thinking content was redacted by safety filters.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "thinking"
+      ],
+      "additionalProperties": true
+    },
+    "ToolCall": {
+      "description": "Tool call content block (`type: \"toolCall\"`).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "arguments": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "thoughtSignature": {
+          "description": "Google-specific opaque signature for reusing thought context (TS\nwire key `thoughtSignature`; see [`ThinkingContent`] for the rename).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": true
+    },
+    "AssistantMessageDiagnostic": {
+      "description": "One redacted provider/runtime diagnostic attached to an assistant message.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiagnosticErrorInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "details": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "type",
+        "timestamp"
+      ]
+    },
+    "DiagnosticErrorInfo": {
+      "description": "Error info captured inside a diagnostic.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "stack": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "code": {
+          "description": "TS `string | number`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiagnosticCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "additionalProperties": true
+    },
+    "DiagnosticCode": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/JsNumber"
+        }
+      ]
+    },
+    "JsNumber": {
+      "description": "An f64 that (de)serializes with JavaScript `JSON.stringify` number parity. TypeScript numbers\nare\nf64 and `JSON.stringify` prints integral values without a fractional part (`0`, not `0.0`);\nRust's `f64` serialization always prints `0.0`, which would break lossless round-trips against\nTS-produced files. This newtype prints integral values as integers, everything else via the\nshortest f64 representation.",
+      "type": "number",
+      "format": "double"
+    },
+    "Usage": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "output": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "cacheRead": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "cacheWrite": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "totalTokens": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "cost": {
+          "$ref": "#/$defs/UsageCost"
+        }
+      },
+      "required": [
+        "input",
+        "output",
+        "cacheRead",
+        "cacheWrite",
+        "totalTokens",
+        "cost"
+      ]
+    },
+    "UsageCost": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "$ref": "#/$defs/JsNumber"
+        },
+        "output": {
+          "$ref": "#/$defs/JsNumber"
+        },
+        "cacheRead": {
+          "$ref": "#/$defs/JsNumber"
+        },
+        "cacheWrite": {
+          "$ref": "#/$defs/JsNumber"
+        },
+        "total": {
+          "$ref": "#/$defs/JsNumber"
+        }
+      },
+      "required": [
+        "input",
+        "output",
+        "cacheRead",
+        "cacheWrite",
+        "total"
+      ]
+    },
+    "StopReason": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "stop",
+            "length",
+            "error",
+            "aborted"
+          ]
+        },
+        {
+          "description": "Terminal reason of a turn that ended in tool calls; also accepts the\nraw `OpenAI` wire value `tool_calls` (TS keeps any `stopReason`\nstring, so foreign session files never lose assistant rows).",
+          "type": "string",
+          "const": "toolUse"
+        }
+      ]
+    },
+    "AssistantMessage": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AssistantContentBlock"
+          }
+        },
+        "api": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "responseModel": {
+          "description": "Concrete `chunk.model` when different from the requested model.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "responseId": {
+          "description": "Provider-specific response identifier, when exposed upstream.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "diagnostics": {
+          "description": "Redacted provider/runtime diagnostics for failures and recoveries.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/AssistantMessageDiagnostic"
+          }
+        },
+        "usage": {
+          "$ref": "#/$defs/Usage"
+        },
+        "stopReason": {
+          "$ref": "#/$defs/StopReason"
+        },
+        "stopReasonRaw": {
+          "description": "Provider's raw stop/finish reason when it mapped to `\"error\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "errorMessage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timestamp": {
+          "description": "Unix timestamp in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "content",
+        "api",
+        "provider",
+        "model",
+        "usage",
+        "stopReason",
+        "timestamp"
+      ],
+      "additionalProperties": true
+    },
+    "ToolResultMessage": {
+      "type": "object",
+      "properties": {
+        "toolCallId": {
+          "type": "string"
+        },
+        "toolName": {
+          "description": "The tool's name. A session file from a foreign tool or older build\nmay omit it (the TS loader keeps such rows), so the field defaults;\nan empty name is not re-serialized, keeping it lossless.",
+          "type": "string"
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UserContentBlock"
+          }
+        },
+        "details": {
+          "description": "Structured details for logs or UI rendering."
+        },
+        "isError": {
+          "type": "boolean"
+        },
+        "timestamp": {
+          "description": "Unix timestamp in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "toolCallId",
+        "content",
+        "isError",
+        "timestamp"
+      ],
+      "additionalProperties": true
+    },
+    "BashExecutionMessage": {
+      "description": "`role: \"bashExecution\"`: a `!`-command execution, rendered as a user turn.",
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "output": {
+          "type": "string"
+        },
+        "exitCode": {
+          "description": "Exit status; absent while the command is still running.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        },
+        "cancelled": {
+          "type": "boolean"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "fullOutputPath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timestamp": {
+          "description": "Unix timestamp in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "excludeFromContext": {
+          "description": "True excludes this message from LLM context (`!!` prefix).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "command",
+        "output",
+        "cancelled",
+        "truncated",
+        "timestamp"
+      ]
+    },
+    "CustomMessage": {
+      "description": "`role: \"custom\"`: bookkeeping message with a `customType` tag.",
+      "type": "object",
+      "properties": {
+        "customType": {
+          "type": "string"
+        },
+        "content": {
+          "$ref": "#/$defs/UserContent"
+        },
+        "display": {
+          "type": "boolean"
+        },
+        "details": true,
+        "timestamp": {
+          "description": "Unix timestamp in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "customType",
+        "content",
+        "display",
+        "timestamp"
+      ],
+      "additionalProperties": true
+    },
+    "BranchSummaryMessage": {
+      "description": "`role: \"branchSummary\"`: summary of a branch the conversation returned from.",
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "fromId": {
+          "type": "string"
+        },
+        "timestamp": {
+          "description": "Unix timestamp in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "summary",
+        "fromId",
+        "timestamp"
+      ]
+    },
+    "CompactionSummaryMessage": {
+      "description": "`role: \"compactionSummary\"`: compaction result presented as a user turn.",
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "tokensBefore": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "retainedMessageCount": {
+          "description": "Retained messages that precede this summary in transcript presentation.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "customInstructions": {
+          "description": "User instructions that guided the summary (`/compact <instructions>`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "harnessDigest": {
+          "description": "Harness digest snapshot attached mechanically at compaction.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "harnessStateFingerprint": {
+          "description": "Fingerprint of the harness state behind `harness_digest`; lets cold\nboundaries skip re-delivery (TS #2400).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timestamp": {
+          "description": "Unix timestamp in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "summary",
+        "tokensBefore",
+        "timestamp"
+      ]
+    },
+    "CycleDirection": {
+      "type": "string",
+      "enum": [
+        "forward",
+        "backward"
+      ]
+    },
+    "ServiceTier": {
+      "description": "TS `ServiceTier = \"auto\" | \"default\" | \"flex\" | \"scale\" | \"priority\" | null`.\nThe wire value can be absent or an explicit null, both mapping to `None`.",
+      "type": "string",
+      "enum": [
+        "auto",
+        "default",
+        "flex",
+        "scale",
+        "priority"
+      ]
+    },
+    "Transport": {
+      "type": "string",
+      "enum": [
+        "sse",
+        "websocket",
+        "websocket-cached",
+        "auto"
+      ]
+    },
+    "ForkPosition": {
+      "type": "string",
+      "enum": [
+        "before",
+        "at"
+      ]
+    },
+    "DaemonCommandEnvelope": {
+      "description": "`type: \"command\"` envelope wrapping a [`DaemonCommand`].",
+      "type": "object",
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/DaemonCommandFrameType"
+        },
+        "id": {
+          "type": "string"
+        },
+        "protocol": {
+          "$ref": "#/$defs/DaemonProtocolInfo"
+        },
+        "clientId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "command": {
+          "$ref": "#/$defs/DaemonCommand"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "protocol",
+        "command"
+      ]
+    },
+    "DaemonCommandFrameType": {
+      "type": "string",
+      "enum": [
+        "command"
+      ]
+    },
+    "DaemonProtocolInfo": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ]
+    }
+  }
+}

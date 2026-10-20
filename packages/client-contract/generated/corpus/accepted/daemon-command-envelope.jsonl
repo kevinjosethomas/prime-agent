@@ -1,0 +1,3 @@
+{"schemaRoot":"daemon-command-envelope","sample":{"type":"command","id":"wire","protocol":{"name":"wire","version":0},"command":{"type":"get_global_harness_defaults"}}}
+{"schemaRoot":"daemon-command-envelope","sample":{"type":"command","id":"wire","protocol":{"name":"wire","version":0},"command":{"type":"get_global_harness_defaults"},"clientId":"wire"}}
+{"schemaRoot":"daemon-command-envelope","sample":{"type":"command","id":"wire","protocol":{"name":"wire","version":0},"command":{"type":"get_global_harness_defaults"},"__contractUnknownExtra":{"kept":true}}}

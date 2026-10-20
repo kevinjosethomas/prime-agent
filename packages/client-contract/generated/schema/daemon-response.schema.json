@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DaemonResponse",
+  "description": "`type: \"response\"`: success or failure outcome of one command.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "command": {
+      "type": "string"
+    },
+    "success": {
+      "type": "boolean"
+    },
+    "data": true,
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "errorInfo": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/DaemonErrorInfo"
+        },
+        {
+          "type": "object",
+          "required": [
+            "code"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "not": {
+                "enum": [
+                  "missing_session_cwd",
+                  "session_import_file_not_found",
+                  "session_already_active",
+                  "session_recovering",
+                  "update_restarting",
+                  "command_result_uncertain",
+                  "update_prepare_refused",
+                  "model_provider_unauthenticated",
+                  "worker_overloaded"
+                ]
+              }
+            }
+          },
+          "additionalProperties": true
+        }
+      ]
+    }
+  },
+  "required": [
+    "command",
+    "success"
+  ],
+  "$defs": {
+    "DaemonErrorInfo": {
+      "description": "Structured failure info carried on error responses, tagged by `code`.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "missing_session_cwd"
+            },
+            "issue": true
+          },
+          "required": [
+            "code",
+            "issue"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "session_import_file_not_found"
+            },
+            "filePath": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "filePath"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "session_already_active"
+            },
+            "sessionPath": {
+              "type": "string"
+            },
+            "activeSessionId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "code",
+            "sessionPath"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "session_recovering"
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "activeSessionId"
+          ]
+        },
+        {
+          "description": "The daemon is preparing an update restart: mutating commands are refused while the\ncoordinator drains and checkpoints; a transient state - clients wait and retry, never a hard\nfailure.",
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "update_restarting"
+            }
+          },
+          "required": [
+            "code"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "command_result_uncertain"
+            },
+            "clientId": {
+              "type": "string"
+            },
+            "commandId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "clientId",
+            "commandId"
+          ]
+        },
+        {
+          "description": "`prepare_update_restart` with a different `updateId` while a prepare\ntransaction is active: a typed refusal the coordinator maps to `Join`.",
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "update_prepare_refused"
+            },
+            "activeUpdateId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "activeUpdateId"
+          ]
+        },
+        {
+          "description": "`set_model` resolved the model but its provider has no credential: a sign-in refusal, not a\ndead end - the client offers the provider's sign-in flow and retries after the login lands.",
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "model_provider_unauthenticated"
+            },
+            "provider": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "provider"
+          ]
+        },
+        {
+          "description": "The supervisor refused a request-shaped client command because the target worker is at its\nin-flight bound: the request never left the supervisor, so a retry cannot duplicate it.",
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "worker_overloaded"
+            }
+          },
+          "required": [
+            "code"
+          ]
+        },
+        {
+          "description": "A `code` this build does not know (a newer daemon's typed refusal):\ndegrade to the plain refusal message riding the same response, never\nfail the deserialization (that would drop the refusal).",
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "unknown"
+            }
+          },
+          "required": [
+            "code"
+          ]
+        }
+      ]
+    }
+  }
+}

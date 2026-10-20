@@ -1,0 +1,2020 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DaemonEventEnvelope",
+  "description": "`type: \"event\"` envelope wrapping a [`DaemonOutbound`].",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "protocol": {
+      "$ref": "#/$defs/DaemonProtocolInfo"
+    },
+    "activeSessionId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sequence": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "cursor": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DaemonEventCursor"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "emittedAt": {
+      "type": "string"
+    },
+    "event": {
+      "$ref": "#/$defs/DaemonOutbound"
+    }
+  },
+  "required": [
+    "id",
+    "protocol",
+    "emittedAt",
+    "event"
+  ],
+  "$defs": {
+    "DaemonProtocolInfo": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ]
+    },
+    "DaemonEventCursor": {
+      "type": "object",
+      "properties": {
+        "generation": {
+          "type": "string"
+        },
+        "sequence": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "generation",
+        "sequence"
+      ]
+    },
+    "DaemonOutbound": {
+      "description": "Supervisor -> client frames, tagged by `type`.",
+      "oneOf": [
+        {
+          "description": "`type: \"response\"`: success or failure outcome of one command.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "response"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "command": {
+              "type": "string"
+            },
+            "success": {
+              "type": "boolean"
+            },
+            "data": true,
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "errorInfo": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/$defs/DaemonErrorInfo"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "code"
+                  ],
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "not": {
+                        "enum": [
+                          "missing_session_cwd",
+                          "session_import_file_not_found",
+                          "session_already_active",
+                          "session_recovering",
+                          "update_restarting",
+                          "command_result_uncertain",
+                          "update_prepare_refused",
+                          "model_provider_unauthenticated",
+                          "worker_overloaded"
+                        ]
+                      }
+                    }
+                  },
+                  "additionalProperties": true
+                }
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "command",
+            "success"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "session_list_progress"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "command": {
+              "type": "string"
+            },
+            "activeSessionId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "loaded": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "total": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "command",
+            "loaded",
+            "total"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "session_list_item"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "command": {
+              "type": "string"
+            },
+            "activeSessionId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "session": {
+              "$ref": "#/$defs/DaemonSavedSessionInfo"
+            }
+          },
+          "required": [
+            "type",
+            "command",
+            "session"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "daemon_hello"
+            },
+            "socketPath": {
+              "type": "string"
+            },
+            "protocol": {
+              "$ref": "#/$defs/DaemonProtocolInfo"
+            },
+            "schemaId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "schemaRevision": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "appVersion": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "runtime": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DaemonRuntimeIdentity"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "supervisorGeneration": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "supervisorPid": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "supervisorOwnerToken": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "supervisorProcessStartId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "supervisorSocketPath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "updateResume": {
+              "description": "The update resume contract (spec §10.3): whether the restore pass has finished, so a\nreconnecting client knows whether to queue its attach. Rust-only extension.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DaemonUpdateResume"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "clientId": {
+              "type": "string"
+            },
+            "serverCapabilities": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "socketPath",
+            "protocol",
+            "clientId",
+            "serverCapabilities"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "daemon_closing"
+            },
+            "reason": {
+              "$ref": "#/$defs/DaemonClosingReason"
+            }
+          },
+          "required": [
+            "type",
+            "reason"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "heartbeats_changed"
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "The Rust-only no-stall picker-open extension: a background catalog refresh changed the\nserved\nsnapshot, so every client re-fetches (same shape as `model_catalog_changed`).",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "model_catalog_changed"
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "roster_update"
+            },
+            "changed": true,
+            "removed": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "resync": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "changed"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "session_event"
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "event": true,
+            "meta": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DaemonEventMeta"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "event"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "side_question_event"
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "event": true
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "event"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "session_replaced"
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "state": true,
+            "messages": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentMessage"
+              }
+            },
+            "snapshotFollows": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "meta": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DaemonEventMeta"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "state",
+            "messages"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "session_resynced"
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "snapshot": {
+              "$ref": "#/$defs/DaemonSessionSnapshot"
+            },
+            "meta": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DaemonEventMeta"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "snapshot"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "session_attached"
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "state": true,
+            "messages": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentMessage"
+              }
+            },
+            "snapshot": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DaemonSessionSnapshot"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "replay": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DaemonReplayInfo"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "lastEventSequence": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "state",
+            "messages"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "session_snapshot_begin"
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "snapshotId": {
+              "type": "string"
+            },
+            "messageCount": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "targetChunkBytes": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "purpose": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SnapshotPurpose"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "snapshotId",
+            "messageCount",
+            "targetChunkBytes"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "session_snapshot_chunk"
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "snapshotId": {
+              "type": "string"
+            },
+            "index": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "messages": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AgentMessage"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "snapshotId",
+            "index",
+            "messages"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "session_snapshot_end"
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "snapshotId": {
+              "type": "string"
+            },
+            "chunkCount": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "lastEventSequence": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "lastEventCursor": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DaemonEventCursor"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "snapshotId",
+            "chunkCount",
+            "lastEventSequence"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "session_snapshot_failed"
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "snapshotId": {
+              "type": "string"
+            },
+            "error": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "snapshotId",
+            "error"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "session_detached"
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "description": "The stale-id rebind notice (Rust-only): a worker replacement rebound a session; attached\nclients re-attach to the session's current id so their event routing follows it.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "session_binding"
+            },
+            "previousActiveSessionId": {
+              "type": "string"
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "sessionId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sessionFile": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "previousActiveSessionId",
+            "activeSessionId"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "session_closed"
+            },
+            "activeSessionId": {
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/DaemonSessionClosedReason"
+            },
+            "meta": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DaemonEventMeta"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "activeSessionId",
+            "reason"
+          ],
+          "additionalProperties": true
+        }
+      ]
+    },
+    "DaemonErrorInfo": {
+      "description": "Structured failure info carried on error responses, tagged by `code`.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "missing_session_cwd"
+            },
+            "issue": true
+          },
+          "required": [
+            "code",
+            "issue"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "session_import_file_not_found"
+            },
+            "filePath": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "filePath"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "session_already_active"
+            },
+            "sessionPath": {
+              "type": "string"
+            },
+            "activeSessionId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "code",
+            "sessionPath"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "session_recovering"
+            },
+            "activeSessionId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "activeSessionId"
+          ]
+        },
+        {
+          "description": "The daemon is preparing an update restart: mutating commands are refused while the\ncoordinator drains and checkpoints; a transient state - clients wait and retry, never a hard\nfailure.",
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "update_restarting"
+            }
+          },
+          "required": [
+            "code"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "command_result_uncertain"
+            },
+            "clientId": {
+              "type": "string"
+            },
+            "commandId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "clientId",
+            "commandId"
+          ]
+        },
+        {
+          "description": "`prepare_update_restart` with a different `updateId` while a prepare\ntransaction is active: a typed refusal the coordinator maps to `Join`.",
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "update_prepare_refused"
+            },
+            "activeUpdateId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "activeUpdateId"
+          ]
+        },
+        {
+          "description": "`set_model` resolved the model but its provider has no credential: a sign-in refusal, not a\ndead end - the client offers the provider's sign-in flow and retries after the login lands.",
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "model_provider_unauthenticated"
+            },
+            "provider": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "provider"
+          ]
+        },
+        {
+          "description": "The supervisor refused a request-shaped client command because the target worker is at its\nin-flight bound: the request never left the supervisor, so a retry cannot duplicate it.",
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "worker_overloaded"
+            }
+          },
+          "required": [
+            "code"
+          ]
+        },
+        {
+          "description": "A `code` this build does not know (a newer daemon's typed refusal):\ndegrade to the plain refusal message riding the same response, never\nfail the deserialization (that would drop the refusal).",
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "unknown"
+            }
+          },
+          "required": [
+            "code"
+          ]
+        }
+      ]
+    },
+    "DaemonSavedSessionInfo": {
+      "description": "Saved-session row pushed by `session_list_item` progress events.",
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": true,
+        "parentSessionPath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rlmDepth": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "created": {
+          "type": "string"
+        },
+        "modified": {
+          "type": "string"
+        },
+        "messageCount": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "firstMessage": {
+          "type": "string"
+        },
+        "allMessagesText": {
+          "type": "string"
+        },
+        "usage": true,
+        "model": true
+      },
+      "required": [
+        "path",
+        "id",
+        "cwd",
+        "created",
+        "modified",
+        "messageCount",
+        "firstMessage",
+        "allMessagesText"
+      ],
+      "additionalProperties": true
+    },
+    "DaemonRuntimeIdentity": {
+      "description": "Process identity of the daemon build, published in `daemon_hello`.",
+      "type": "object",
+      "properties": {
+        "buildId": {
+          "type": "string"
+        },
+        "executablePath": {
+          "type": "string"
+        },
+        "entrypointPath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "launcherPath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "buildId",
+        "executablePath"
+      ]
+    },
+    "DaemonUpdateResume": {
+      "description": "The successor supervisor's hello resume contract (spec §10.3): whether\nthe restore pass has finished. `update_id` is `None` on a normal boot.\nRust-only extension (the TS close frame carries no resume contract).",
+      "type": "object",
+      "properties": {
+        "updateId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UpdateId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "complete": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "complete"
+      ]
+    },
+    "UpdateId": {
+      "description": "Opaque update identifier (a `UUIDv7` in practice), typed so status records, artifact paths, and\nprepare transactions cannot mix it up with session ids.",
+      "type": "string"
+    },
+    "DaemonClosingReason": {
+      "type": "string",
+      "enum": [
+        "shutdown",
+        "update"
+      ]
+    },
+    "DaemonEventMeta": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "protocol": {
+          "$ref": "#/$defs/DaemonProtocolInfo"
+        },
+        "activeSessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sequence": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DaemonEventCursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "emittedAt": {
+          "type": "string"
+        },
+        "replayed": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "protocol",
+        "emittedAt"
+      ]
+    },
+    "AgentMessage": {
+      "description": "Conversation message stored in `message` entries: the provider-facing\nmessages from [`crate::ai`] plus the coding-agent-only roles.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string",
+              "const": "user"
+            }
+          },
+          "$ref": "#/$defs/UserMessage",
+          "required": [
+            "role"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string",
+              "const": "assistant"
+            }
+          },
+          "$ref": "#/$defs/AssistantMessage",
+          "required": [
+            "role"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string",
+              "const": "toolResult"
+            }
+          },
+          "$ref": "#/$defs/ToolResultMessage",
+          "required": [
+            "role"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string",
+              "const": "bashExecution"
+            }
+          },
+          "$ref": "#/$defs/BashExecutionMessage",
+          "required": [
+            "role"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string",
+              "const": "custom"
+            }
+          },
+          "$ref": "#/$defs/CustomMessage",
+          "required": [
+            "role"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string",
+              "const": "branchSummary"
+            }
+          },
+          "$ref": "#/$defs/BranchSummaryMessage",
+          "required": [
+            "role"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string",
+              "const": "compactionSummary"
+            }
+          },
+          "$ref": "#/$defs/CompactionSummaryMessage",
+          "required": [
+            "role"
+          ]
+        }
+      ]
+    },
+    "UserContent": {
+      "description": "User/tool-result content: a plain string or a list of text/image blocks.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UserContentBlock"
+          }
+        }
+      ]
+    },
+    "UserContentBlock": {
+      "description": "Content blocks in user/tool-result messages: a `text` block, an `image` block, or any other JSON shape (unknown kinds preserved verbatim).",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "text"
+            },
+            "text": {
+              "type": "string"
+            },
+            "textSignature": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "image"
+            },
+            "data": {
+              "type": "string"
+            },
+            "mimeType": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "data",
+            "mimeType"
+          ],
+          "additionalProperties": true
+        },
+        {}
+      ]
+    },
+    "UserMessage": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/UserContent"
+        },
+        "timestamp": {
+          "description": "Unix timestamp in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "content",
+        "timestamp"
+      ],
+      "additionalProperties": true
+    },
+    "AssistantContentBlock": {
+      "description": "Content blocks allowed in assistant messages.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "text"
+            }
+          },
+          "$ref": "#/$defs/TextContent",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "thinking"
+            }
+          },
+          "$ref": "#/$defs/ThinkingContent",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "toolCall"
+            }
+          },
+          "$ref": "#/$defs/ToolCall",
+          "required": [
+            "type"
+          ]
+        }
+      ]
+    },
+    "TextContent": {
+      "description": "Text content block (`type: \"text\"`).",
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "textSignature": {
+          "description": "`OpenAI` Responses metadata: a legacy id string or a [`TextSignatureV1`] JSON payload (TS\nwire key `textSignature`; the camelCase rename keeps it attached across the pa-ai <->\npa-agent round trips, which have no catch-all).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "additionalProperties": true
+    },
+    "ThinkingContent": {
+      "description": "Thinking content block (`type: \"thinking\"`).",
+      "type": "object",
+      "properties": {
+        "thinking": {
+          "type": "string"
+        },
+        "thinkingSignature": {
+          "description": "Provider reasoning item id, or the encoded reasoning-details payload for redacted blocks (TS\nwire key `thinkingSignature`; the camelCase rename keeps it attached across the pa-ai <->\npa-agent round trips, where a `snake_case` key was silently dropped).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "redacted": {
+          "description": "True when the thinking content was redacted by safety filters.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "thinking"
+      ],
+      "additionalProperties": true
+    },
+    "ToolCall": {
+      "description": "Tool call content block (`type: \"toolCall\"`).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "arguments": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "thoughtSignature": {
+          "description": "Google-specific opaque signature for reusing thought context (TS\nwire key `thoughtSignature`; see [`ThinkingContent`] for the rename).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": true
+    },
+    "AssistantMessageDiagnostic": {
+      "description": "One redacted provider/runtime diagnostic attached to an assistant message.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiagnosticErrorInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "details": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "type",
+        "timestamp"
+      ]
+    },
+    "DiagnosticErrorInfo": {
+      "description": "Error info captured inside a diagnostic.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "stack": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "code": {
+          "description": "TS `string | number`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiagnosticCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "additionalProperties": true
+    },
+    "DiagnosticCode": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/JsNumber"
+        }
+      ]
+    },
+    "JsNumber": {
+      "description": "An f64 that (de)serializes with JavaScript `JSON.stringify` number parity. TypeScript numbers\nare\nf64 and `JSON.stringify` prints integral values without a fractional part (`0`, not `0.0`);\nRust's `f64` serialization always prints `0.0`, which would break lossless round-trips against\nTS-produced files. This newtype prints integral values as integers, everything else via the\nshortest f64 representation.",
+      "type": "number",
+      "format": "double"
+    },
+    "Usage": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "output": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "cacheRead": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "cacheWrite": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "totalTokens": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "cost": {
+          "$ref": "#/$defs/UsageCost"
+        }
+      },
+      "required": [
+        "input",
+        "output",
+        "cacheRead",
+        "cacheWrite",
+        "totalTokens",
+        "cost"
+      ]
+    },
+    "UsageCost": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "$ref": "#/$defs/JsNumber"
+        },
+        "output": {
+          "$ref": "#/$defs/JsNumber"
+        },
+        "cacheRead": {
+          "$ref": "#/$defs/JsNumber"
+        },
+        "cacheWrite": {
+          "$ref": "#/$defs/JsNumber"
+        },
+        "total": {
+          "$ref": "#/$defs/JsNumber"
+        }
+      },
+      "required": [
+        "input",
+        "output",
+        "cacheRead",
+        "cacheWrite",
+        "total"
+      ]
+    },
+    "StopReason": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "stop",
+            "length",
+            "error",
+            "aborted"
+          ]
+        },
+        {
+          "description": "Terminal reason of a turn that ended in tool calls; also accepts the\nraw `OpenAI` wire value `tool_calls` (TS keeps any `stopReason`\nstring, so foreign session files never lose assistant rows).",
+          "type": "string",
+          "const": "toolUse"
+        }
+      ]
+    },
+    "AssistantMessage": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AssistantContentBlock"
+          }
+        },
+        "api": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "responseModel": {
+          "description": "Concrete `chunk.model` when different from the requested model.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "responseId": {
+          "description": "Provider-specific response identifier, when exposed upstream.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "diagnostics": {
+          "description": "Redacted provider/runtime diagnostics for failures and recoveries.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/AssistantMessageDiagnostic"
+          }
+        },
+        "usage": {
+          "$ref": "#/$defs/Usage"
+        },
+        "stopReason": {
+          "$ref": "#/$defs/StopReason"
+        },
+        "stopReasonRaw": {
+          "description": "Provider's raw stop/finish reason when it mapped to `\"error\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "errorMessage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timestamp": {
+          "description": "Unix timestamp in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "content",
+        "api",
+        "provider",
+        "model",
+        "usage",
+        "stopReason",
+        "timestamp"
+      ],
+      "additionalProperties": true
+    },
+    "ToolResultMessage": {
+      "type": "object",
+      "properties": {
+        "toolCallId": {
+          "type": "string"
+        },
+        "toolName": {
+          "description": "The tool's name. A session file from a foreign tool or older build\nmay omit it (the TS loader keeps such rows), so the field defaults;\nan empty name is not re-serialized, keeping it lossless.",
+          "type": "string"
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UserContentBlock"
+          }
+        },
+        "details": {
+          "description": "Structured details for logs or UI rendering."
+        },
+        "isError": {
+          "type": "boolean"
+        },
+        "timestamp": {
+          "description": "Unix timestamp in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "toolCallId",
+        "content",
+        "isError",
+        "timestamp"
+      ],
+      "additionalProperties": true
+    },
+    "BashExecutionMessage": {
+      "description": "`role: \"bashExecution\"`: a `!`-command execution, rendered as a user turn.",
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "output": {
+          "type": "string"
+        },
+        "exitCode": {
+          "description": "Exit status; absent while the command is still running.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        },
+        "cancelled": {
+          "type": "boolean"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "fullOutputPath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timestamp": {
+          "description": "Unix timestamp in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "excludeFromContext": {
+          "description": "True excludes this message from LLM context (`!!` prefix).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "command",
+        "output",
+        "cancelled",
+        "truncated",
+        "timestamp"
+      ]
+    },
+    "CustomMessage": {
+      "description": "`role: \"custom\"`: bookkeeping message with a `customType` tag.",
+      "type": "object",
+      "properties": {
+        "customType": {
+          "type": "string"
+        },
+        "content": {
+          "$ref": "#/$defs/UserContent"
+        },
+        "display": {
+          "type": "boolean"
+        },
+        "details": true,
+        "timestamp": {
+          "description": "Unix timestamp in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "customType",
+        "content",
+        "display",
+        "timestamp"
+      ],
+      "additionalProperties": true
+    },
+    "BranchSummaryMessage": {
+      "description": "`role: \"branchSummary\"`: summary of a branch the conversation returned from.",
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "fromId": {
+          "type": "string"
+        },
+        "timestamp": {
+          "description": "Unix timestamp in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "summary",
+        "fromId",
+        "timestamp"
+      ]
+    },
+    "CompactionSummaryMessage": {
+      "description": "`role: \"compactionSummary\"`: compaction result presented as a user turn.",
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "tokensBefore": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "retainedMessageCount": {
+          "description": "Retained messages that precede this summary in transcript presentation.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "customInstructions": {
+          "description": "User instructions that guided the summary (`/compact <instructions>`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "harnessDigest": {
+          "description": "Harness digest snapshot attached mechanically at compaction.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "harnessStateFingerprint": {
+          "description": "Fingerprint of the harness state behind `harness_digest`; lets cold\nboundaries skip re-delivery (TS #2400).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timestamp": {
+          "description": "Unix timestamp in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "summary",
+        "tokensBefore",
+        "timestamp"
+      ]
+    },
+    "DaemonSessionSnapshot": {
+      "description": "Full session snapshot (attach, replacement, resync).",
+      "type": "object",
+      "properties": {
+        "activeSessionId": {
+          "type": "string"
+        },
+        "summary": true,
+        "state": true,
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentMessage"
+          }
+        },
+        "sessionContext": true,
+        "sessionTree": true,
+        "lastEventSequence": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "lastEventCursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DaemonEventCursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parent": true,
+        "children": true
+      },
+      "required": [
+        "activeSessionId",
+        "summary",
+        "state",
+        "messages",
+        "lastEventSequence"
+      ],
+      "additionalProperties": true
+    },
+    "DaemonReplayInfo": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/DaemonReplayStatus"
+        },
+        "fromSequence": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "toSequence": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "fromCursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DaemonEventCursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "toCursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DaemonEventCursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "toSequence"
+      ]
+    },
+    "DaemonReplayStatus": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial",
+        "unavailable"
+      ]
+    },
+    "SnapshotPurpose": {
+      "description": "Purpose tag of a `session_snapshot_begin` record; the catch-up value\nis `resync` on the wire, never `catchup`.",
+      "type": "string",
+      "enum": [
+        "attach",
+        "replacement",
+        "resync"
+      ]
+    },
+    "DaemonSessionClosedReason": {
+      "type": "string",
+      "enum": [
+        "killed",
+        "shutdown",
+        "completed",
+        "replaced",
+        "update"
+      ]
+    }
+  }
+}

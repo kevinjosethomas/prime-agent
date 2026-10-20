@@ -1,0 +1,17 @@
+[package]
+name = "pa-contract"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Daemon client contract generator: canonical JSON Schema, wire witnesses, and metadata exported from pa-types."
+
+[dependencies]
+pa-types = { path = "../pa-types", features = ["contract"] }
+pa-daemon = { path = "../pa-daemon" }
+pa-client = { path = "../pa-client" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+# Same version as pa-types' optional contract feature (unified by cargo);
+# pa-contract names JsonSchema for its root-schema exports.
+schemars = "1"
