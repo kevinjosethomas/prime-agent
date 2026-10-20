@@ -382,19 +382,23 @@ impl DaemonClientSession {
         let mut stopped = self.state.stopped.subscribe();
         loop {
             if *stopped.borrow_and_update() {
+                eprintln!("DBG stop: mark-at-loop-top break");
                 break;
             }
             let mut driver = self.state.driver.lock().await;
             let Some(handle) = driver.handle.as_mut() else {
+                eprintln!("DBG stop: handle-None break");
                 break; // A prior stop observed and memoized the end.
             };
             tokio::select! {
                 changed = stopped.changed() => {
+                    eprintln!("DBG stop: changed arm");
                     if changed.is_err() {
                         break;
                     }
                 }
                 result = &mut *handle => {
+                    eprintln!("DBG stop: handle arm {result:?}");
                     // The driver task ended: memoize the cloneable outcome
                     // once, clear the handle (no re-poll).
                     driver.handle = None;
