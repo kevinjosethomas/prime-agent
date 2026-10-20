@@ -42,7 +42,7 @@ class FactoryReceiptGuards(unittest.TestCase):
 
 
 class LiveCountSnapshotGuard(unittest.TestCase):
-    def test_snapshot_copies_arrivals_and_reads_counters_at_one_instant(self):
+    def test_snapshot_copies_arrivals_and_reads_counters(self):
         server = SimpleNamespace(requests=[1, 2], parent_requests=[1],
                                  child_requests=[1, 2],
                                  request_arrivals=[(10.0, 'parent'), (11.0, 'child'), (12.0, 'child')])
@@ -55,7 +55,6 @@ class LiveCountSnapshotGuard(unittest.TestCase):
             'request_arrivals': [(10.0, 'parent'), (11.0, 'child'), (12.0, 'child')],
             'snapshot_time': 42.0,
         })
-        # The arrival inventory is a copy: later requests never rewrite history.
         server.request_arrivals.append((13.0, 'child'))
         self.assertEqual(len(snapshot['request_arrivals']), 3)
 

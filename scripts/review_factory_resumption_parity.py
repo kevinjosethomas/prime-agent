@@ -44,8 +44,6 @@ class Provider(http.server.ThreadingHTTPServer):
         self.requests = []
         self.parent_requests = []
         self.child_requests = []
-        # Arrival evidence for the child-count assertion: one (timestamp,
-        # classification) row per request, in arrival order.
         self.request_arrivals = []
 
 
@@ -108,8 +106,7 @@ def count(row, snake, camel):
 
 
 def snapshot_live_counts(server, clock=time.monotonic):
-    """Evidence capture beside the child-count assertion: the live counter
-    values and the immutable arrival inventory, taken at one instant."""
+    """Capture live counters and copy the arrival log before the assertion."""
     return {
         'total_requests': len(server.requests),
         'parent_requests': len(server.parent_requests),
