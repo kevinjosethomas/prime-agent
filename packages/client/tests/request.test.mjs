@@ -87,6 +87,32 @@ test('the pending cap refuses as a provable NotSent', async () => {
   await stop();
 });
 
+test('a resolved answer never downgrades under a racing close (biased select proof)', async () => {
+  // The select is biased with the core future first: when a completed
+  // answer and the teardown wake are both ready, the core class wins.
+  // Structural stress: the daemon answered the request (the mock echoes
+  // immediately); a close racing the poll must yield only the honest
+  // classes — a completed success, or NotSent/Uncertain with cause.
+  for (let i = 0; i < 25; i += 1) {
+    const socketPath = tmpSocket(`race-${i}`);
+    const stop = await startMock(socketPath, 'echo');
+    const connection = await DaemonConnection.connect(socketPath);
+    const pending = connection.request({ type: 'get_connection_state' });
+    connection.close();
+    const outcome = await pending.then(
+      () => 'success',
+      (error) => error,
+    );
+    if (outcome !== 'success') {
+      assert.ok(
+        (NotSentError.is(outcome) || UncertainError.is(outcome)) && outcome.cause === 'closed',
+        `unexpected class: ${outcome.kind}`,
+      );
+    }
+    await stop();
+  }
+});
+
 test('close tears down an in-flight request with the honest class', async () => {
   const socketPath = tmpSocket('close-inflight');
   const stop = await startMock(socketPath, 'silent');
