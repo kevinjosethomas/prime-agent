@@ -20,11 +20,14 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  # Pinned external runtimes: exact version + sha256, verified before use.
+  # Pinned external runtimes: exact version + sha256 from the release's
+  # own official SHASUMS256.txt (validated by exact filename:
+  # electron-v44.9.1-darwin-arm64.zip / node-v22.11.0-darwin-arm64.tar.gz),
+  # verified before use — fail-closed on any mismatch.
   NODE_VERSION: "22.11.0"
   NODE_SHA256_ARM64: "2e89afe6f4e3aa6c7e21c560d8a0453d84807e97850bbb819b998531a22bdfde"
   ELECTRON_VERSION: "44.9.1"
-  ELECTRON_SHA256_ARM64: "3b928b2851ad1ee21bf72401b3a161e826389408985c7256324781dad33b54cf"
+  ELECTRON_SHA256_ARM64: "ff597552c9c7b0b16c39a7fb93a346ee7148afbd372ebcf0c18415482c49fbea"
 
 jobs:
   darwin-arm64:
