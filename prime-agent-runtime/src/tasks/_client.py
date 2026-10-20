@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
-
-if TYPE_CHECKING:
-    from rlm import RLMCreateSessionHandle, RLMSpawnHandle, RLMSubagent
+from typing import Any, Mapping, Sequence
 
 from ._models import UNSET, Link, Status, Task, STATUSES
 from ._transport import DeliveryError, Report, Reporter
@@ -105,30 +102,14 @@ class Client:
         return await self.get(id)
 
     async def link(self, task_id: str, agent: Any) -> Any:
-        """Record an actual native handle/roster row or frozen Agent shape."""
+        """Record an actual frozen Agent by its real session id."""
         import rlm
 
         text(task_id, "task ID")
-        # Live native handles stay until the root API switch removes them.
-        if isinstance(agent, rlm.RLMCreateSessionHandle):
-            agent_value = {"taskId": task_id,
-                           "sessionId": text(agent.session_id, "session ID"),
-                           "name": text(agent.name, "agent name", 160),
-                           "role": "worker"}
-            return await self._deliver(Report.create("associate", agent=agent_value))
-        if isinstance(agent, (rlm.RLMSpawnHandle, rlm.RLMSubagent)):
-            agent_value = {"taskId": task_id,
-                           "rlmChildId": text(agent.rlm_child_id, "RLM child ID"),
-                           "sessionDir": text(str(agent.session_dir), "session directory", 4096),
-                           "name": text(agent.name if isinstance(agent, rlm.RLMSpawnHandle) else agent.session_name,
-                                        "agent name", 160), "role": "worker"}
-            if isinstance(agent, rlm.RLMSubagent) and agent.session_id is not None:
-                agent_value["sessionId"] = text(agent.session_id, "session ID")
-            return await self._deliver(Report.create("assign", agent=agent_value))
         # The frozen Agent shape, duck-typed by its five fields.
         fields = ("name", "session_id", "relationship", "child_id", "session_dir")
         if not all(hasattr(agent, field) for field in fields):
-            raise TypeError("link expects a native handle, roster row, or Agent")
+            raise TypeError("link expects a frozen Agent")
         # Any relationship associates by its real session id, no fabrication.
         session_id = text(agent.session_id, "session ID")
         if agent.name is None:

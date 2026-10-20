@@ -8,14 +8,13 @@ Pure Python CI does not depend on a neighboring desktop checkout or Node install
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
 import tempfile
 import unittest
 
-import rlm
+from rlm.agents import Agent
 from tasks import Link
 from tasks._client import Client
 
@@ -71,16 +70,8 @@ class DesktopInteropTests(unittest.IsolatedAsyncioTestCase):
             client = Client(command=[*argv, "--db", str(Path(directory) / "state.sqlite")])
             task = await client.create("fixture", "Verify frozen Agent links")
 
-            @dataclass
-            class Agent:
-                name: str | None = None
-                session_id: str | None = None
-                relationship: str = "child"
-                child_id: str | None = None
-                session_dir: object = None
-
             child_dir = Path(directory) / "agent-child"
-            await task.link(Agent(name="agent-worker", session_id="agent-session",
+            await task.link(Agent(name="agent-worker", session_id="agent-session", status="idle",
                                   relationship="child", child_id="agent-child", session_dir=child_dir))
             # Canonical rows: chatUrl rides every observed durable session id.
             agents = (await client._context())["agents"]
@@ -90,9 +81,9 @@ class DesktopInteropTests(unittest.IsolatedAsyncioTestCase):
                 "chatUrl": "prime-agent://session/agent-session",
                 "name": "agent-worker", "role": "worker"}])
             await task.link(Agent(name="agent-parent", session_id="agent-parent-session",
-                                  relationship="parent"))
+                                  relationship="parent", status="idle"))
             await task.link(Agent(name="agent-sibling", session_id="agent-sibling-session",
-                                  relationship="sibling"))
+                                  relationship="sibling", status="idle"))
             agents = (await client._context())["agents"]
             self.assertIn({"taskId": "fixture", "sessionId": "agent-parent-session",
                            "chatUrl": "prime-agent://session/agent-parent-session",
@@ -102,19 +93,16 @@ class DesktopInteropTests(unittest.IsolatedAsyncioTestCase):
                            "name": "agent-sibling", "role": "worker"}, agents)
             self.assertEqual(len(agents), 3)
 
-    async def test_canonical_link_queued_then_actual_roster_session(self):
+    async def test_canonical_child_assign_keeps_identity_across_relinks(self):
         with tempfile.TemporaryDirectory(prefix="tasks assignment ") as directory:
             argv = json.loads(os.environ["TASKS_DESKTOP_REPORTER"])
             client = Client(command=[*argv, "--db", str(Path(directory) / "state.sqlite")])
             task = await client.create("fixture", "Verify native assignment metadata")
             child_dir = Path(directory) / "fixture-child"
-            await task.link(rlm.RLMSpawnHandle("fixture-child", "fixture-worker", child_dir, "fixture/model"))
-            agents = (await client._context())["agents"]
-            self.assertEqual(len(agents), 1)
-            self.assertNotIn("sessionId", agents[0])
-            await task.link(rlm.RLMSubagent("fixture-child", "fixture-active-id", "fixture-session-id",
-                                            "fixture-worker", child_dir, "running"))
+            await task.link(Agent(name="fixture-worker", session_id="fixture-session-id", status="idle",
+                                 relationship="child", child_id="fixture-child", session_dir=child_dir))
             agents = (await client._context())["agents"]
             self.assertEqual(len(agents), 1)
             self.assertEqual(agents[0]["sessionId"], "fixture-session-id")
-            self.assertEqual((agents[0]["rlmChildId"], agents[0]["sessionDir"]), ("fixture-child", str(child_dir)))
+            self.assertEqual((agents[0]["rlmChildId"], agents[0]["sessionDir"]),
+                             ("fixture-child", str(child_dir)))

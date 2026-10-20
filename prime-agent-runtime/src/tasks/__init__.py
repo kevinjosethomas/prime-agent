@@ -1,4 +1,4 @@
-"""RLM-native task state API backed by Primer's local store.
+"""Kernel-native task state API backed by Primer's local store.
 
 The daemon injects the trusted local reporter configuration into every kernel
 environment it provisions (PRIME_AGENT_INTERNAL_TASKS_REPORTER); the package

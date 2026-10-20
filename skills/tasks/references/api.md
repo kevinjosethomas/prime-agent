@@ -47,7 +47,7 @@ task = await task.update(status="active",
                          links=[Link("pr", "https://github.com/org/repo/pull/12")])
 task = await task.archive()
 task = await task.restore()
-await task.link(agent)  # rlm.spawn/rlm.create_session handle or list_subagents row
+await task.link(agent)  # the frozen Agent from agents.spawn/list/parent/siblings
 ```
 
 - `update` patches only the named fields (`status`, `question`, `links`); the
@@ -57,14 +57,14 @@ await task.link(agent)  # rlm.spawn/rlm.create_session handle or list_subagents 
 - `archive`/`restore` use the host's `set-archived` operation, preserving
   status and timestamps. `get(id)` can always read an archived entry; the
   `archived` snapshot field defaults to `False` when an older host omits it.
-- `link` records an actual observed agent identity: a native handle, an
-  `rlm.list_subagents()` row, or the frozen `Agent` shape. Agents link as an
-  association by their real `session_id` (any relationship; children also
-  carry `child_id`/`session_dir`); an Agent without a session id is rejected
-  — no fabricated ids. A missing name resolves from one agent_observe.get
-  daemon lookup; the session id is the only fallback. Native spawn handles
-  record the queued child identity before its session id exists. Linking records metadata only; it
-  never spawns, messages, or grants access.
+- `link` records an actual observed agent identity: the frozen `Agent` from
+  `agents.spawn`, `agents.list()`, `agents.parent()` or `agents.siblings()`.
+  Agents link as an association by their real `session_id` (any relationship;
+  children also carry `child_id`/`session_dir`); an Agent without a session
+  id is rejected — no fabricated ids. A missing name resolves from one
+  agent_observe.get daemon lookup; the session id is the only fallback.
+  Linking records metadata only; it never spawns, messages, or grants
+  access.
 
 Snapshots are immutable; every operation returns a fresh snapshot of current
 state. The public model has exactly id, title, status, question, parent_id,
