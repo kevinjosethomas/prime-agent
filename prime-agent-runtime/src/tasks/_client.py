@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 if TYPE_CHECKING:
     from rlm import RLMCreateSessionHandle, RLMSpawnHandle, RLMSubagent
@@ -15,7 +15,8 @@ from ._validation import text, validate_changes, validate_question, validate_tas
 class Client:
     """Internal reporter configuration for a kernel, hook, or local integration."""
 
-    def __init__(self, *, command, env=None, timeout=15):
+    def __init__(self, *, command: Sequence[str],
+                 env: Mapping[str, str] | None = None, timeout: float = 15):
         self._reporter = Reporter(command, env, timeout)
 
     async def _context(self) -> dict[str, Any]:
