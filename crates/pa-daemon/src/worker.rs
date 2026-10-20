@@ -865,9 +865,6 @@ impl Worker {
     }
 }
 
-/// The turn runner: drains the queue one turn at a time, running the session
-/// engine and emitting the agent-loop event lifecycle.
-
 struct CoreUsageStore(Arc<Mutex<SessionCore>>);
 
 fn missing_usage_target(target_id: &str) -> std::io::Error {
