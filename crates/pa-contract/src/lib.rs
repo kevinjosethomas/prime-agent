@@ -510,7 +510,7 @@ pub fn nested_branch_variants(
     defs: &Map<String, Value>,
 ) -> Vec<Value> {
     let mut replacements: Vec<(Vec<String>, Value)> = Vec::new();
-    collect_union_replacements(schema, witness, defs, &mut Vec::new(), 0, &mut replacements);
+    collect_union_replacements(schema, witness, defs, &[], 0, &mut replacements);
     let mut out = Vec::new();
     for (path, value) in replacements {
         if out.len() >= 32 {
@@ -1014,6 +1014,10 @@ pub fn rejects_as_root(stem: &str, sample: &Value) -> Result<bool> {
 }
 
 /// File-name -> content map of the canonical export (drift gate input).
+///
+/// # Panics
+///
+/// Panics when a schema branch is not synthesizable (see [`export`]).
 ///
 /// # Errors
 ///
