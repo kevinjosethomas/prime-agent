@@ -1,0 +1,37 @@
+[workspace]
+# Isolated from the root workspace (which lists this crate under `exclude`):
+# the root's `cargo build`/`cargo test` never compile this cdylib, and this
+# workspace keeps its own Cargo.lock committed beside it. Path dependencies
+# into ../pa-client and ../pa-types resolve those crates' workspace-inherited
+# dependencies from the root Cargo.toml; only membership is separate.
+
+[package]
+name = "pa-client-node"
+version = "0.10.0"
+edition = "2021"
+license = "MIT"
+description = "Prime Agent Node-API binding for the shared daemon client."
+
+[lib]
+crate-type = ["cdylib"]
+# A unit-test binary would be a N-API-dependent executable: unresolved napi_*
+# symbols at link time on Linux. Behavior tests run against the REAL addon in
+# Node/Electron; the Rust side is still checked strictly by clippy (no link).
+test = false
+doctest = false
+
+[dependencies]
+pa-client = { path = "../pa-client" }
+pa-types = { path = "../pa-types" }
+napi = { version = "3", default-features = false, features = ["tokio_rt", "serde-json"] }
+napi-derive = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync"] }
+
+[build-dependencies]
+napi-build = "3"
+
+[lints.rust]
+# Spike question: does the napi-derive macro output keep this enforceable, or
+# does registration code need `unsafe`? If macro-generated unsafe trips this,
+# the final crate documents the narrow exception at the exact site instead.
+unsafe_code = "forbid"

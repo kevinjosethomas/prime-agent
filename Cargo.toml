@@ -13,6 +13,13 @@ members = [
     "crates/pa-cli",
     "crates/pa-perf",
 ]
+# The Node binding crate is an ISOLATED workspace (own Cargo.lock, in-crate):
+# its cdylib unit-test binary would link a N-API-dependent executable (unresolved
+# napi_* symbols on Linux), so it never joins this workspace's build/test gates.
+# Its path deps into pa-client/pa-types still resolve the workspace-inherited
+# dependencies from THIS root; the exclusion only removes the crate from
+# membership, not the dependency resolution.
+exclude = ["crates/pa-client-node"]
 
 # Crossterm 0.28.1's kitty support check holds the process-wide event reader
 # for 2s on terminals that do not answer. Keep its parser/queued input intact,
