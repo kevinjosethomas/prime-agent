@@ -221,14 +221,7 @@ impl AttachmentRegistry {
         }
         *last = sequence;
         let entry = self.attachments.get_mut(id).expect("registered above");
-        if !generation.is_empty() {
-            entry.cursor = Some(DaemonResumeCursor {
-                active_session_id: Some(id.to_string()),
-                generation: Some(generation),
-                sequence: Some(sequence),
-                event_sequence: None,
-            });
-        } else {
+        if generation.is_empty() {
             let previous = entry
                 .cursor
                 .as_ref()
@@ -241,6 +234,13 @@ impl AttachmentRegistry {
                     event_sequence: Some(sequence),
                 });
             }
+        } else {
+            entry.cursor = Some(DaemonResumeCursor {
+                active_session_id: Some(id.to_string()),
+                generation: Some(generation),
+                sequence: Some(sequence),
+                event_sequence: None,
+            });
         }
         FrameAction::Deliver
     }
