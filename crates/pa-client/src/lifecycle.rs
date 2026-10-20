@@ -2198,7 +2198,7 @@ mod tests {
             // the join for a bounded, observable window, then completes.
             let hot = tokio::spawn(async move {
                 let mut acc = 0u64;
-                for i in 0..150_000_000u64 {
+                for i in 0..600_000_000u64 {
                     acc = acc.wrapping_add(i);
                 }
                 std::hint::black_box(acc);
@@ -2220,9 +2220,9 @@ mod tests {
         // The shared slot retained the owner through the cancelled join:
         // the fresh stop completes the join and returns the INNER Ok only
         // after the real task's completion is observed.
-        session
-            .stop()
+        tokio::time::timeout(Duration::from_secs(30), session.stop())
             .await
+            .expect("the fresh stop settles")
             .expect("the fresh stop completes the retained join");
         assert!(
             completed.load(Ordering::SeqCst),
