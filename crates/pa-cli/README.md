@@ -77,8 +77,7 @@ admission, so they never cross the turn boundary.
 The json stream emits the TS session-event surface byte-for-shape: the
 session header row (version 3), the `message_update` streaming deltas with
 the slim `assistantMessageEvent` (the daemon wire drops the nested
-`partial`), `tool_execution_update`, the harness digest's message pair at
-the first-turn boundary, the compaction `compaction_start`/`compaction_end`
+`partial`), `tool_execution_update`, the compaction `compaction_start`/`compaction_end`
 pairs with their durable outcome rows, the `goal_update`/`session_action_update`
 frames of the goal loop. Verifier: the `print_runtime_e2e` rows.
 
