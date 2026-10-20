@@ -11,11 +11,10 @@ from __future__ import annotations
 
 import json
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ._client import Client
-    from rlm import RLMCreateSessionHandle, RLMSpawnHandle, RLMSubagent
 
 from ._models import Link, Status, Task
 
@@ -27,12 +26,6 @@ _REPORTER_ENV = "PRIME_AGENT_INTERNAL_TASKS_REPORTER"
 _LIST_TYPE = type([])
 
 _client: "Client | None" = None
-
-
-def _bind(client: "Client | None") -> None:
-    """Internal kernel-bootstrap hook; only ever called with trusted local setup."""
-    global _client
-    _client = client
 
 
 def _configured() -> "Client":
