@@ -146,7 +146,7 @@ pub struct DaemonClientSession {
     state: Arc<SessionState>,
 }
 
-struct SessionState {
+pub(crate) struct SessionState {
     status: RwLock<ConnectionStatus>,
     /// The registry AND the connection epoch share this mutex: adoption
     /// validation and the epoch bump are one critical section (B5).
@@ -2131,6 +2131,7 @@ mod tests {
             .expect("the settle completed honestly");
     }
 
+    #[allow(clippy::too_many_lines)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn an_old_client_attach_response_never_adopts_past_a_swap() {
         // Item 10 (the capture tie, swap-interleaving): the OLD client's
