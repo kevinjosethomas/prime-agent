@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const packageRoot = join(fileURLToPath(new URL("..", import.meta.url)), "..");
+const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 
 function run(cmd, cwd, args) {
   return execFileSync(cmd, { cwd, args, encoding: "utf8" });

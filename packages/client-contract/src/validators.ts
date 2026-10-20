@@ -21,7 +21,10 @@ type AjvCompiler = (schema: object) => (data: unknown) => boolean;
 type Ajv2020Ctor = new (opts?: object) => { compile: AjvCompiler };
 const Ajv2020 = createRequire(import.meta.url)("ajv/dist/2020.js") as Ajv2020Ctor;
 
-const generated = fileURLToPath(new URL("../generated", import.meta.url));
+// The emitted module lives at dist/src/ (tsc mirrors the source layout for
+// the generated type imports): the committed `generated` tree is two levels
+// up from there — the same relative layout in dev and in a packed install.
+const generated = fileURLToPath(new URL("../../generated", import.meta.url));
 
 export interface SchemaValidator {
   /** True when the value is accepted by the schema. Never mutates it. */
