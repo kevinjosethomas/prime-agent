@@ -38,10 +38,23 @@ async fn restore_child_existing_admission_preserves_ledger_and_completed_display
     let summary = json!({"sessionFile":child,"sessionName":"different name"});
     for _ in 0..2 {
         supervisor
-            .record_rlm_child_admission(&command, &summary)
+            .record_rlm_child_admission(
+                &command,
+                &summary,
+                super::adoption::ChildAdmission::Restore,
+            )
             .await
             .unwrap();
         assert_eq!(std::fs::read(&ledger_file).unwrap(), ledger_before);
         assert_eq!(std::fs::read(&display_file).unwrap(), display_before);
     }
+    // A real create/reopen still admits a new run, as it did before the restore fix.
+    supervisor
+        .record_rlm_child_admission(&command, &summary, super::adoption::ChildAdmission::Create)
+        .await
+        .unwrap();
+    let reopened: Value = serde_json::from_slice(&std::fs::read(&display_file).unwrap()).unwrap();
+    assert_eq!(reopened["status"], "running");
+    assert_eq!(reopened["childId"], "sub-child");
+    assert_eq!(reopened["sessionFile"], json!(child));
 }

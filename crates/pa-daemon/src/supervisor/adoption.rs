@@ -59,6 +59,12 @@ pub(super) enum AdoptionBoot {
     PlainStartup,
 }
 
+/// Only an update restore must preserve the saved admission's completed state.
+pub(super) enum ChildAdmission {
+    Create,
+    Restore,
+}
+
 /// One descriptor's boot-adoption decision, reported as a count in the
 /// pass's `worker_adoption` event (counts only, never session payload).
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -717,6 +723,7 @@ impl Supervisor {
         self: &Arc<Self>,
         command: &DaemonCommand,
         summary: &Value,
+        admission: ChildAdmission,
     ) -> Result<()> {
         let DaemonCommand::Create {
             name,
@@ -770,27 +777,29 @@ impl Supervisor {
                 str::to_string,
             );
         let ledger = self.rlm_spawn_ledger_for(None).await?;
-        let edges = ledger.edges(/*include_deleted*/ true)?;
-        if edges.iter().any(|edge| {
-            crate::lease::canonical_session_path(Path::new(&edge.child))
-                == crate::lease::canonical_session_path(Path::new(child))
-        }) {
-            let edge = crate::update_restore::verified_edge(
-                &edges,
-                Path::new(child),
-                Some(&child_id),
-                Some(depth),
-            )?;
-            if crate::lease::canonical_session_path(Path::new(parent))
-                != crate::lease::canonical_session_path(Path::new(&edge.parent))
-            {
-                return Err(anyhow!(
-                    "existing child admission has a different ledger parent"
-                ));
+        if let ChildAdmission::Restore = admission {
+            let edges = ledger.edges(/*include_deleted*/ true)?;
+            if edges.iter().any(|edge| {
+                crate::lease::canonical_session_path(Path::new(&edge.child))
+                    == crate::lease::canonical_session_path(Path::new(child))
+            }) {
+                let edge = crate::update_restore::verified_edge(
+                    &edges,
+                    Path::new(child),
+                    Some(&child_id),
+                    Some(depth),
+                )?;
+                if crate::lease::canonical_session_path(Path::new(parent))
+                    != crate::lease::canonical_session_path(Path::new(&edge.parent))
+                {
+                    return Err(anyhow!(
+                        "existing child admission has a different ledger parent"
+                    ));
+                }
+                // Restoring an existing edge is never a new spawn. Its display status,
+                // original timestamps and optional metadata must survive byte-for-byte.
+                return Ok(());
             }
-            // An existing edge is a reopen/retry, never a new spawn. Its display status,
-            // original timestamps and optional metadata must survive byte-for-byte.
-            return Ok(());
         }
         ledger
             .append_spawn(&crate::rlm_ledger::RlmSpawnInput {

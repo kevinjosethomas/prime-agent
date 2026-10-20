@@ -569,6 +569,11 @@ impl Supervisor {
             DaemonCommand::Create { lifecycle, .. } => *lifecycle,
             _ => None,
         };
+        let admission = if client_id == crate::update_restore::UPDATE_RESTORE_CLIENT_ID {
+            super::adoption::ChildAdmission::Restore
+        } else {
+            super::adoption::ChildAdmission::Create
+        };
         let owner_client_id = match create_lifecycle {
             Some(DaemonSessionLifecycle::ClientOwned) => Some(client_id),
             _ => None,
@@ -578,7 +583,7 @@ impl Supervisor {
         // failure tears the resident down, and a concurrent open that had just reused it
         // would hold a summary for a gone worker. The ledger is the only topology store.
         if let Err(error) = self
-            .record_rlm_child_admission(command, &create_summary)
+            .record_rlm_child_admission(command, &create_summary, admission)
             .await
         {
             // Never leave an admitted-but-unrecorded child running: the
