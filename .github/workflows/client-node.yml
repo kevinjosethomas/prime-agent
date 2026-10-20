@@ -87,7 +87,7 @@ jobs:
           curl -fsSL "https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/electron-v${ELECTRON_VERSION}-darwin-arm64.zip" -o /tmp/electron.zip
           echo "${ELECTRON_SHA256_ARM64}  /tmp/electron.zip" | shasum -a 256 -c -
           unzip -q /tmp/electron.zip -d /tmp/electron-dist
-          /tmp/electron-dist/Electron.app/Contents/MacOS/Electron e2e/electron-main.cjs
+          /tmp/electron-dist/Electron.app/Contents/MacOS/Electron --js-flags=--expose-gc e2e/electron-main.cjs
         working-directory: packages/client
       - name: Upload the addon artifact with provenance
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f

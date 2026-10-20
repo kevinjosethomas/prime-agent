@@ -80,6 +80,18 @@ const server = net.createServer((socket) => {
   // The flood timer can outlive a torn-down connection: socket write
   // errors after the client drops are expected, never fatal.
   socket.on('error', () => {});
+  // The disconnect report lets resource proofs observe the CLIENT-side
+  // socket release (EOF) before any daemon teardown. Reported once per
+  // connection, on whichever of end/close fires first.
+  let reported = false;
+  const reportDisconnect = () => {
+    if (!reported) {
+      reported = true;
+      process.stdout.write(`DISCONNECTED ${socketPath}\n`);
+    }
+  };
+  socket.on('end', reportDisconnect);
+  socket.on('close', reportDisconnect);
   socket.on('data', (chunk) => {
     buffer += chunk;
     let newline;

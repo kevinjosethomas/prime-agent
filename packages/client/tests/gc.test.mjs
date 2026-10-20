@@ -9,19 +9,27 @@ import { spawn } from 'node:child_process';
 const childScript = `
   globalThis.gc?.();
   const { DaemonConnection } = await import(process.env.CLIENT_DIST);
-  const { startMock, tmpSocket } = await import(process.env.CLIENT_HELPERS);
+  const { startMockReporting, tmpSocket } = await import(process.env.CLIENT_HELPERS);
   const socketPath = tmpSocket('gc-child');
-  const stop = await startMock(socketPath, 'echo');
+  // The reporting mock OBSERVES the client-side socket EOF and stays
+  // alive: the GC-driven finalizer cleanup is proven client-driven,
+  // never masked by a daemon kill. Bounded repeated GC passes.
+  const mock = await startMockReporting(socketPath, 'echo');
   {
-    // The scoped block lets the handle die on scope exit; the explicit GC
-    // pass then drives the napi finalizer's scheduled cleanup.
     const connection = await DaemonConnection.connect(socketPath);
     await connection.request({ type: 'get_connection_state', activeSessionId: 'wire' });
   }
-  globalThis.gc();
-  await stop();
-  // The dropped connection's cleanup runs on the runtime; the socket gets
-  // EOF when the mock exits; the loop drains with nothing holding it.
+  let disconnected = false;
+  for (let attempt = 0; attempt < 5 && !disconnected; attempt += 1) {
+    globalThis.gc();
+    disconnected = await Promise.race([
+      mock.waitForDisconnect().then(() => true, () => false),
+      new Promise((resolve) => setTimeout(() => resolve(false), 2000)),
+    ]);
+  }
+  if (!disconnected) throw new Error('the GC-driven client release was never observed');
+  await mock.stop();
+  // Natural exit: the loop drains with nothing holding it.
 `;
 
 test('GC drop without close exits naturally after the mock EOF', async () => {
