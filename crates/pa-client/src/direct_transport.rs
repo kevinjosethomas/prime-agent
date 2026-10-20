@@ -183,6 +183,7 @@ pub(crate) async fn connect_direct(
     ticket: &DaemonPeerTransportTicket,
     shared: Arc<Shared>,
     event_tx: mpsc::UnboundedSender<DaemonClientEvent>,
+    raw_tap: Option<mpsc::UnboundedSender<Value>>,
 ) -> Result<DirectLink> {
     let stream = timeout(
         Duration::from_millis(CONNECT_TIMEOUT_MS),
@@ -256,6 +257,7 @@ pub(crate) async fn connect_direct(
     {
         let shared = Arc::clone(&shared);
         let event_tx = event_tx.clone();
+        let raw_tap = raw_tap.clone();
         let alive = Arc::clone(&alive);
         let owner = Arc::clone(&owner);
         let active_session_id = ticket.active_session_id.clone();
@@ -282,8 +284,17 @@ pub(crate) async fn connect_direct(
                             .to_string();
                         shared.resolve(&request_id, response);
                     }
-                } else if let Some(event) = client_event_from_value(&payload) {
-                    let _ = event_tx.send(event);
+                } else {
+                    // The lossless tap first: every decoded post-auth
+                    // application frame from the worker, verbatim and in
+                    // per-socket wire order — unknown frame types and full
+                    // event meta included, before any typed conversion.
+                    if let Some(tap) = raw_tap.as_ref() {
+                        let _ = tap.send(payload.clone());
+                    }
+                    if let Some(event) = client_event_from_value(&payload) {
+                        let _ = event_tx.send(event);
+                    }
                 }
             }
             // Only this connection's requests fail: a replacement may already

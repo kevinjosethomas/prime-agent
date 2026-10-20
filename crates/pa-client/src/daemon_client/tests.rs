@@ -1,5 +1,6 @@
 use super::*;
 use serde_json::json;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 
 /// Minimal scripted supervisor used by client tests: hello on connect,
@@ -160,6 +161,9 @@ async fn request_timeout_reports_socket() {
         .to_string()
         .contains(socket.display().to_string().as_str()));
     assert!(!is_daemon_rejection(&error));
+    // The envelope was queued before the timeout elapsed: a post-write
+    // timeout is an uncertain delivery.
+    assert!(is_command_result_uncertain(&error));
 }
 
 #[tokio::test]
@@ -231,6 +235,9 @@ async fn a_request_after_the_reader_died_refuses_instead_of_riding_the_budget() 
     // rejection.
     assert!(is_daemon_unreachable(&error));
     assert!(!is_daemon_rejection(&error));
+    // The request never queued to the writer: a provable non-delivery.
+    assert!(is_command_not_sent(&error));
+    assert!(!is_command_result_uncertain(&error));
 }
 
 #[test]
@@ -402,6 +409,8 @@ fn fail_pending_resolves_a_transport_failure_not_a_refusal() {
     let error = rx.blocking_recv().unwrap().unwrap_err();
     assert!(!is_daemon_rejection(&error));
     assert_eq!(error.to_string(), "the daemon connection closed");
+    // The sweep is always conservatively uncertain.
+    assert!(is_command_result_uncertain(&error));
 }
 
 /// A scripted worker socket for the direct-link tests: hello frame,
@@ -669,6 +678,10 @@ async fn dead_connection_fails_pending_requests_immediately() {
     );
     // The dead-connection failure is transport, never a daemon refusal.
     assert!(!is_daemon_rejection(&error));
+    // The line was queued to the writer before the socket died: the sweep
+    // is conservatively an uncertain delivery, never a provable non-delivery.
+    assert!(is_command_result_uncertain(&error));
+    assert!(!is_command_not_sent(&error));
     client.close();
     let _ = handle.await;
 }
@@ -686,4 +699,525 @@ async fn without_capability_upgrade_is_a_no_op() {
     assert!(!client.upgrade_direct("s1").await.unwrap());
     assert_eq!(client.direct_session_id(), None);
     client.close();
+}
+
+/// The fully-meta'd streamed event and the unknown future frame the tap
+/// tests assert on, verbatim.
+fn tap_test_frames() -> (Value, Value) {
+    let event = json!({
+        "type": "session_event",
+        "activeSessionId": "s1",
+        "event": { "type": "turn_end" },
+        "meta": {
+            "id": "s1:41",
+            "emittedAt": "2026-10-20T00:00:00.000Z",
+            "sequence": 41,
+            "cursor": { "generation": "g-1", "sequence": 41 },
+            "replayed": true,
+        },
+    });
+    let future = json!({ "type": "future_frame", "novelty": { "deep": [1, 2, 3] } });
+    (event, future)
+}
+
+/// A supervisor that greets, streams the tap tests' two application
+/// frames, then answers commands.
+async fn spawn_tap_daemon(listener: UnixListener) {
+    let (stream, _) = listener.accept().await.expect("accept");
+    let (reader, mut writer) = stream.into_split();
+    let mut reader = BufReader::new(reader);
+    let (event, future) = tap_test_frames();
+    let hello = json!({
+        "type": "daemon_hello",
+        "protocol": { "name": "prime-agent.daemon", "version": 7 },
+        "clientId": "srv",
+        "serverCapabilities": [],
+    });
+    writer
+        .write_all(format!("{hello}\n").as_bytes())
+        .await
+        .unwrap();
+    writer
+        .write_all(format!("{event}\n").as_bytes())
+        .await
+        .unwrap();
+    writer
+        .write_all(format!("{future}\n").as_bytes())
+        .await
+        .unwrap();
+    let mut seen = String::new();
+    loop {
+        seen.clear();
+        match reader.read_line(&mut seen).await {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
+        }
+        let envelope: Value = serde_json::from_str(seen.trim()).unwrap();
+        let id = envelope["id"].as_str().unwrap().to_string();
+        let response = json!({
+            "type": "response",
+            "id": id,
+            "command": envelope["command"]["type"].as_str().unwrap_or_default(),
+            "success": true,
+            "data": { "ok": true },
+        });
+        writer
+            .write_all(format!("{response}\n").as_bytes())
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn raw_tap_receives_every_application_frame_verbatim() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    tokio::spawn(async move { spawn_tap_daemon(listener).await });
+
+    let (tap_tx, mut tap_rx) = mpsc::unbounded_channel::<Value>();
+    let (client, mut events) = DaemonClient::connect_with_options(
+        &socket,
+        DaemonClientOptions {
+            raw_tap: Some(tap_tx),
+            ..DaemonClientOptions::default()
+        },
+    )
+    .await
+    .unwrap();
+    let data = client
+        .request_ok(DaemonCommand::List {
+            id: None,
+            all: None,
+            cwd: None,
+            session_dir: None,
+            include_client_owned: None,
+            rest: Map::default(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(data["ok"], true);
+
+    // The tap carries both application frames verbatim — full event meta and
+    // the unknown frame type, absent fields untouched — and nothing else:
+    // handshake and id-correlated response frames never appear.
+    let (event, future) = tap_test_frames();
+    let mut tapped = Vec::new();
+    while let Ok(frame) =
+        tokio::time::timeout(Duration::from_millis(200), tap_rx.recv()).await
+    {
+        tapped.push(frame);
+    }
+    assert_eq!(tapped, vec![event, future]);
+
+    // The typed channel is unchanged: the known event parses, the unknown
+    // frame type stays silent (its fidelity lives on the tap).
+    let mut typed = Vec::new();
+    while let Ok(event) =
+        tokio::time::timeout(Duration::from_millis(200), events.recv()).await
+    {
+        typed.push(event);
+    }
+    assert_eq!(typed.len(), 1, "unexpected events: {typed:?}");
+    assert!(
+        matches!(
+            &typed[0],
+            DaemonClientEvent::SessionEvent { ref event, .. } if event["type"] == "turn_end"
+        ),
+        "unexpected event: {:?}",
+        typed[0]
+    );
+    client.close();
+}
+
+#[tokio::test]
+async fn default_options_keep_the_reader_unbounded() {
+    // A one-megabyte frame sails through the default options: no frame cap
+    // was added to the historical transport.
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let (reader, mut writer) = stream.into_split();
+        let mut reader = BufReader::new(reader);
+        let hello = json!({
+            "type": "daemon_hello",
+            "protocol": { "name": "prime-agent.daemon", "version": 7 },
+            "clientId": "srv",
+            "serverCapabilities": [],
+        });
+        writer
+            .write_all(format!("{hello}\n").as_bytes())
+            .await
+            .unwrap();
+        let event = json!({
+            "type": "session_event",
+            "activeSessionId": "s1",
+            "event": { "type": "turn_end", "padding": "x".repeat(1024 * 1024) },
+        });
+        writer
+            .write_all(format!("{event}\n").as_bytes())
+            .await
+            .unwrap();
+        let mut seen = String::new();
+        loop {
+            seen.clear();
+            match reader.read_line(&mut seen).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            let envelope: Value = serde_json::from_str(seen.trim()).unwrap();
+            let response = json!({
+                "type": "response",
+                "id": envelope["id"].as_str().unwrap_or_default(),
+                "command": envelope["command"]["type"].as_str().unwrap_or_default(),
+                "success": true,
+                "data": { "ok": true },
+            });
+            writer
+                .write_all(format!("{response}\n").as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+
+    let (client, mut events) = DaemonClient::connect(&socket).await.unwrap();
+    let data = client
+        .request_ok(DaemonCommand::List {
+            id: None,
+            all: None,
+            cwd: None,
+            session_dir: None,
+            include_client_owned: None,
+            rest: Map::default(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(data["ok"], true);
+    let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
+        .await
+        .expect("the oversized-by-old-standards frame still streams")
+        .unwrap();
+    assert!(
+        matches!(
+            event,
+            DaemonClientEvent::SessionEvent { ref event, .. } if event["padding"].as_str().map(str::len) == Some(1024 * 1024)
+        ),
+        "unexpected event: {event:?}"
+    );
+    client.close();
+}
+
+#[tokio::test]
+async fn frame_cap_tears_down_the_transport_and_fails_pending_as_uncertain() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    // A supervisor that greets, then writes one oversized line as soon as a
+    // command arrives.
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let (reader, mut writer) = stream.into_split();
+        let mut reader = BufReader::new(reader);
+        let hello = json!({
+            "type": "daemon_hello",
+            "protocol": { "name": "prime-agent.daemon", "version": 7 },
+            "clientId": "srv",
+            "serverCapabilities": [],
+        });
+        writer
+            .write_all(format!("{hello}\n").as_bytes())
+            .await
+            .unwrap();
+        let mut seen = String::new();
+        match reader.read_line(&mut seen).await {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {}
+        }
+        writer.write_all("x".repeat(700).as_bytes()).await.unwrap();
+        std::future::pending::<()>().await;
+    });
+
+    let (client, _events) = DaemonClient::connect_with_options(
+        &socket,
+        DaemonClientOptions {
+            max_frame_bytes: Some(512),
+            ..DaemonClientOptions::default()
+        },
+    )
+    .await
+    .unwrap();
+    let started = std::time::Instant::now();
+    let error = client
+        .request_with_timeout(
+            DaemonCommand::List {
+                id: None,
+                all: None,
+                cwd: None,
+                session_dir: None,
+                include_client_owned: None,
+                rest: Map::default(),
+            },
+            30_000,
+        )
+        .await
+        .unwrap_err();
+    // The teardown's failure sweep resolves the in-flight request: the line
+    // was queued, so the outcome is conservatively uncertain.
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(is_command_result_uncertain(&error));
+    assert!(!is_command_not_sent(&error));
+    assert!(
+        error.to_string().contains("the daemon connection closed"),
+        "unexpected error: {error}"
+    );
+    // The reader is dead: a follow-up request is a provable non-delivery.
+    let error = client
+        .request_with_timeout(
+            DaemonCommand::List {
+                id: None,
+                all: None,
+                cwd: None,
+                session_dir: None,
+                include_client_owned: None,
+                rest: Map::default(),
+            },
+            30_000,
+        )
+        .await
+        .unwrap_err();
+    assert!(is_command_not_sent(&error));
+    client.close();
+}
+
+#[tokio::test]
+async fn pending_cap_refuses_the_send_before_queuing() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    // A supervisor that greets, counts incoming lines, and never answers.
+    let received = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = std::sync::Arc::clone(&received);
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let (reader, writer) = stream.into_split();
+        let mut reader = BufReader::new(reader);
+        let hello = json!({
+            "type": "daemon_hello",
+            "protocol": { "name": "prime-agent.daemon", "version": 7 },
+            "clientId": "srv",
+            "serverCapabilities": [],
+        });
+        let mut writer = writer;
+        writer
+            .write_all(format!("{hello}\n").as_bytes())
+            .await
+            .unwrap();
+        let mut seen = String::new();
+        loop {
+            seen.clear();
+            match reader.read_line(&mut seen).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    });
+
+    let (client, _events) = DaemonClient::connect_with_options(
+        &socket,
+        DaemonClientOptions {
+            max_pending: Some(2),
+            ..DaemonClientOptions::default()
+        },
+    )
+    .await
+    .unwrap();
+    // Two requests register and queue (their lines reach the daemon).
+    let first = {
+        let client = client.clone();
+        tokio::spawn(async move {
+            client
+                .request_with_timeout(
+                    DaemonCommand::List {
+                        id: None,
+                        all: None,
+                        cwd: None,
+                        session_dir: None,
+                        include_client_owned: None,
+                        rest: Map::default(),
+                    },
+                    500,
+                )
+                .await
+        })
+    };
+    let second = {
+        let client = client.clone();
+        tokio::spawn(async move {
+            client
+                .request_with_timeout(
+                    DaemonCommand::GetState {
+                        id: None,
+                        active_session_id: "s1".to_string(),
+                        rest: Map::default(),
+                    },
+                    500,
+                )
+                .await
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while received.load(std::sync::atomic::Ordering::SeqCst) < 2 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the first two requests reach the daemon");
+    // The third never queues: an immediate, provable non-delivery.
+    let started = std::time::Instant::now();
+    let error = client
+        .request_with_timeout(
+            DaemonCommand::List {
+                id: None,
+                all: None,
+                cwd: None,
+                session_dir: None,
+                include_client_owned: None,
+                rest: Map::default(),
+            },
+            30_000,
+        )
+        .await
+        .unwrap_err();
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(is_command_not_sent(&error));
+    assert!(!is_command_result_uncertain(&error));
+    assert!(
+        error.to_string().contains("too many pending daemon requests"),
+        "unexpected error: {error}"
+    );
+    // The queued pair times out as an uncertain delivery each.
+    for result in [first.await.unwrap(), second.await.unwrap()] {
+        let error = result.unwrap_err();
+        assert!(is_command_result_uncertain(&error));
+        assert!(error.to_string().contains("Timed out after"), "unexpected: {error}");
+    }
+    client.close();
+}
+
+#[tokio::test]
+async fn direct_reader_streams_application_frames_to_the_tap() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let worker_socket = dir.path().join("w.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let worker_listener = UnixListener::bind(&worker_socket).unwrap();
+    tokio::spawn(async move { spawn_mock_worker(worker_listener).await });
+
+    // Scripted supervisor: advertises direct_peer_transport, answers the
+    // ticket request with a ticket for the mock worker socket.
+    let ticket_socket = worker_socket.clone();
+    let supervisor = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("supervisor accept");
+        let (reader, mut writer) = stream.into_split();
+        let mut reader = BufReader::new(reader);
+        let mut line = String::new();
+        let hello = serde_json::json!({
+            "type": "daemon_hello",
+            "protocol": { "name": "prime-agent.daemon", "version": 7 },
+            "serverCapabilities": ["direct_peer_transport"],
+        });
+        writer
+            .write_all(format!("{hello}\n").as_bytes())
+            .await
+            .unwrap();
+        loop {
+            line.clear();
+            if reader.read_line(&mut line).await.unwrap() == 0 {
+                break;
+            }
+            let envelope: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+            let id = envelope["id"].as_str().unwrap().to_string();
+            let command_type = envelope["command"]["type"].as_str().unwrap();
+            let response = if command_type == "get_direct_worker_transport" {
+                let identity = pa_types::platform::socket_identity(&ticket_socket).unwrap();
+                serde_json::json!({
+                    "type": "response",
+                    "id": id,
+                    "command": command_type,
+                    "success": true,
+                    "data": {
+                        "purpose": "session_client",
+                        "socketPath": ticket_socket.to_string_lossy(),
+                        "socketIdentity": { "dev": identity.dev, "ino": identity.ino },
+                        "workerInstanceId": "inst-1",
+                        "activeSessionId": "s1",
+                        "grantId": "g1",
+                        "token": "t",
+                        "expiresAt": "2999-01-01T00:00:00.000Z",
+                    },
+                })
+            } else {
+                serde_json::json!({
+                    "type": "response",
+                    "id": id,
+                    "command": command_type,
+                    "success": true,
+                    "data": { "ok": true },
+                })
+            };
+            writer
+                .write_all(format!("{response}\n").as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+
+    let (tap_tx, mut tap_rx) = mpsc::unbounded_channel::<Value>();
+    let (client, _events) = DaemonClient::connect_with_options(
+        &socket,
+        DaemonClientOptions {
+            raw_tap: Some(tap_tx),
+            ..DaemonClientOptions::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert!(client.upgrade_direct("s1").await.unwrap());
+    let data = client
+        .request_ok(DaemonCommand::Attach {
+            id: None,
+            active_session_id: "s1".to_string(),
+            client_id: None,
+            capabilities: None,
+            resume_cursor: None,
+            telemetry_disabled: None,
+            recovery_config: None,
+            env: None,
+            launch_env: None,
+            rest: Map::default(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(data["activeSessionId"], "s1");
+
+    // The tap carries the worker's streamed application frame verbatim and
+    // nothing else: the direct handshake, peer_auth, and id-correlated
+    // responses never appear.
+    let event = json!({
+        "type": "session_event",
+        "activeSessionId": "s1",
+        "event": { "type": "turn_end" },
+    });
+    let mut tapped = Vec::new();
+    while let Ok(frame) =
+        tokio::time::timeout(Duration::from_millis(200), tap_rx.recv()).await
+    {
+        tapped.push(frame);
+    }
+    assert_eq!(tapped, vec![event]);
+    client.close();
+    let _ = supervisor.await;
 }
