@@ -1,6 +1,6 @@
-//! The turn-boundary host-request surface: `model.info`, `compact.*`, and
-//! `refine.*`, reached by the kernel-side skill modules through `rlm.host_request`.
-//! `compact.run`/`refine.run` only SCHEDULE: executing inside the active turn
+//! The turn-boundary host-request surface: `model.info` and `compact.*`,
+//! reached by the kernel-side skill modules through `rlm.host_request`.
+//! `compact.run` only SCHEDULES: executing inside the active turn
 //! would abort the requesting run, so the pending request is stored here.
 
 use std::sync::Arc;
@@ -24,7 +24,7 @@ pub struct PendingCompaction {
     pub instructions: Option<String>,
 }
 
-/// A scheduled refinement (kernel `refine.run`).
+/// A scheduled refinement (a pending turn-boundary request).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PendingRefine {
     pub instructions: Option<String>,
@@ -67,7 +67,6 @@ pub struct ContextUsage {
 /// shared between the host bridge and the turn loop; build it in `Arc` form.
 #[derive(Default)]
 pub struct TurnBoundaryRequests {
-    pub(super) refinement_settings: std::sync::OnceLock<crate::settings::SettingsManager>,
     /// The late-bound runtime; `bind` is first-wins, and `rebind_model_facts`
     /// swaps the model facts after a live model switch.
     runtime: std::sync::RwLock<Option<Arc<TurnBoundaryRuntime>>>,
@@ -289,88 +288,6 @@ impl TurnBoundaryRequests {
                     Ok(json!({
                         "scheduled": true,
                         "note": "Compaction runs when the current turn ends; you resume automatically afterwards. Continue working normally.",
-                    }))
-                })
-            }),
-        );
-    }
-
-    /// Register `refine.status`/`refine.run`, gated by the depth-0-with-
-    /// local-harness-dir equivalent; `create_session` decides.
-    pub fn register_refine_handlers(self: &Arc<Self>, handlers: &mut HostRequestHandlers) {
-        let requests = Arc::downgrade(self);
-        handlers.register(
-            "refine.status",
-            host_handler(move |_payload| {
-                let requests = requests.clone();
-                Box::pin(async move {
-                    let Some(requests) = requests.upgrade() else {
-                        return Err(anyhow::anyhow!(
-                            "the session ended before the request could be served"
-                        ));
-                    };
-                    let pending = requests.refine_pending().await;
-                    // The Rust consumption runs refinement synchronously
-                    // between turns, so a cell never observes it in flight
-                    // (the TS background-planning path is not ported).
-                    Ok(json!({ "pending": pending, "in_flight": false }))
-                })
-            }),
-        );
-        let requests = Arc::downgrade(self);
-        handlers.register(
-            "refine.run",
-            host_handler(move |payload| {
-                let requests = requests.clone();
-                Box::pin(async move {
-                    let Some(requests) = requests.upgrade() else {
-                        return Err(anyhow::anyhow!("the session ended before the request could be served"));
-                    };
-                    let instructions = string_field(
-                        &payload.data,
-                        "instructions",
-                        "refine.run instructions must be a string when provided",
-                    )?;
-                    let global = match payload.data.get("global") {
-                        None | Some(Value::Null) => None,
-                        Some(Value::Bool(value)) => Some(*value),
-                        Some(_) => anyhow::bail!(
-                            "refine.run global must be a boolean when provided"
-                        ),
-                    };
-                    let Some(runtime) = requests.bound() else {
-                        return Ok(no_active_turn(
-                            "no active turn; refine can only be requested while a turn is running",
-                        ));
-                    };
-                    let state = runtime.agent.state().await;
-                    if !state.is_streaming {
-                        return Ok(no_active_turn(
-                            "no active turn; refine can only be requested while a turn is running",
-                        ));
-                    }
-                    let gate_requests = Arc::clone(&requests);
-                    if !tokio::task::spawn_blocking(move || {
-                        super::refinement_gate::enabled(gate_requests.refinement_settings.get())
-                    }).await? {
-                        return Ok(no_active_turn("Harness refinements are disabled in /settings"));
-                    }
-                    let mut slot = requests.refine.lock().await;
-                    let merged = match slot.as_ref() {
-                        Some(current) => PendingRefine {
-                            instructions: instructions
-                                .or_else(|| current.instructions.clone()),
-                            global: global.unwrap_or(current.global),
-                        },
-                        None => PendingRefine {
-                            instructions,
-                            global: global.unwrap_or(false),
-                        },
-                    };
-                    *slot = Some(merged);
-                    Ok(json!({
-                        "scheduled": true,
-                        "note": "Refinement runs when the current turn ends; applied edits are appended to your context as a refinement notice and you resume automatically. Continue working normally.",
                     }))
                 })
             }),

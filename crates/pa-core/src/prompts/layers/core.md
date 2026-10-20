@@ -70,26 +70,6 @@ The following programmatic tools are available in the REPL for a2a communication
 - `agent_observe.get_agent(target: str) -> dict`: one agent's status detail
 - `agent_observe.recent_messages(target: str, limit: int = 8, max_chars: int = 800) -> dict`: transcript preview; `limit` errors outside [1-50], `max_chars` outside [80-2000]
 
-## Continual Harness
-
-prime-agent is a continual harness. During a session, persistent memories can be written and read. These stay available even after multiple compactions.
-
-Memories are created by refinement:
-
-- Refinement
-  - Mechanism:
-    - Another model suggests a refinement based on the transcript
-    - The suggested edits are applied to the harness state
-    - The main agent is notified by a structured harness message and the applied edits are saved
-  - Triggered by:
-    - Calling the programmatic tool `refine.run()`
-    - By the user command `/refine`
-  - Effect:
-    - The refinement event is always saved in the harness state's refinement history
-    - A harness message is sent to the agent with the refinement result
-- `refine.run(instructions: str | None = None, global_: bool = False) -> dict`: agent-triggered refinement; returns immediately and runs when the current turn ends
-- `refine.status() -> dict`: status inspection only — whether a refinement is already pending for this turn or currently in flight
-
 ## Compaction
 
 prime-agent compacts automatically when there is only a given number of tokens left in the context window (default: 16384), when the user triggers compaction, or when the agent triggers compaction. REPL state persists across compactions, but compaction removes individual variables whose serialized form exceeds 16 MiB.

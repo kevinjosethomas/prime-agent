@@ -465,8 +465,9 @@ fn core_layer_documents_the_real_tool_surface() {
 
 // Packaged-set parity (TS packages/coding-agent/skills)
 
-/// The packaged skill set at TS tip `f62dae4d0` (`packages/coding-agent/skills/`): 12 skills — the
-/// generic `mcp` doc skill in, the per-service linear/notion pair out (TS removed theirs when the
+/// The packaged skill set at TS tip `f62dae4d0` (`packages/coding-agent/skills/`), minus this
+/// fork's removed `refine` skill (the continual-harness feature removal): 11 skills — the generic
+/// `mcp` doc skill in, the per-service linear/notion pair out (TS removed theirs when the
 /// generic MCP surface landed).
 const TS_PACKAGED_SKILL_SET: &[&str] = &[
     "agent-message",
@@ -477,7 +478,6 @@ const TS_PACKAGED_SKILL_SET: &[&str] = &[
     "goal",
     "mcp",
     "prime-intellect",
-    "refine",
     "rlm-heartbeat",
     "skill-creator",
     "websearch",
