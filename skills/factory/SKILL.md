@@ -1,21 +1,19 @@
 ---
 name: factory
-description: Run state-machine workflows of spawned child agents: author machines in the library (MACHINE.md files, validated by `prime-agent factory import`), let host refinement runs store factory entries in the harness store, and run, watch, stop, and resume them through rlm.factory. For the full authoring reference and API guide, call rlm.factory.help() in the kernel.
+description: Run state-machine workflows of spawned child agents: author machines in the library (MACHINE.md files, validated by `prime-agent factory import`) and run, watch, stop, and resume them through rlm.factory. For the full authoring reference and API guide, call rlm.factory.help() in the kernel.
 ---
 
 # Factory
 
 The factory runs state-machine workflows of spawned child agents. A machine
-declares the workflow: states, each backed by a subagent spec, plus guarded
-transitions between them. Author machines through the machine library: a
-`MACHINE.md` file (frontmatter plus one `machine-spec` fence, machine form
-or `dag` sugar that compiles to one), imported with
-`prime-agent factory import <path>` — the import validates, so an invalid
-machine never persists. Stored factory entries are runtime instances in the
-shared harness store: host refinement runs write them, the kernel only
-reads them, and `run` re-validates a stored spec before starting it.
-`await rlm.factory.run('<name>')` runs a library machine directly (no
-entry created) and spawns each state's subagent as an ordinary child, feeds
+declares the workflow: states, each backed by an inline subagent object,
+plus guarded transitions between them. Machines live in the machine
+library and nowhere else: a `MACHINE.md` file (frontmatter plus one
+`machine-spec` fence, machine form or `dag` sugar that compiles to one),
+imported with `prime-agent factory import <path>` — the import validates,
+so an invalid machine never persists.
+`await rlm.factory.run('<name>')` runs a library machine (which
+re-validates before starting) and spawns each state's subagent as an ordinary child, feeds
 captured outputs into the successors' prompts, and drives the run to
 quiescence in a background kernel task — the call returns immediately and
 the run continues after the model turn ends. Use it when a workflow needs
