@@ -448,6 +448,11 @@ impl DaemonClientSession {
         // (the handle is gone): EVERY subsequent stop returns the identical
         // Err — the memo is read, never consumed (item 4).
         let outcome = self.state.driver.lock().await.memo.clone();
+        // The mark is the completion truth: a memoized clean END with the
+        // mark flipped is the NORMAL completion (the handle arm observed
+        // the task end that the mark already certified); a memoized clean
+        // END WITHOUT the mark is the died-without-settle shape.
+        let mark = *stopped.borrow_and_update();
         match outcome {
             // A prior stop observed the driver's honest failure — every
             // subsequent stop returns the identical Err (the memo is read,
@@ -456,12 +461,12 @@ impl DaemonClientSession {
             // A prior stop observed a driver end WITHOUT the settle: the
             // same honest Err for every later caller — never a faked clean
             // completion.
-            Some(Ok(())) => Err(anyhow!(
+            Some(Ok(())) if !mark => Err(anyhow!(
                 "the session driver ended without completing its settle"
             )),
-            // Never memoized: the normal completion (the mark flipped), or
-            // a session with no driver to fail.
-            None => Ok(()),
+            // The memoized clean end with the mark flipped, or never
+            // memoized: the normal completion.
+            _ => Ok(()),
         }
     }
 
