@@ -1,15 +1,17 @@
 //! Daemon command-type breadth coverage (roadmap item 7, wave 1): the TS
 //! `DAEMON_COMMAND_TYPES` list (daemon-supervisor.ts) is the accept contract,
-//! pinned verbatim below in declaration order. Every TS type (plus the Rust-
-//! native frames) must parse, keep its wire `type`, and route by selector.
+//! pinned below in declaration order (minus removed Rust commands — the list
+//! diverges from the historical TS list as command surfaces are retired).
+//! Every TS type (plus the Rust-native frames) must parse, keep its wire
+//! `type`, and route by selector.
 
 use pa_daemon::protocol::command_active_session_id;
 use pa_daemon::protocol::command_type_name;
 use pa_daemon::protocol::parse_daemon_command_line;
 use pa_daemon::protocol::KNOWN_COMMAND_TYPES;
 
-/// TS `DAEMON_COMMAND_TYPES`, verbatim and in declaration order
-/// (modes/daemon/daemon-supervisor.ts).
+/// TS `DAEMON_COMMAND_TYPES`, in declaration order
+/// (modes/daemon/daemon-supervisor.ts), minus removed commands.
 const TS_DAEMON_COMMAND_TYPES: &[&str] = &[
     "ack_result",
     "list",
@@ -89,7 +91,6 @@ const TS_DAEMON_COMMAND_TYPES: &[&str] = &[
     "set_auto_compaction",
     "set_auto_retry",
     "compact",
-    "refine",
     "abort_compaction",
     "abort_branch_summary",
     "abort_retry",
@@ -396,7 +397,6 @@ const WIRE_FIXTURES: &[(&str, &str)] = &[
         "compact",
         r#"{"type": "compact", "activeSessionId": "sess"}"#,
     ),
-    ("refine", r#"{"type": "refine", "activeSessionId": "sess"}"#),
     (
         "abort_compaction",
         r#"{"type": "abort_compaction", "activeSessionId": "sess"}"#,

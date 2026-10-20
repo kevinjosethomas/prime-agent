@@ -125,7 +125,6 @@ pub const KNOWN_COMMAND_TYPES: &[&str] = &[
     "set_auto_compaction",
     "set_auto_retry",
     "compact",
-    "refine",
     "abort_compaction",
     "abort_branch_summary",
     "abort_retry",
@@ -832,9 +831,6 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
         | DaemonCommand::Compact {
             active_session_id, ..
         }
-        | DaemonCommand::Refine {
-            active_session_id, ..
-        }
         | DaemonCommand::AbortCompaction {
             active_session_id, ..
         }
@@ -1065,7 +1061,6 @@ pub fn command_type_name(command: &DaemonCommand) -> &'static str {
         DaemonCommand::SetAutoCompaction { .. } => "set_auto_compaction",
         DaemonCommand::SetAutoRetry { .. } => "set_auto_retry",
         DaemonCommand::Compact { .. } => "compact",
-        DaemonCommand::Refine { .. } => "refine",
         DaemonCommand::AbortCompaction { .. } => "abort_compaction",
         DaemonCommand::AbortBranchSummary { .. } => "abort_branch_summary",
         DaemonCommand::AbortRetry { .. } => "abort_retry",
