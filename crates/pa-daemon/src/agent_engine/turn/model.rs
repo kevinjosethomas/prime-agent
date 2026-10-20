@@ -399,7 +399,6 @@ impl AgentSessionEngine {
                             let pending = match core {
                                 Some(core) => {
                                     core.turn_boundary.compaction_scheduled().await
-                                        || core.turn_boundary.refine_pending().await
                                 }
                                 None => false,
                             };

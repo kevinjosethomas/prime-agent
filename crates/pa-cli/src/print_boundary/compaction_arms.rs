@@ -40,7 +40,7 @@ pub(super) enum OverflowOutcome {
     /// context, and the newly settled turn needs the same checks.
     RetryTurn,
     /// The turn is over (a skipped or failed compaction, or the reported
-    /// second overflow): only the requested-refinement consumption follows.
+    /// second overflow).
     Finished,
 }
 

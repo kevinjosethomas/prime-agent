@@ -61,7 +61,7 @@ def normalize_frame(direction, frame, sequence_index):
                 shape["has_content"] = "content" in update
                 shape["has_ipython_meta"] = "ipython" in meta
             elif kind == "session_info_update":
-                # Compaction, goal, and refinement payloads: presence and
+                # Compaction and goal payloads: presence and
                 # status are structural; usage counts and summary text are
                 # run-dependent values.
                 if "compaction" in meta:
@@ -69,9 +69,6 @@ def normalize_frame(direction, frame, sequence_index):
                 if "goal" in meta:
                     shape["has_goal"] = True
                     shape["goal_status"] = meta["goal"].get("status")
-                if "refinement" in meta:
-                    shape["has_refinement"] = True
-                    shape["refinement_status"] = meta["refinement"].get("status")
                 if "autonomous" in meta:
                     shape["has_autonomous"] = True
                     shape["autonomous_enabled"] = meta["autonomous"].get("enabled")
@@ -143,7 +140,7 @@ def landmark_frame(frame_shape):
     `--landmarks` mode drops model-behavior-dependent work frames (tool
     calls, streamed chunks, and mid-turn goal-usage updates) and keeps the
     protocol envelopes: requests, responses, boundaries, completion and
-    terminal envelopes, compaction/refinement/autonomous metas, and stop
+    terminal envelopes, compaction/autonomous metas, and stop
     reasons.
     """
     if frame_shape.get("method") != "session/update":
@@ -156,7 +153,6 @@ def landmark_frame(frame_shape):
         and frame_shape.get("phase") == "event"
         and frame_shape.get("has_goal")
         and not frame_shape.get("has_compaction")
-        and not frame_shape.get("has_refinement")
         and not frame_shape.get("has_autonomous")
     ):
         return False

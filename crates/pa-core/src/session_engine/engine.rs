@@ -52,7 +52,7 @@ pub struct SessionEngineConfig {
     /// the only surface.
     pub progress_note_emit: Option<super::rlm_host::RlmProgressNoteEmit>,
     /// The session's depth in the RLM recursion tree (0 for top-level
-    /// sessions); gates the `refine.*` host requests.
+    /// sessions).
     pub rlm_depth: Option<u32>,
     /// Whether the session runs without a daemon: nothing outside the
     /// session itself (no scheduler, no bash-completion wake) starts a
@@ -250,7 +250,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         config.cron_store.clone(),
     );
 
-    let refinement_settings = settings.reopen();
     let service_tier_preference = settings.get_default_service_tier();
     // Captured before `settings` moves into the resource loader: the
     // compaction budget.
@@ -562,11 +561,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     let (existing_messages, has_thinking_entry, has_service_tier_entry) = {
         let session = wiring.session.lock().await;
         let messages = super::compact_session::rebuilt_context_after_compaction(&session);
-        let messages = if super::refinement_gate::enabled(Some(&refinement_settings)) {
-            messages
-        } else {
-            super::refinement_gate::without_refinements(messages)
-        };
         let has_thinking_entry = session.has_thinking_level();
         let has_service_tier_entry = session.has_service_tier();
         (messages, has_thinking_entry, has_service_tier_entry)
@@ -638,7 +632,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         // else becomes a user turn.
         convert_to_llm: Some(super::request_timing::instrument_convert_to_llm(
             std::sync::Arc::clone(&request_timing_wiring),
-            super::refinement_gate::convert_to_llm(refinement_settings.reopen()),
+            super::messages::engine_convert_to_llm(),
         )),
         // The Rust engine wires no transform, so the instrumented seam
         // wraps a pass-through that marks the turn's dispatch moment.
@@ -692,8 +686,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     .await?;
     session.prompt_sources = Some(prompt_sources);
     *session.pinned_prompt.write().unwrap() = Some(system_prompt.clone());
-    session.set_agent_dir(config.agent_dir.clone());
-    session.refinement_settings = Some(refinement_settings);
     // Every compaction path reads the session's resolved compaction
     // settings (TS `getCompactionSettings`): `/compact` matches the
     // `compact.*` turn-boundary tool's `keepRecentTokens`/`reserveTokens`.
