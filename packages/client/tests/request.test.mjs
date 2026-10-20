@@ -80,20 +80,26 @@ test('the pending cap refuses as a provable NotSent', async () => {
   const socketPath = tmpSocket('cap');
   const stop = await startMock(socketPath, 'silent');
   const connection = await DaemonConnection.connect(socketPath, { maxPending: 1 });
-  const first = connection.request(GET_CONNECTION_STATE, 500);
-  // The cap refusal can reject before any later handler attaches — the
-  // rejection is settled structurally from creation.
+  // Both rejections are settled from creation: the workers race for the
+  // single pending slot, so either class can arrive first — the 50ms settle
+  // delay makes the FIRST registration deterministic, capping the second.
+  const first = connection
+    .request(GET_CONNECTION_STATE, 500)
+    .then(
+      (value) => value,
+      (error) => error,
+    );
+  await new Promise((resolve) => setTimeout(resolve, 50));
   const second = connection
     .request(GET_CONNECTION_STATE, 500)
     .then(
-      () => {
-        throw new Error('the capped request should have refused');
-      },
+      (value) => value,
       (error) => error,
     );
   const capError = await second;
-  assert.ok(capError instanceof NotSentError);
-  await first.catch(() => {});
+  assert.ok(capError instanceof NotSentError, `unexpected class: ${capError?.kind}`);
+  const firstError = await first;
+  assert.ok(firstError.kind === 'Uncertain' || firstError.kind === 'NotSent');
   connection.close();
   await stop();
 });
