@@ -2020,9 +2020,13 @@ async fn shutdown_during_in_flight_upgrade_loses_the_registration_race() {
     let worker_listener = UnixListener::bind(&worker_socket).unwrap();
     let release = std::sync::Arc::new(tokio::sync::Notify::new());
     let worker_release = std::sync::Arc::clone(&release);
+    let (accepted_tx, accepted_rx) = oneshot::channel::<()>();
     tokio::spawn(async move {
         let (stream, _) = worker_listener.accept().await.expect("worker accept");
         let (mut reader, mut writer) = stream.into_split();
+        let _ = accepted_tx.send(());
+        // notify_one stores a permit: no lost wakeup even if this arm runs
+        // before the release lands.
         worker_release.notified().await;
         let hello = pa_types::daemon::framing::encode_private_frame(
             &serde_json::json!({ "kind": "outbound", "outboundType": "daemon_hello" }),
@@ -2143,11 +2147,15 @@ async fn shutdown_during_in_flight_upgrade_loses_the_registration_race() {
         let client = client.clone();
         tokio::spawn(async move { client.upgrade_direct("s1").await })
     };
-    // The upgrade holds inside connect_direct's worker-hello wait while the
-    // shutdown lands on the other side of the thread boundary.
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // The deterministic handshake barrier: the worker's accepted signal
+    // proves the upgrade holds inside connect_direct's worker-hello wait —
+    // no sleep, no lost notification.
+    tokio::time::timeout(Duration::from_secs(5), accepted_rx)
+        .await
+        .expect("the worker accepted the upgrade's connection")
+        .expect("the accepted barrier fired");
     client.shutdown();
-    release.notify_waiters();
+    release.notify_one();
     let upgraded = tokio::time::timeout(Duration::from_secs(5), upgrade)
         .await
         .expect("the upgrade settles")
@@ -2173,22 +2181,37 @@ async fn shutdown_during_in_flight_upgrade_loses_the_registration_race() {
 
 #[tokio::test]
 async fn dropped_mid_flight_upgrade_leaves_no_residual_tasks() {
-    // §5's caller-owned proof: a dropped upgrade future closes the worker
-    // socket it was carrying (no machinery — the socket lives in the
-    // future), so shutdown+join drains exactly the supervisor pair and
+    // §5's caller-owned proof, deterministic: the worker accepts and HOLDS
+    // the stream (accepted barrier), the upgrade parks in connect_direct's
+    // hello wait carrying the worker socket; dropping the upgrade future
+    // closes that socket (the worker observes EOF — its own eof barrier),
+    // and shutdown+join then drains exactly the supervisor pair and
     // nothing residual.
+    use tokio::io::AsyncReadExt;
 
     let dir = tempfile::TempDir::new().unwrap();
     let socket = dir.path().join("d.sock");
     let worker_socket = dir.path().join("w.sock");
     let listener = UnixListener::bind(&socket).unwrap();
     let worker_listener = UnixListener::bind(&worker_socket).unwrap();
-    // A worker that accepts and never greets: the upgrade future holds
-    // inside connect_direct's hello wait.
+    let (accepted_tx, accepted_rx) = oneshot::channel::<()>();
+    let (eof_tx, eof_rx) = oneshot::channel::<()>();
     tokio::spawn(async move {
         let (stream, _) = worker_listener.accept().await.expect("worker accept");
-        drop(stream);
-        std::future::pending::<()>().await;
+        let (mut reader, _writer) = stream.into_split();
+        let _ = accepted_tx.send(());
+        // Hold the hello and the stream: the upgrade sits in its hello wait
+        // holding this socket until its future is dropped.
+        let mut chunk = [0u8; 64];
+        loop {
+            match reader.read(&mut chunk).await {
+                Ok(0) | Err(_) => {
+                    let _ = eof_tx.send(());
+                    break;
+                }
+                Ok(_) => {}
+            }
+        }
     });
     let ticket_socket = worker_socket.clone();
     let supervisor = tokio::spawn(async move {
@@ -2252,11 +2275,21 @@ async fn dropped_mid_flight_upgrade_leaves_no_residual_tasks() {
         let client = client.clone();
         tokio::spawn(async move { client.upgrade_direct("s1").await })
     };
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // The accepted barrier: the upgrade is genuinely mid-handshake, holding
+    // the worker socket in its future.
+    tokio::time::timeout(Duration::from_secs(5), accepted_rx)
+        .await
+        .expect("the worker accepted the upgrade's connection")
+        .expect("the accepted barrier fired");
     // Drop the in-flight upgrade: no pumps were spawned (the handshake never
     // completed), and the worker socket dies with the future.
     upgrade.abort();
     let _ = upgrade.await;
+    // The worker observed the EOF — the caller-owned socket truly closed.
+    tokio::time::timeout(Duration::from_secs(5), eof_rx)
+        .await
+        .expect("the worker sees the dropped upgrade's EOF")
+        .expect("the EOF barrier fired");
     client.shutdown();
     assert_eq!(client.direct_session_id(), None);
     let drained = tokio::time::timeout(Duration::from_secs(5), client.join_tasks())

@@ -1272,15 +1272,16 @@ impl DaemonClient {
         let _ = writer.send(String::new());
     }
 
-    /// True teardown, idempotent, clone-correct: abort the supervisor reader
-    /// and writer pump plus every direct-link pump this connection ever
-    /// spawned (aborting drops each task's socket half, so the fd closes),
-    /// fail every pending request NOW as the uncertain delivery class (no
-    /// daemon-EOF dependency), flip the reader-dead watch so every clone's
-    /// request entry refuses with the provable non-delivery class, and drop
-    /// the direct link. Unlike [`Self::close`], nothing rides on the daemon
-    /// closing the socket: the tasks are aborted where they stand. Nothing
-    /// runs on `Drop` — the caller owns the teardown explicitly.
+    /// True teardown, idempotent, clone-correct: flip the reader-dead watch
+    /// FIRST (the one shared death mark — every clone's request entry and
+    /// post-insert re-check refuse from here on), then abort the supervisor
+    /// reader and writer pump plus every direct-link pump this connection
+    /// ever spawned (aborting drops each task's socket half, so the fd
+    /// closes), and fail every pending request NOW as the uncertain delivery
+    /// class (no daemon-EOF dependency). Unlike [`Self::close`], nothing
+    /// rides on the daemon closing the socket: the tasks are aborted where
+    /// they stand. Nothing runs on `Drop` — the caller owns the teardown
+    /// explicitly.
     pub fn shutdown(&self) {
         // The death mark FIRST (the one shared truth — the reader-dead
         // watch): a request registering after this point fails its
