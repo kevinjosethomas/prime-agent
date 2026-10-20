@@ -13,3 +13,4 @@
 
 pub mod daemon_client;
 pub mod direct_transport;
+pub mod registry;
