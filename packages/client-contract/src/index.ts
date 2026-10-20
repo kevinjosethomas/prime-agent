@@ -8,14 +8,12 @@
  * Non-goals (see README): transport, lifecycle, reconnect policy, platform
  * packaging. This package is unused until client adoption.
  */
-export * from "../generated/ts/index.js";
 export {
   loadContract,
+  loadMetadata,
   checkInboundFrame,
   type Contract,
   type SchemaValidator,
   type FrameVerdict,
 } from "./validators.js";
-import metadataJson from "../generated/metadata.json" with { type: "json" };
-/** Derived wire metadata: protocol, commands, kinds, errors, capabilities. */
-export const metadata = metadataJson;
+export type * from "../generated/ts/index.js";

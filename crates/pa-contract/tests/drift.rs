@@ -3,7 +3,8 @@
 use std::path::Path;
 
 fn generated_dir() -> &'static Path {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/client-contract/generated")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../packages/client-contract/generated")
         .canonicalize()
         .expect("committed generated dir exists")
         .leak()
@@ -19,8 +20,7 @@ fn regeneration_matches_committed_output() {
         let committed_content = std::fs::read_to_string(&path)
             .unwrap_or_else(|_| panic!("generated artifact not committed: {relative}"));
         assert_eq!(
-            committed_content,
-            *content,
+            committed_content, *content,
             "generated output drifted: {relative} (run `cargo run -p pa-contract` and commit)"
         );
         checked += 1;
@@ -32,7 +32,11 @@ fn regeneration_matches_committed_output() {
     for path in walk(&committed.join("schema"))
         .into_iter()
         .chain(walk(&committed.join("corpus")))
-        .chain(vec![committed.join("metadata.json")].into_iter().filter(|p| p.exists()))
+        .chain(
+            vec![committed.join("metadata.json")]
+                .into_iter()
+                .filter(|p| p.exists()),
+        )
     {
         let relative = path.strip_prefix(committed).unwrap().to_string_lossy();
         assert!(

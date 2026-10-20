@@ -16,13 +16,15 @@ async function files(dir) {
 
 const tsDir = join(root, "generated", "ts");
 const typecheckDir = join(root, "generated", "typecheck");
+const distDir = join(root, "dist");
+const all = async () => [...(await files(tsDir)), ...(await files(typecheckDir)), ...(await files(distDir))];
 const committed = new Map();
-for (const path of [...(await files(tsDir)), ...(await files(typecheckDir))]) {
+for (const path of await all()) {
   committed.set(path, await readFile(path, "utf8"));
 }
 await generate();
 let failed = false;
-for (const path of [...(await files(tsDir)), ...(await files(typecheckDir))]) {
+for (const path of await all()) {
   const after = await readFile(path, "utf8");
   if (!committed.has(path)) {
     console.error(`DRIFT: new file ${path}`);

@@ -143,7 +143,9 @@ fn error_info_codes(error_schema: &Value) -> Vec<String> {
 
 /// Drop the phantom `unknown` const branch from the closed error-info union.
 fn drop_phantom_unknown_branch(schema: &mut Value) {
-    let Some(object) = schema.as_object_mut() else { return };
+    let Some(object) = schema.as_object_mut() else {
+        return;
+    };
     let Some(branches) = object.get_mut("oneOf").and_then(Value::as_array_mut) else {
         return;
     };
@@ -327,12 +329,12 @@ fn synth(schema: &Value, defs: &Map<String, Value>, depth: usize) -> Value {
     } else {
         schema.clone()
     };
-    if resolved != *schema && (schema.get("properties").is_some() || schema.get("required").is_some())
+    if resolved != *schema
+        && (schema.get("properties").is_some() || schema.get("required").is_some())
     {
         let mut merged = synth(&resolved, defs, depth + 1);
         let required = required_of(schema);
-        if let (Some(target), Some(source)) = (merged.as_object_mut(), schema.get("properties"))
-        {
+        if let (Some(target), Some(source)) = (merged.as_object_mut(), schema.get("properties")) {
             for name in required {
                 if let Some(prop) = source.get(&name) {
                     target.insert(name.clone(), synth(prop, defs, depth + 1));
@@ -381,9 +383,15 @@ fn synth(schema: &Value, defs: &Map<String, Value>, depth: usize) -> Value {
         Some(Value::String(name)) => Some(name.clone()),
         _ => None,
     };
-    if schema.get("type").and_then(Value::as_array).is_some_and(|list| {
-        list.iter().filter_map(Value::as_str).all(|name| name == "null")
-    }) {
+    if schema
+        .get("type")
+        .and_then(Value::as_array)
+        .is_some_and(|list| {
+            list.iter()
+                .filter_map(Value::as_str)
+                .all(|name| name == "null")
+        })
+    {
         return Value::Null;
     }
     match member_type.as_deref() {
@@ -468,6 +476,106 @@ pub fn mutation_candidates(stem: &str, schema: &Value, witness: &Value) -> Vec<(
             let mut nulled = object.clone();
             nulled.insert(name.to_string(), Value::Null);
             push(format!("null-{name}"), Value::Object(nulled));
+        }
+    }
+    out
+}
+
+/// Nested branch variants: where a property's subschema is a union
+/// (oneOf/anyOf), emit one variant per branch so the corpus covers every
+/// nested wire form (message content as a bare string vs. typed block
+/// arrays) — synthesized from the schema, never hand-written.
+pub fn nested_branch_variants(
+    schema: &Value,
+    witness: &Value,
+    defs: &Map<String, Value>,
+) -> Vec<Value> {
+    let mut out = Vec::new();
+    let Some(props) = schema.get("properties").and_then(Value::as_object) else {
+        return out;
+    };
+    let Some(object) = witness.as_object() else {
+        return out;
+    };
+    for (name, prop) in props {
+        let resolved = resolve_ref(prop, defs);
+        if let Some(branches) = resolved
+            .get("anyOf")
+            .or_else(|| resolved.get("oneOf"))
+            .and_then(Value::as_array)
+        {
+            for branch in branches {
+                if out.len() >= 32 {
+                    return out;
+                }
+                let mut variant = witness.clone();
+                if let Some(target) = variant.as_object_mut() {
+                    target.insert(name.clone(), synth(branch, defs, 0));
+                }
+                out.push(variant);
+            }
+        }
+    }
+    out
+}
+
+fn resolve_ref(schema: &Value, defs: &Map<String, Value>) -> Value {
+    if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
+        let name = reference.rsplit('/').next().unwrap_or_default();
+        if let Some(def) = defs.get(name) {
+            return def.clone();
+        }
+    }
+    schema.clone()
+}
+
+/// Drop-each-field mutations of tagged objects at ANY depth (known-kind
+/// nested blocks must stay strict: a malformed known tag is a serde error,
+/// never a Raw fallback). Classification happens against the real parse.
+pub fn tagged_object_field_drops(witness: &Value) -> Vec<(String, Value)> {
+    let mut out = Vec::new();
+    if out.len() >= 64 {
+        return out;
+    }
+    if let Some(object) = witness.as_object() {
+        let is_tagged = object
+            .get("type")
+            .or_else(|| object.get("code"))
+            .or_else(|| object.get("role"))
+            .and_then(Value::as_str)
+            .is_some();
+        if is_tagged {
+            let tag_property = ["type", "code", "role"]
+                .into_iter()
+                .find(|name| object.contains_key(*name))
+                .unwrap_or("type");
+            for name in object.keys() {
+                if name == tag_property {
+                    continue;
+                }
+                let mut variant = object.clone();
+                variant.remove(name);
+                out.push((
+                    format!("nested-drop-{name}"),
+                    Value::Object(variant),
+                ));
+                if out.len() >= 64 {
+                    return out;
+                }
+            }
+        }
+    }
+    for child in witness
+        .as_object()
+        .map(|o| o.values().cloned().collect::<Vec<_>>())
+        .or_else(|| witness.as_array().map(|a| a.iter().cloned().collect()))
+        .unwrap_or_default()
+    {
+        for (name, variant) in tagged_object_field_drops(&child) {
+            out.push((format!("nested-{name}"), variant));
+            if out.len() >= 64 {
+                return out;
+            }
         }
     }
     out
@@ -572,7 +680,9 @@ pub fn export(dir: &Path) -> Result<Vec<PathBuf>> {
     std::fs::create_dir_all(dir.join("corpus/mutations")).context("mutations dir")?;
 
     for root in &roots {
-        let path = dir.join("schema").join(format!("{}.schema.json", root.stem));
+        let path = dir
+            .join("schema")
+            .join(format!("{}.schema.json", root.stem));
         std::fs::write(
             &path,
             serde_json::to_string_pretty(&root.schema).context("schema pretty")? + "\n",
@@ -582,6 +692,17 @@ pub fn export(dir: &Path) -> Result<Vec<PathBuf>> {
 
         let mut accepted = String::new();
         let mut accepted_samples: Vec<Value> = witnesses(root.stem, &root.schema);
+        let defs = defs_of(&root.schema);
+        // Nested union branches: every property whose schema is a union gets
+        // one accepted variant per branch (bare string vs. typed block arrays).
+        for witness in accepted_samples.clone() {
+            for variant in nested_branch_variants(&root.schema, &witness, &defs) {
+                if accepted_samples.len() >= 512 {
+                    break;
+                }
+                accepted_samples.push(variant);
+            }
+        }
         // Nested unknown-code coverage: every witness carrying an `errorInfo`
         // slot gets a same-shape variant with an unknown code — accepted by
         // serde (`DaemonErrorInfo::Unknown`) and by the patched open branch.
@@ -619,7 +740,12 @@ pub fn export(dir: &Path) -> Result<Vec<PathBuf>> {
         if root.stem != "client-inbound-frame" {
             let mut mutations = String::new();
             for witness in witnesses(root.stem, &root.schema) {
-                for (name, variant) in mutation_candidates(root.stem, &root.schema, &witness) {
+                let mut candidates: Vec<(String, Value)> =
+                    mutation_candidates(root.stem, &root.schema, &witness);
+                for (name, variant) in tagged_object_field_drops(&witness) {
+                    candidates.push((name, variant));
+                }
+                for (name, variant) in candidates {
                     let rust_accepts = parse_as_root(root.stem, &variant)?;
                     mutations.push_str(
                         &(serde_json::to_string(&json!({
@@ -699,7 +825,9 @@ pub fn roundtrips_as_root(stem: &str, sample: &Value) -> Result<bool> {
         DaemonCommand, DaemonCommandEnvelope, DaemonCommandWire, DaemonErrorInfo,
         DaemonEventEnvelope, DaemonEventMeta, DaemonOutbound, DaemonResponse, DaemonResumeCursor,
     };
-    fn roundtrips<T: serde::de::DeserializeOwned + serde::Serialize>(sample: &Value) -> Result<bool> {
+    fn roundtrips<T: serde::de::DeserializeOwned + serde::Serialize>(
+        sample: &Value,
+    ) -> Result<bool> {
         let parsed: T = serde_json::from_value(sample.clone())?;
         let out = serde_json::to_value(&parsed)?;
         Ok(out == *sample)
@@ -756,7 +884,11 @@ pub fn export_map() -> Result<BTreeMap<String, String>> {
     let mut map = BTreeMap::new();
     for entry in walk(&dir) {
         map.insert(
-            entry.strip_prefix(&dir).unwrap().to_string_lossy().to_string(),
+            entry
+                .strip_prefix(&dir)
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
             std::fs::read_to_string(&entry).context("read exported")?,
         );
     }

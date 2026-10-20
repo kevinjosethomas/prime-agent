@@ -15,3 +15,7 @@ anyhow = { workspace = true }
 # Same version as pa-types' optional contract feature (unified by cargo);
 # pa-contract names JsonSchema for its root-schema exports.
 schemars = "1"
+
+[lints]
+# Workspace lints table (same bar as every other crate).
+workspace = true

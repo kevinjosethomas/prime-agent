@@ -43,7 +43,10 @@ fn corpus_stem(kind: &str, stem: &str) -> Vec<Value> {
 #[test]
 fn accepted_corpus_parses_through_serde() {
     for line in corpus("accepted") {
-        let stem = line.get("schemaRoot").and_then(Value::as_str).expect("root");
+        let stem = line
+            .get("schemaRoot")
+            .and_then(Value::as_str)
+            .expect("root");
         let sample = line.get("sample").expect("sample");
         assert!(
             pa_contract::parse_as_root(stem, sample).expect("verdict"),
@@ -69,15 +72,24 @@ fn accepted_witnesses_cover_every_enum_branch() {
         "daemon-resume-cursor",
         "agent-message",
     ] {
-        let schema: Value = serde_json::from_str(&std::fs::read_to_string(
-            generated_dir().join("schema").join(format!("{stem}.schema.json")),
-        ).expect("schema")).expect("schema json");
+        let schema: Value = serde_json::from_str(
+            &std::fs::read_to_string(
+                generated_dir()
+                    .join("schema")
+                    .join(format!("{stem}.schema.json")),
+            )
+            .expect("schema"),
+        )
+        .expect("schema json");
         let Some(discriminant) = pa_contract::discriminant_property(&schema) else {
             continue;
         };
         let tags = pa_contract::enum_tags(&schema);
         let accepted = corpus_stem("accepted", stem);
-        let samples: Vec<&Value> = accepted.iter().map(|l| l.get("sample").expect("sample")).collect();
+        let samples: Vec<&Value> = accepted
+            .iter()
+            .map(|l| l.get("sample").expect("sample"))
+            .collect();
         for tag in tags {
             let covered = samples.iter().any(|sample| {
                 sample.get(&discriminant).and_then(Value::as_str) == Some(tag.as_str())
@@ -95,9 +107,15 @@ fn mutation_candidates_are_classified_consistently_with_serde() {
     let mut accepted = 0;
     let mut rejected = 0;
     for line in &mutations {
-        let stem = line.get("schemaRoot").and_then(Value::as_str).expect("root");
+        let stem = line
+            .get("schemaRoot")
+            .and_then(Value::as_str)
+            .expect("root");
         let sample = line.get("sample").expect("sample");
-        let recorded = line.get("rustAccepts").and_then(Value::as_bool).expect("verdict");
+        let recorded = line
+            .get("rustAccepts")
+            .and_then(Value::as_bool)
+            .expect("verdict");
         let actual = pa_contract::parse_as_root(stem, sample).expect("verdict");
         assert_eq!(
             recorded, actual,
@@ -198,9 +216,7 @@ fn root_claims(stem: &str, candidate: &Value) -> bool {
     if required.is_empty() {
         return false;
     }
-    required
-        .iter()
-        .all(|name| candidate.get(name).is_some())
+    required.iter().all(|name| candidate.get(name).is_some())
 }
 
 fn collect_objects(value: &Value, out: &mut Vec<Value>) {
@@ -220,6 +236,39 @@ fn collect_objects(value: &Value, out: &mut Vec<Value>) {
         }
         _ => {}
     }
+}
+
+#[test]
+fn nested_blocks_are_covered_and_known_kinds_are_strict() {
+    use pa_types::session::AgentMessage;
+    // Non-empty nested text blocks appear in the accepted corpus (the nested
+    // union-branch variants synthesize typed block arrays, not bare strings).
+    let accepted = corpus_stem("accepted", "agent-message");
+    let has_typed_block = accepted.iter().any(|line| {
+        let sample = line.get("sample").expect("sample");
+        sample
+            .to_string()
+            .contains(r#""type":"text""#)
+            && sample.to_string().contains("wire")
+    });
+    assert!(has_typed_block, "no non-empty typed text block in the accepted corpus");
+    // A malformed KNOWN block is a serde error, never a Raw fallback.
+    let malformed_text = serde_json::json!({
+        "role": "user",
+        "content": [{"type": "text"}],
+        "timestamp": 0,
+    });
+    assert!(serde_json::from_value::<AgentMessage>(malformed_text).is_err());
+    // An unknown block kind stays Raw (verbatim).
+    let unknown_kind = serde_json::json!({
+        "role": "user",
+        "content": [{"type": "brand_new_kind", "kept": true}],
+        "timestamp": 0,
+    });
+    assert!(serde_json::from_value::<AgentMessage>(unknown_kind).is_ok());
+    // A bare string content parses (UserContent::Text).
+    let bare = serde_json::json!({"role": "user", "content": "wire", "timestamp": 0});
+    assert!(serde_json::from_value::<AgentMessage>(bare).is_ok());
 }
 
 #[test]
@@ -268,26 +317,36 @@ fn required_nullable_model_accepts_null_but_not_omission() {
 
 #[test]
 fn command_metadata_is_derived_not_pinned() {
-    let metadata: Value = serde_json::from_str(&std::fs::read_to_string(
-        generated_dir().join("metadata.json"),
-    ).expect("metadata.json"))
+    let metadata: Value = serde_json::from_str(
+        &std::fs::read_to_string(generated_dir().join("metadata.json")).expect("metadata.json"),
+    )
     .expect("metadata json");
-    let commands = metadata.get("commands").and_then(Value::as_array).expect("commands");
+    let commands = metadata
+        .get("commands")
+        .and_then(Value::as_array)
+        .expect("commands");
     let types: Vec<&str> = commands
         .iter()
         .map(|c| c.get("type").and_then(Value::as_str).expect("type"))
         .collect();
     let schema_tags: Vec<String> = {
-        let schema: Value = serde_json::from_str(&std::fs::read_to_string(
-            generated_dir().join("schema/daemon-command.schema.json"),
-        ).expect("command schema")).expect("schema json");
+        let schema: Value = serde_json::from_str(
+            &std::fs::read_to_string(generated_dir().join("schema/daemon-command.schema.json"))
+                .expect("command schema"),
+        )
+        .expect("schema json");
         let _ = &schema;
         metadata
             .get("commands")
             .and_then(Value::as_array)
             .expect("commands")
             .iter()
-            .map(|c| c.get("type").and_then(Value::as_str).expect("type").to_string())
+            .map(|c| {
+                c.get("type")
+                    .and_then(Value::as_str)
+                    .expect("type")
+                    .to_string()
+            })
             .collect()
     };
     let _ = schema_tags;

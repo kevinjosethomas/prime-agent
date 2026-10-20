@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadContract, checkInboundFrame } from "../dist/validators.js";
+import { loadContract, checkInboundFrame, loadMetadata } from "../dist/index.js";
 
 const generated = join(fileURLToPath(new URL("../generated", import.meta.url)));
 
@@ -94,7 +94,7 @@ test("error info: unknown codes accepted, known codes strict", async () => {
 });
 
 test("metadata is derived and consistent", async () => {
-  const metadata = JSON.parse(await readFile(join(generated, "metadata.json"), "utf8"));
+  const metadata = loadMetadata();
   assert.equal(metadata.protocol.name, "prime-agent.daemon");
   assert.equal(metadata.protocol.version, 7);
   assert.ok(metadata.commands.length >= 127, "the daemon catalog must be covered");

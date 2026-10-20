@@ -142,7 +142,9 @@ pub struct PromptInput {
 /// on the wire, but nullable (a present null resets inheritance; omission is
 /// a parse error).
 #[cfg(feature = "contract")]
-fn required_nullable_model_schema(_gen: &mut schemars::generate::SchemaGenerator) -> schemars::Schema {
+fn required_nullable_model_schema(
+    _gen: &mut schemars::generate::SchemaGenerator,
+) -> schemars::Schema {
     schemars::json_schema!({ "type": ["string", "null"] })
 }
 
@@ -181,7 +183,10 @@ pub enum DaemonCommand {
         #[serde(deserialize_with = "super::subagent_model_defaults::required_nullable_model")]
         // Present-or-null on the wire: required, but nullable (a present
         // null resets inheritance; omission is a parse error).
-        #[cfg_attr(feature = "contract", schemars(required, schema_with = "required_nullable_model_schema"))]
+        #[cfg_attr(
+            feature = "contract",
+            schemars(required, schema_with = "required_nullable_model_schema")
+        )]
         model: Option<String>,
         #[serde(flatten)]
         rest: JsonMap,

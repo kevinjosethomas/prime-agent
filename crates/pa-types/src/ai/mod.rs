@@ -298,44 +298,66 @@ impl schemars::JsonSchema for UserContentBlock {
         std::borrow::Cow::Borrowed("UserContentBlock")
     }
 
-    fn json_schema(_gen: &mut schemars::generate::SchemaGenerator) -> schemars::Schema {
+    fn json_schema(gen: &mut schemars::generate::SchemaGenerator) -> schemars::Schema {
+        // Known blocks reuse the CONTENT types' own schemas (single truth:
+        // no field list is mirrored here) merged with the flat `type` tag.
+        // A known tag with a malformed payload is a parse ERROR in serde —
+        // never a Raw fallback — so the Raw branch must exclude known-tag
+        // objects entirely; only unknown kinds / missing tags (any other
+        // JSON) stay verbatim.
+        let text = tagged_block_schema::<TextContent>(gen, "text");
+        let image = tagged_block_schema::<ImageContent>(gen, "image");
         schemars::json_schema!({
             "description": "Content blocks in user/tool-result messages: a `text` block, an `image` block, or any other JSON shape (unknown kinds preserved verbatim).",
             "anyOf": [
+                text,
+                image,
                 {
-                    "type": "object",
-                    "properties": {
-                        "type": { "const": "text" },
-                        "text": { "type": "string" },
-                        "textSignature": { "type": "string" }
-                    },
-                    "required": ["type", "text"],
-                    "additionalProperties": true
-                },
-                {
-                    "type": "object",
-                    "properties": {
-                        "type": { "const": "image" },
-                        "data": { "type": "string" },
-                        "mimeType": { "type": "string" }
-                    },
-                    "required": ["type", "data", "mimeType"],
-                    "additionalProperties": true
-                },
-                {} // Raw: any other JSON shape, preserved verbatim.
+                    "not": {
+                        "anyOf": [
+                            {
+                                "type": "object",
+                                "required": ["type"],
+                                "properties": { "type": { "const": "text" } }
+                            },
+                            {
+                                "type": "object",
+                                "required": ["type"],
+                                "properties": { "type": { "const": "image" } }
+                            }
+                        ]
+                    }
+                }
             ]
         })
     }
 }
 
-impl Serialize for UserContentBlock {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self {
-            Self::Text(text) => serialize_tagged_block("text", text, serializer),
-            Self::Image(image) => serialize_tagged_block("image", image, serializer),
-            Self::Raw(value) => value.serialize(serializer),
+/// The schema of one known block kind: the content type's own schema
+/// (`$defs` reference — the single truth for its fields) merged with the
+/// flat wire `type` tag.
+#[cfg(feature = "contract")]
+fn tagged_block_schema<T: schemars::JsonSchema>(
+    gen: &mut schemars::generate::SchemaGenerator,
+    tag: &str,
+) -> schemars::Schema {
+    let mut branch = schemars::json_schema!({
+        "properties": { "type": { "const": tag } },
+        "required": ["type"]
+    });
+    // The content type's schema as a `$defs` reference on the same branch
+    // (draft 2020-12 allows `$ref` siblings) — the single truth for its
+    // fields, collected into the root's `$defs` by the generator.
+    let subschema = gen.subschema_for::<T>();
+    if let Some(reference) = serde_json::to_value(&subschema)
+        .ok()
+        .and_then(|value| value.get("$ref").cloned())
+    {
+        if let Some(object) = branch.as_object_mut() {
+            object.insert("$ref".to_string(), reference);
         }
     }
+    branch
 }
 
 /// Serialize a known block as its flat wire object: the content fields plus

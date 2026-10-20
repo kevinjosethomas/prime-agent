@@ -40,12 +40,13 @@ message types it references). **Nothing here is hand-maintained.**
 ## API
 
 ```ts
-import { loadContract, checkInboundFrame, metadata } from "prime-agent-client-contract";
+import { loadContract, checkInboundFrame, loadMetadata } from "prime-agent-client-contract";
 
 const c = await loadContract();
 if (c.validateCommand(frame)) { /* a known command type with strict shape */ }
 const verdict = checkInboundFrame(c, frame);
 if (verdict.unknownKind) { /* forward raw */ }
+const metadata = loadMetadata(); // protocol, commands, kinds, errors, capabilities
 ```
 
 ## Non-goals

@@ -11,6 +11,7 @@
  */
 import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
@@ -56,6 +57,20 @@ export interface Contract {
   knownOutboundKinds: string[];
 }
 
+let metadata_cache: unknown | null = null;
+let metadata_loaded = false;
+
+/** The derived wire metadata (protocol, commands, kinds, errors, capabilities). */
+export function loadMetadata(): unknown {
+  if (!metadata_loaded) {
+    metadata_cache = JSON.parse(
+      readFileSync(join(generated, "metadata.json"), "utf8"),
+    );
+    metadata_loaded = true;
+  }
+  return metadata_cache;
+}
+
 let contract: Contract | null = null;
 
 /** Load and compile the contract (one process may reuse the same instance). */
@@ -88,7 +103,7 @@ export async function loadContract(): Promise<Contract> {
       "client-inbound-frame",
     ].map(compileSchema),
   );
-  const metadata = JSON.parse(await readFile(join(generated, "metadata.json"), "utf8"));
+  const metadata = loadMetadata() as { outboundKinds: string[] };
   contract = {
     validateCommand,
     validateCommandEnvelope,
