@@ -355,24 +355,22 @@ pub fn build_session_context(entries: &[FileEntry], leaf_id: Option<&str>) -> Se
     }
 
     let mut messages: Vec<AgentMessage> = Vec::new();
-    let append_message = |entry: &FileEntry, target: &mut Vec<AgentMessage>| {
-        match entry {
-            FileEntry::Message { message, .. } => target.push(message.clone()),
-            FileEntry::CustomMessage { payload, .. } => {
-                target.push(AgentMessage::Custom(create_custom_message(payload, entry)));
-            }
-                FileEntry::BranchSummary { payload, .. } if !payload.summary.is_empty() => {
-                    target.push(AgentMessage::BranchSummary(
-                        pa_types::session::BranchSummaryMessage {
-                            summary: payload.summary.clone(),
-                            from_id: payload.from_id.clone(),
-                            timestamp: timestamp_to_millis(entry.timestamp()),
-                        },
-                    ));
-                }
-                _ => {}
-            }
-        };
+    let append_message = |entry: &FileEntry, target: &mut Vec<AgentMessage>| match entry {
+        FileEntry::Message { message, .. } => target.push(message.clone()),
+        FileEntry::CustomMessage { payload, .. } => {
+            target.push(AgentMessage::Custom(create_custom_message(payload, entry)));
+        }
+        FileEntry::BranchSummary { payload, .. } if !payload.summary.is_empty() => {
+            target.push(AgentMessage::BranchSummary(
+                pa_types::session::BranchSummaryMessage {
+                    summary: payload.summary.clone(),
+                    from_id: payload.from_id.clone(),
+                    timestamp: timestamp_to_millis(entry.timestamp()),
+                },
+            ));
+        }
+        _ => {}
+    };
 
     if let Some(compaction_index) = compaction {
         let payload = match &entries[compaction_index] {

@@ -314,11 +314,7 @@ fn settled_turn_emits_the_run_agent_end_payload() {
         .iter()
         .map(|message| message["role"].as_str().unwrap_or_default())
         .collect::<Vec<&str>>();
-    assert_eq!(
-        roles,
-        ["user", "assistant"],
-        "the run's message set"
-    );
+    assert_eq!(roles, ["user", "assistant"], "the run's message set");
     assert_eq!(
         messages[0]["content"],
         json!([{ "type": "text", "text": "plain turn" }]),
@@ -400,11 +396,7 @@ fn retried_run_restarts_with_its_own_agent_frames() {
         .iter()
         .map(|message| message["role"].as_str().unwrap_or_default())
         .collect::<Vec<&str>>();
-    assert_eq!(
-        roles,
-        ["user", "assistant"],
-        "the failed run's message set"
-    );
+    assert_eq!(roles, ["user", "assistant"], "the failed run's message set");
     assert_eq!(
         first[1]["stopReason"],
         json!("error"),
