@@ -34,6 +34,7 @@ class Agent:
     model: str | None = None
     child_id: str | None = None
     session_dir: Path | None = None
+    top_level: bool = False
 
     async def send(self, text: str) -> "Receipt":
         if not isinstance(text, str):
@@ -68,7 +69,7 @@ class Agent:
 
     async def wait(self, timeout: float | None = None) -> "Result":
         """Block until this child settles; ``timeout`` is seconds, ``None`` waits forever."""
-        child_id = self._require_child()
+        child_id = self._require_child_id()
         if timeout is None:
             timeout_ms = _COLLECT_MAX_TIMEOUT_MS
         elif isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout < 0:
@@ -81,16 +82,16 @@ class Agent:
                 return _result_from_row(row)
 
     async def stop(self) -> None:
-        await _delete_child(self._require_child())
+        await _delete_child(self._require_child_id())
 
     async def rename(self, name: str) -> "Agent":
-        child_id = self._require_child()
+        child_id = self._require_child_id()
         new_name = await _rename(name, child_id)
         return dataclasses.replace(self, name=new_name)
 
-    def _require_child(self) -> str:
-        if self.relationship != "child" or not self.child_id:
-            raise TypeError("this Agent is not a spawned child")
+    def _require_child_id(self) -> str:
+        if not self.child_id:
+            raise TypeError("this Agent is not one of this session's spawned agents")
         return self.child_id
 
 
@@ -142,12 +143,17 @@ async def spawn(
             kwargs["cwd"] = cwd
         payload = await host_request("rlm.create_session", {"prompt": prompt, "kwargs": kwargs})
         _require_fields(payload, ("active_session_id", "session_id", "name", "session_file", "model"), "rlm.create_session")
+        child_id = payload.get("rlm_child_id")
+        if child_id is not None and not isinstance(child_id, str):
+            raise RuntimeError("rlm.create_session returned an invalid rlm_child_id")
         return Agent(
             name=payload["name"],
             session_id=payload["session_id"],
             relationship="sibling",
             status="running",
             model=payload["model"],
+            child_id=child_id,
+            top_level=True,
         )
     if name is None:
         raise TypeError("a child needs a name: agents.spawn(prompt, name='worker')")
@@ -168,18 +174,19 @@ async def spawn(
 
 
 async def list() -> list[Agent]:
-    """The direct children retained by this session."""
+    """Every agent this session started: children and top-level peers."""
     rows = await _list_children()
     return [
         Agent(
             name=row.session_name,
             session_id=row.session_id,
-            relationship="child",
+            relationship="sibling" if row.top_level else "child",
             status=_REGISTRY_STATUS[row.status],
             note=row.note,
             model=None,
             child_id=row.rlm_child_id,
             session_dir=row.session_dir,
+            top_level=row.top_level,
         )
         for row in rows
     ]
@@ -269,6 +276,7 @@ class _ChildRow:
     session_dir: Path
     status: str
     note: str | None
+    top_level: bool
 
 
 @dataclass(frozen=True)
@@ -487,6 +495,11 @@ def _child_row(entry: Any) -> _ChildRow:
         note = entry.get("progress_note")
     if note is not None and not isinstance(note, str):
         raise RuntimeError("rlm.list_subagents entry has an invalid note")
+    top_level = entry.get("top_level")
+    if top_level is None:
+        top_level = False
+    if not isinstance(top_level, bool):
+        raise RuntimeError("rlm.list_subagents entry has an invalid top_level")
     return _ChildRow(
         rlm_child_id=child_id,
         session_id=session_id,
@@ -494,6 +507,7 @@ def _child_row(entry: Any) -> _ChildRow:
         session_dir=Path(session_dir),
         status=status,
         note=note,
+        top_level=top_level,
     )
 
 

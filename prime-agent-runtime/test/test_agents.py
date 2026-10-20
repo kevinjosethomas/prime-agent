@@ -23,6 +23,7 @@ SPAWN_PAYLOAD = {
 CREATE_SESSION_PAYLOAD = {
     "active_session_id": "active-root",
     "session_id": "session-root",
+    "rlm_child_id": "sub-top1",
     "name": "researcher",
     "session_file": "/tmp/sessions/researcher/session.jsonl",
     "model": "prime-inference/deepseek/deepseek-v4-flash",
@@ -78,9 +79,10 @@ class AgentsSpawnTest(unittest.TestCase):
             },
         )
         self.assertEqual(agent.relationship, "sibling")
+        self.assertTrue(agent.top_level)
         self.assertEqual(agent.status, "running")
         self.assertEqual(agent.session_id, "session-root")
-        self.assertIsNone(agent.child_id)
+        self.assertEqual(agent.child_id, "sub-top1")
         self.assertIsNone(agent.session_dir)
 
     def test_spawn_requires_a_child_name(self) -> None:
@@ -107,7 +109,7 @@ def registry_row(**overrides):
 
 
 class AgentsListTest(unittest.TestCase):
-    def test_list_maps_registry_rows_to_child_agents(self) -> None:
+    def test_list_maps_registry_rows_to_agents(self) -> None:
         host_request = AsyncMock(
             return_value={
                 "subagents": [
@@ -120,19 +122,31 @@ class AgentsListTest(unittest.TestCase):
                         status="cancelled",
                         progress_note="legacy note field",
                     ),
+                    registry_row(
+                        rlm_child_id="sub-top",
+                        session_id="session-top",
+                        session_name="root-2",
+                        session_dir="/tmp/roots/root-2",
+                        status="running",
+                        top_level=True,
+                    ),
                 ]
             }
         )
 
         with patch.object(rlm_module, "host_request", host_request):
-            children = asyncio.run(agents_module.list())
+            agents = asyncio.run(agents_module.list())
 
         host_request.assert_awaited_once_with("rlm.list_subagents")
-        self.assertEqual([child.status for child in children], ["done", "error"])
-        self.assertEqual(children[0].note, "halfway done")
-        self.assertEqual(children[1].note, "legacy note field")
-        self.assertEqual(children[0].child_id, "sub-a1b2c3d4")
-        self.assertEqual(children[0].session_dir, Path("/tmp/parent/sub-a1b2c3d4"))
+        self.assertEqual([agent.status for agent in agents], ["done", "error", "running"])
+        self.assertEqual(agents[0].note, "halfway done")
+        self.assertEqual(agents[1].note, "legacy note field")
+        self.assertEqual(agents[0].child_id, "sub-a1b2c3d4")
+        self.assertEqual(agents[0].session_dir, Path("/tmp/parent/sub-a1b2c3d4"))
+        self.assertFalse(agents[0].top_level)
+        self.assertEqual(agents[2].relationship, "sibling")
+        self.assertTrue(agents[2].top_level)
+        self.assertEqual(agents[2].session_id, "session-top")
 
     def test_list_rejects_invalid_rows(self) -> None:
         for row in ({"status": "completed"}, registry_row(status="nonsense"), {"subagents": "no"}):
@@ -223,6 +237,9 @@ class AgentsNoteTest(unittest.TestCase):
 
 
 CHILD = Agent(name="api-reviewer", session_id=None, relationship="child", status="running", child_id="sub-a1b2c3d4")
+TOP_LEVEL_PEER = Agent(
+    name="researcher", session_id="session-root", relationship="sibling", status="running", child_id="sub-top1", top_level=True
+)
 
 
 class AgentMessagingTest(unittest.TestCase):
@@ -354,15 +371,15 @@ class AgentWaitStopTest(unittest.TestCase):
 
         self.assertEqual(host_request.await_args.args[1]["timeout_ms"], agents_module._COLLECT_MAX_TIMEOUT_MS)
 
-    def test_wait_and_stop_are_child_only(self) -> None:
+    def test_wait_and_stop_need_a_spawned_child_id(self) -> None:
         for agent in (
             Agent(name="peer", session_id="s-peer", relationship="sibling", status="running"),
             Agent(name="child-without-id", session_id=None, relationship="child", status="running"),
         ):
             with self.subTest(relationship=agent.relationship):
-                with self.assertRaisesRegex(TypeError, "not a spawned child"):
+                with self.assertRaisesRegex(TypeError, "not one of this session's spawned agents"):
                     asyncio.run(agent.wait())
-                with self.assertRaisesRegex(TypeError, "not a spawned child"):
+                with self.assertRaisesRegex(TypeError, "not one of this session's spawned agents"):
                     asyncio.run(agent.stop())
 
     def test_stop_deletes_the_child(self) -> None:
@@ -370,6 +387,19 @@ class AgentWaitStopTest(unittest.TestCase):
         with patch.object(rlm_module, "host_request", host_request):
             asyncio.run(CHILD.stop())
         host_request.assert_awaited_once_with("rlm.delete_subagent", {"target": "sub-a1b2c3d4"})
+
+    def test_wait_and_stop_work_on_spawned_top_level_peers(self) -> None:
+        host_request = AsyncMock(
+            return_value={"results": [{"rlm_child_id": "sub-top1", "status": "done", "settled": True, "answer_preview": "ok"}]}
+        )
+        with patch.object(rlm_module, "host_request", host_request):
+            result = asyncio.run(TOP_LEVEL_PEER.wait(1))
+        self.assertEqual(result.status, "done")
+
+        host_request = AsyncMock(return_value={"subagent": registry_row(status="completed")})
+        with patch.object(rlm_module, "host_request", host_request):
+            asyncio.run(TOP_LEVEL_PEER.stop())
+        host_request.assert_awaited_once_with("rlm.delete_subagent", {"target": "sub-top1"})
 
     def test_wait_gathers_several_children(self) -> None:
         # The multi-child wait is asyncio.gather over one-child waits; no extra API.
