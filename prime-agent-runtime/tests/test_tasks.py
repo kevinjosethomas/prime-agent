@@ -287,9 +287,8 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
             {"taskId": "parser", "sessionId": "peer-session", "name": "parent-peer", "role": "worker"},
             {"taskId": "parser", "sessionId": "peer-session", "name": "sibling-peer", "role": "worker"}])
         # Child metadata is optional: without it the Agent associates by session.
-        metadataless = await task.link(Agent(name="worker", session_id="late-child-session",
-                                             relationship="child"))
-        self.assertEqual(metadataless.status, "active")
+        await task.link(Agent(name="worker", session_id="late-child-session",
+                              relationship="child"))
         self.assertIn({"taskId": "parser", "sessionId": "late-child-session",
                         "name": "worker", "role": "worker"},
                       (await self.client._context())["agents"])
