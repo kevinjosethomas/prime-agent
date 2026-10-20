@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        source: [204cfaa71e1d9eb409239f599a102cf0ec7dd65c, 7a441174eb4fc4aa3f74c2798f18d95e56785b3b, a55aec7543a45e7ef28c92c5ec1fb4f9ede1c865]
+        source: [204cfaa71e1d9eb409239f599a102cf0ec7dd65c, 7a441174eb4fc4aa3f74c2798f18d95e56785b3b, 8a6ad5f83c95a731ccefe85f32ea78309fe1a2f1]
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     env:
@@ -37,7 +37,7 @@ jobs:
           cp -R scripts "$RUNNER_TEMP/qualification-scripts"
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: a55aec7543a45e7ef28c92c5ec1fb4f9ede1c865
+          ref: 8a6ad5f83c95a731ccefe85f32ea78309fe1a2f1
           persist-credentials: false
       - name: Retain identical barrier regression for all source versions
         run: cp crates/pa-daemon/src/rlm_children/watch_tests.rs "$RUNNER_TEMP/child-admission-watch-tests.rs"

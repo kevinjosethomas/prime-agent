@@ -39,7 +39,7 @@ watch_fixture = (tmp / 'child-admission-watch-tests.rs').read_bytes()
 (out / 'child-admission-watch-tests.sha256').write_text(hashlib.sha256(watch_fixture).hexdigest() + '\n')
 barrier_status = run(['cargo', 'test', '--locked', '-p', 'pa-daemon', '--lib', 'collect_during_kickoff_admission', '--', '--nocapture'], 'child-admission-barrier.log')
 barrier_log = (out / 'child-admission-barrier.log').read_text()
-fixed = source == 'a55aec7543a45e7ef28c92c5ec1fb4f9ede1c865'
+fixed = source == '8a6ad5f83c95a731ccefe85f32ea78309fe1a2f1'
 barrier_expected = (barrier_status == 0 and 'test result: ok. 1 passed; 0 failed' in barrier_log) if fixed else (barrier_status == 101 and 'test result: FAILED. 0 passed; 1 failed' in barrier_log and 'a pre-admission idle worker has not completed its child task' in barrier_log)
 path.write_text(legacy_fixture)
 legacy_status = run(['cargo', 'test', '--locked', '-p', 'pa-daemon', '--test', 'import_compaction_e2e', '--', '--nocapture'], 'import-legacy.log')
