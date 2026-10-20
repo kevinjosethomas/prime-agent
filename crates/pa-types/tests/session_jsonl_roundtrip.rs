@@ -87,11 +87,9 @@ fn historical_fixture_lines_parse_and_survive_reserialization() {
             let mut original: Value = serde_json::from_str(line).unwrap();
             if let Some(map) = original.as_object_mut() {
                 map.remove("harnessDigest");
-                map.remove("harnessStateFingerprint");
             }
             if let Some(message) = original.get_mut("message").and_then(Value::as_object_mut) {
                 message.remove("harnessDigest");
-                message.remove("harnessStateFingerprint");
             }
             let roundtripped: Value = serde_json::from_str(&reserialized).unwrap();
             assert_eq!(
