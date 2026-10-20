@@ -82,15 +82,24 @@ class DesktopInteropTests(unittest.IsolatedAsyncioTestCase):
             child_dir = Path(directory) / "agent-child"
             await task.link(Agent(name="agent-worker", session_id="agent-session",
                                   relationship="child", child_id="agent-child", session_dir=child_dir))
+            # Canonical rows: chatUrl rides every observed durable session id.
             agents = (await client._context())["agents"]
             self.assertEqual(agents, [{
                 "taskId": "fixture", "rlmChildId": "agent-child", "sessionDir": str(child_dir),
-                "sessionId": "agent-session", "name": "agent-worker", "role": "worker"}])
+                "sessionId": "agent-session",
+                "chatUrl": "prime-agent://session/agent-session",
+                "name": "agent-worker", "role": "worker"}])
             await task.link(Agent(name="agent-parent", session_id="agent-parent-session",
                                   relationship="parent"))
             await task.link(Agent(name="agent-sibling", session_id="agent-sibling-session",
                                   relationship="sibling"))
             agents = (await client._context())["agents"]
+            self.assertIn({"taskId": "fixture", "sessionId": "agent-parent-session",
+                           "chatUrl": "prime-agent://session/agent-parent-session",
+                           "name": "agent-parent", "role": "worker"}, agents)
+            self.assertIn({"taskId": "fixture", "sessionId": "agent-sibling-session",
+                           "chatUrl": "prime-agent://session/agent-sibling-session",
+                           "name": "agent-sibling", "role": "worker"}, agents)
             self.assertEqual(len(agents), 3)
 
     async def test_canonical_link_queued_then_actual_roster_session(self):
