@@ -125,29 +125,33 @@ class Client:
             if isinstance(agent, rlm.RLMSubagent) and agent.session_id is not None:
                 agent_value["sessionId"] = text(agent.session_id, "session ID")
             return await self._deliver(Report.create("assign", agent=agent_value))
-        # The frozen Agent shape, duck-typed by its five fields: any
-        # relationship links as an association, with a real session id only.
+        # The frozen Agent shape, duck-typed by its five fields.
         fields = ("name", "session_id", "relationship", "child_id", "session_dir")
         if not all(hasattr(agent, field) for field in fields):
             raise TypeError("link expects a native handle, roster row, or Agent")
+        # Any relationship associates by its real session id, no fabrication.
         session_id = text(agent.session_id, "session ID")
-        if agent.relationship == "child":
-            if not agent.child_id or agent.session_dir is None:
-                raise ValueError("A child link requires child_id and a session directory")
+        if agent.name is None:
+            # One actual daemon lookup; the session id is the only fallback.
+            summary = await rlm.host_request("agent_observe.get", {"target": session_id})
+            observed = summary.get("agent") if isinstance(summary, dict) else None
+            resolved = observed.get("sessionName") if isinstance(observed, dict) else None
+            name = text(resolved if isinstance(resolved, str) and resolved.strip()
+                        else session_id, "agent name", 160)
+        else:
+            name = text(agent.name, "agent name", 160)
+        if agent.relationship == "child" and agent.child_id and agent.session_dir is not None:
             agent_value = {"taskId": task_id,
                            "rlmChildId": text(agent.child_id, "child ID"),
                            "sessionDir": text(str(agent.session_dir), "session directory", 4096),
                            "sessionId": session_id,
-                           "name": text(agent.name, "agent name", 160), "role": "worker"}
+                           "name": name, "role": "worker"}
             return await self._deliver(Report.create("assign", agent=agent_value))
-        if agent.relationship in ("parent", "sibling"):
-            if agent.child_id:
-                raise TypeError("child_id belongs to child agents")
-            agent_value = {"taskId": task_id,
-                           "sessionId": session_id,
-                           "name": text(agent.name, "agent name", 160), "role": "worker"}
-            return await self._deliver(Report.create("associate", agent=agent_value))
-        raise TypeError("Unknown agent relationship")
+        if agent.relationship not in ("parent", "sibling", "child"):
+            raise TypeError("Unknown agent relationship")
+        agent_value = {"taskId": task_id, "sessionId": session_id,
+                       "name": name, "role": "worker"}
+        return await self._deliver(Report.create("associate", agent=agent_value))
 
     async def _deliver(self, report: Report) -> Any:
         """Deliver a report; after uncertain delivery, redeliver the exact same event."""

@@ -61,8 +61,9 @@ await task.link(agent)  # rlm.spawn/rlm.create_session handle or list_subagents 
   `rlm.list_subagents()` row, or the frozen `Agent` shape. Agents link as an
   association by their real `session_id` (any relationship; children also
   carry `child_id`/`session_dir`); an Agent without a session id is rejected
-  — no fabricated ids or names. Native spawn handles record the queued child
-  identity before its session id exists. Linking records metadata only; it
+  — no fabricated ids. A missing name resolves from one agent_observe.get
+  daemon lookup; the session id is the only fallback. Native spawn handles
+  record the queued child identity before its session id exists. Linking records metadata only; it
   never spawns, messages, or grants access.
 
 Snapshots are immutable; every operation returns a fresh snapshot of current
