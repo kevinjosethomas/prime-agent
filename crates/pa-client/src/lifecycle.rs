@@ -1823,13 +1823,17 @@ mod tests {
             DaemonClientSession::start(config(std::path::Path::new("/dev/null")))
                 .await
                 .unwrap();
-        // Kill the driver task WITHOUT the settle: the handle is replaced by
-        // a probe that aborts the real driver (no mark, no memo).
+        // The panic shape: the real driver is aborted (no settle, no
+        // mark), and a replacement task that DIES IN A PANIC keeps a
+        // monitorable handle in the state.
         {
             let mut driver = session.state.driver.lock().await;
             if let Some(handle) = driver.handle.take() {
                 handle.abort();
             }
+            driver.handle = Some(tokio::spawn(async {
+                panic!("the session driver failed");
+            }));
         }
         let first_result = tokio::time::timeout(Duration::from_secs(5), session.stop())
             .await
