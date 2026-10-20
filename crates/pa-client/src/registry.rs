@@ -420,20 +420,22 @@ mod tests {
     fn snapshot_adoption_is_monotonic_and_dual_shape() {
         let mut registry = AttachmentRegistry::default();
         registry.register("s1", vec![]);
-        let token = registry.attempt_token("s1");
-        // The generation shape, carrying its session id.
+        // The generation shape, carrying its session id (the attempt's own
+        // capabilities recorded).
+        let first = registry.attempt_token("s1");
         assert!(registry.record_attach(
             "s1",
             &["attach_snapshot".to_string()],
             &json!({ "lastEventCursor": { "generation": "g", "sequence": 4 } }),
-            token
+            first
         ));
-        // A stale snapshot never rolls back.
+        // A stale snapshot never rolls back — its own attempt token.
+        let stale = registry.attempt_token("s1");
         assert!(registry.record_attach(
             "s1",
             &[],
             &json!({ "lastEventCursor": { "generation": "g", "sequence": 2 } }),
-            token
+            stale
         ));
         let (_, entry) = registry.restore_entries().remove(0);
         assert_eq!(entry.cursor.as_ref().unwrap().sequence, Some(4));
@@ -441,12 +443,13 @@ mod tests {
             entry.cursor.as_ref().unwrap().active_session_id.as_deref(),
             Some("s1")
         );
-        // The legacy shape.
+        // The legacy shape — its own attempt token.
+        let legacy = registry.attempt_token("s1");
         assert!(registry.record_attach(
             "s1",
             &[],
             &json!({ "lastEventSequence": 7 }),
-            token
+            legacy
         ));
         let (_, entry) = registry.restore_entries().remove(0);
         assert_eq!(entry.cursor.as_ref().unwrap().event_sequence, Some(7));
