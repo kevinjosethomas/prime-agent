@@ -40,15 +40,12 @@ class AttachImageTest(unittest.TestCase):
                     asyncio.run(attach_image(str(target)))
 
     def test_rejects_oversized_sources_before_pil(self) -> None:
-        class FakeStat:
-            st_size = 100
-
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "big.png"
-            target.write_bytes(PNG_HEADER)
+            target.write_bytes(PNG_HEADER + b"\x00" * 4096)
             with patch.object(rlm_module, "host_request", self._vision_host()), patch.object(
                 attach_image_module, "_MAX_SOURCE_IMAGE_BYTES", 10
-            ), patch.object(attach_image_module.Path, "stat", return_value=FakeStat()):
+            ):
                 with self.assertRaisesRegex(ValueError, "must be under"):
                     asyncio.run(attach_image(str(target)))
 

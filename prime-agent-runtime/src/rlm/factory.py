@@ -3844,7 +3844,7 @@ class _FactoryNamespace:
     async def resume(self, run_id: str) -> dict[str, Any]:
         return await resume_factory(run_id)
 
-    def graph(self, ref: str | None = None) -> dict[str, Any]:
+    async def graph(self, ref: str | None = None) -> dict[str, Any]:
         return graph_factory(ref)
 
     async def watch(self, run_id: str, timeout: float = 0.0) -> dict[str, Any]:

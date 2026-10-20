@@ -30,7 +30,7 @@ class EditTest(unittest.TestCase):
             target.write_text("same\nsame\n", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "need exactly 1"):
                 asyncio.run(edit(str(target), "same", "other"))
-        with self.assertRaisesRegex(ValueError, "not found"):
+        with self.assertRaises(FileNotFoundError):
             asyncio.run(edit("/nonexistent-path-xyz/file.txt", "nope", "other"))
 
     def test_emits_the_diff_display_event(self) -> None:

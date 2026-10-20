@@ -128,15 +128,18 @@ class McpRegistryTest(unittest.TestCase):
             await asyncio.sleep(1.0)
             return []
 
-        with mock.patch.object(mcp._Registry, "tools", failing_listing):
-            result = run(mcp.status(["broken"], 60_000.0))
-        self.assertIsNone(result[0]["tools"])
-        self.assertEqual(result[0]["error"], "RuntimeError: no config for broken")
+        async def scenario():
+            with mock.patch.object(mcp._Registry, "tools", failing_listing):
+                result = await mcp.status(["broken"], 60_000.0)
+            self.assertIsNone(result[0]["tools"])
+            self.assertEqual(result[0]["error"], "RuntimeError: no config for broken")
 
-        with mock.patch.object(mcp._Registry, "tools", slow_listing):
-            result = run(mcp.status(["slow"], 50.0))
-        self.assertIsNone(result[0]["tools"])
-        self.assertIn("TimeoutError", result[0]["error"])
+            with mock.patch.object(mcp._Registry, "tools", slow_listing):
+                result = await mcp.status(["slow"], 50.0)
+            self.assertIsNone(result[0]["tools"])
+            self.assertIn("TimeoutError", result[0]["error"])
+
+        run(scenario())
 
     def test_schema_alias_and_exact_names(self):
         schema = {"type": "object", "properties": {"x": {"const": 1}}}
