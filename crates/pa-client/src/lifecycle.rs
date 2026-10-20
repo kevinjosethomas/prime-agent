@@ -2158,7 +2158,12 @@ mod tests {
                 .unwrap();
         // The OLD capture through the REAL before() path (the registry-side
         // mint under the lock, exactly as a request takes it).
-        session.state.registry.lock().unwrap().register("s1", vec![]);
+        session
+            .state
+            .registry
+            .lock()
+            .unwrap()
+            .register("s1", vec![]);
         let attach = DaemonCommand::Attach {
             id: None,
             active_session_id: "s1".to_string(),
@@ -2292,12 +2297,11 @@ mod tests {
         // (tokio's RwLock hands the lock to the first queued waiter — both
         // parked parties keep being polled, no orphaned waiter).
         drop(guard);
-        let (stop_result, installed) =
-            tokio::time::timeout(Duration::from_secs(10), async {
-                tokio::join!(stop, install)
-            })
-            .await
-            .expect("the pinned stop and the install both settle");
+        let (stop_result, installed) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(stop, install)
+        })
+        .await
+        .expect("the pinned stop and the install both settle");
         stop_result.expect("the stop completed honestly");
         assert!(
             installed.is_none(),
@@ -2339,7 +2343,10 @@ mod tests {
             })
             .await
             .unwrap_err();
-        assert!(crate::daemon_client::is_command_not_sent(&error), "unexpected: {error}");
+        assert!(
+            crate::daemon_client::is_command_not_sent(&error),
+            "unexpected: {error}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
