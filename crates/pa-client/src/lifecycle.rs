@@ -370,13 +370,16 @@ impl DaemonClientSession {
         // resolves now — no live pending is ever awaited. CLONE, not take
         // (item 5): the SLOT retains the owner for the whole cleanup, so a
         // cancelled stop mid-join never drops the last TaskSet Arc.
+        eprintln!("DBG stop: marks done");
         let retained = {
             let slot = self.state.client.read().await;
             slot.as_ref().cloned()
         };
+        eprintln!("DBG stop: retained cloned");
         if let Some(client) = retained.as_ref() {
             client.shutdown();
         }
+        eprintln!("DBG stop: shutdown done");
         // The completion authority: the driver's mark, raced against the
         // MONITORED handle (borrowed in place — a cancelled stop retains
         // everything). The first observation of the handle's end memoizes
@@ -816,17 +819,22 @@ async fn driver_run(
     // neither survives the settle. Every stop returns only after the mark
     // below flips.
     if let Some(state) = session.upgrade() {
+        eprintln!("DBG settle: start");
         state.stopping.store(true, Ordering::SeqCst);
         state.registry.lock().unwrap().bump_epoch();
         let handles = std::mem::take(&mut restore_handles);
+        eprintln!("DBG settle: handles {} taken", handles.len());
         for handle in &handles {
             handle.abort();
         }
         for handle in handles {
             let _ = handle.await;
         }
+        eprintln!("DBG settle: pre-take effective={}", client.is_some());
         let mut effective = client.take();
+        eprintln!("DBG settle: pre-residue-write");
         let residue = state.client.write().await.take();
+        eprintln!("DBG settle: residue taken");
         if effective.is_none() {
             effective = residue;
         }
