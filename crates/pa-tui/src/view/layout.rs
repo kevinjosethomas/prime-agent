@@ -259,9 +259,9 @@ impl AgentView {
             // chat's last child is an agent message).
             ChatEntry::BashExecution(card) => !card.suppress_leading_space,
             ChatEntry::Assistant(_) => preceded_by_tool_activity,
-            ChatEntry::Status { .. }
-            | ChatEntry::InjectedPrompt(_)
-            | ChatEntry::CustomPanel(_) => false,
+            ChatEntry::Status { .. } | ChatEntry::InjectedPrompt(_) | ChatEntry::CustomPanel(_) => {
+                false
+            }
         }
     }
 

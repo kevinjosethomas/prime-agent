@@ -532,27 +532,15 @@ impl PrintGoalSurface {
             if let Some(message) = self.take_threshold_continuation().await {
                 // A goal that went inactive mid-turn drops its queued continuation.
                 if engine.goal_state().await.status == pa_types::goal::GoalStatus::Active {
-                    self.run_queued_turn(
-                        engine,
-                        boundary,
-                        model,
-                        api_key.clone(),
-                        &message,
-                    )
-                    .await?;
+                    self.run_queued_turn(engine, boundary, model, api_key.clone(), &message)
+                        .await?;
                     ran = true;
                     continue;
                 }
             }
             if let Some(steer) = self.take_budget_steer().await {
-                self.run_queued_turn(
-                    engine,
-                    boundary,
-                    model,
-                    api_key.clone(),
-                    &steer,
-                )
-                .await?;
+                self.run_queued_turn(engine, boundary, model, api_key.clone(), &steer)
+                    .await?;
                 ran = true;
                 continue;
             }
@@ -651,9 +639,7 @@ impl PrintGoalSurface {
             .map_err(|error| format!("{error:#}"))?;
         engine.session.agent().wait_for_idle().await;
         self.emit_action_drained().await;
-        boundary
-            .run_at_settled_turn(engine, model, api_key)
-            .await?;
+        boundary.run_at_settled_turn(engine, model, api_key).await?;
         Ok(())
     }
 }
