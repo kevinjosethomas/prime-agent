@@ -209,9 +209,7 @@ pub fn kernel_python_skills(skills: &[Skill]) -> Vec<KernelPythonSkill> {
 /// Build the kernel provisioner for a session: host handlers for the goal/heartbeat bridge
 /// plus the pre-imported skills. The session's agent dir is propagated into the kernel env
 /// (`PRIME_AGENT_CODING_AGENT_DIR`): an embedding host whose ambient env differs must not
-/// leak its own paths into the kernel (#109). A persistent session's artifact dir is
-/// likewise propagated (`RLM_SESSION_DIR` + `RLM_HARNESS_STATE_DIR`), so factory reads
-/// resolve the session-local store. `cwd` is the SESSION's working directory.
+/// leak its own paths into the kernel (#109). `cwd` is the SESSION's working directory.
 /// `shell_path` is the session-start-resolved kernel shell: an invalid `shellPath` fails
 /// `create_session`, not the kernel boot.
 #[allow(clippy::too_many_arguments)] // one wiring funnel, same style as AgentSession::from_session_arc
@@ -231,7 +229,7 @@ pub fn kernel_provisioner(
     on_unavailable_skills: Option<crate::kernel::provisioner::UnavailableSkillsCallback>,
     on_bootstrap_result: Option<crate::kernel::provisioner::KernelBootstrapResultHandler>,
 ) -> Arc<KernelProvisioner> {
-    let mut env = HashMap::with_capacity(4);
+    let mut env = HashMap::with_capacity(2);
     env.insert(
         "PRIME_AGENT_CODING_AGENT_DIR".to_string(),
         agent_dir.to_string_lossy().to_string(),
@@ -244,17 +242,6 @@ pub fn kernel_provisioner(
             crate::kernel::tasks_reporter::TASKS_REPORTER_ENV.to_string(),
             reporter,
         );
-    }
-    for (key, value) in [
-        ("RLM_SESSION_DIR", session_artifact_dir.clone()),
-        (
-            "RLM_HARNESS_STATE_DIR",
-            crate::refinement::get_local_harness_state_dir(session_artifact_dir.as_deref()),
-        ),
-    ] {
-        if let Some(value) = value {
-            env.insert(key.to_string(), value.to_string_lossy().to_string());
-        }
     }
     if let Some(serper_api_key) = serper_api_key {
         env.insert("SERPER_API_KEY".to_string(), serper_api_key);

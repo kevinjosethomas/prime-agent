@@ -131,7 +131,6 @@ pub struct SessionEngine {
     /// request surface over the kernel's factory runs, built from the
     /// session facts captured in `create_session` (the #3184 capture
     /// pattern) and reached through [`SessionEngine::factory_activity`].
-    pub factory_host: super::factory_host::FactoryHost,
     /// The progress-note store the `rlm.progress.note` handler throttles
     /// into; the embedding mirrors the Arc for sync reads.
     pub rlm_progress_notes: std::sync::Arc<super::rlm_host::RlmProgressNotes>,
@@ -258,10 +257,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // Request timing: the settings half of the flag is read once here
     // (`settings` moves into the loader); the `PI_REQUEST_TIMING` half stays live.
     let request_timing_settings = settings.get_request_timing();
-    // Captured before `settings` moves into the resource loader: the
-    // factory host bridge's preflight facts (the daemon `allowedModels`
-    // pin), like the request-timing snapshot above.
-    let factory_allowed_models = settings.get_allowed_models();
     let (mcp_skill_overrides, mcp_generic_servers, built_manager) =
         mcp_gating(&settings, config.agent_dir.clone()).await?;
     let mcp_manager = config
@@ -372,8 +367,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 .as_deref()
                 .and_then(super::session_artifact_dir_for_log)
         });
-    let local_harness_dir =
-        crate::refinement::get_local_harness_state_dir(session_artifact_dir.as_deref());
     // Kernel boots (duration, cold/revived, outcome) count into the
     // session counters.
     let on_bootstrap_result = config.telemetry.as_ref().map(|_| {
@@ -554,10 +547,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         prompt_vision_capable,
     );
 
-    // Captured before the loop wiring moves the session model: the
-    // factory host bridge's config (the #3184 capture pattern).
-    let factory_local_harness_dir = local_harness_dir.clone();
-    let factory_session_model = Some(model.clone());
     let (existing_messages, has_thinking_entry, has_service_tier_entry) = {
         let session = wiring.session.lock().await;
         let messages = super::compact_session::rebuilt_context_after_compaction(&session);
@@ -794,19 +783,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         wiring.rlm_usage.set_telemetry(telemetry.clone());
     }
     let goal_driver = wiring.runtime.goal_driver().clone();
-    // The factory host bridge: registered from `create_session` (the #3184
-    // pattern), so the daemon/TUI factory surface resolves against this
-    // session's harness dirs, model registry, and the allowlist pin. The
-    // kernel owns the runs; the bridge prefights and tunnels. Captured
-    // before the loop wiring moves the session model.
-    let factory_host =
-        super::factory_host::FactoryHost::new(super::factory_host::FactoryHostConfig {
-            agent_dir: config.agent_dir.clone(),
-            global_harness_dir: crate::refinement::get_global_harness_state_dir(&config.agent_dir),
-            local_harness_dir: factory_local_harness_dir,
-            session_model: factory_session_model,
-            allowed_models: factory_allowed_models,
-        });
     Ok(SessionEngine {
         session,
         skills: resources.skills,
@@ -820,7 +796,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         turn_boundary,
         telemetry,
         rlm_usage: wiring.rlm_usage,
-        factory_host,
         rlm_progress_notes: Arc::clone(&wiring.rlm.notes),
         provisioner,
     })
@@ -899,17 +874,14 @@ impl SessionEngine {
     }
 
     /// One factory activity over this session's live kernel: the `/factory`
-    /// view's bridge lane (graph/status/watch/run/stop/resume). A `run`
-    /// prefights the spec's declared models first (allowlist pin, request
-    /// auth) so a doomed run fails before any child spawns; then the
+    /// view's bridge lane (graph/status/watch/run/stop/resume). The
     /// out-of-band frame carries the request into the kernel's executor,
-    /// which owns the run registry.
+    /// which owns the run registry and the machine library resolution.
     ///
     /// # Errors
     ///
-    /// Returns an error when the arguments are invalid, the preflight
-    /// fails, the session has no running kernel, or the kernel request
-    /// fails or does not settle.
+    /// Returns an error when the arguments are invalid, the session has no
+    /// running kernel, or the kernel request fails or does not settle.
     pub async fn factory_activity(
         &self,
         action: &str,
@@ -920,23 +892,6 @@ impl SessionEngine {
         let request = super::factory_host::FactoryActivityRequest::parse(
             action, run_id, spec_id, timeout_ms,
         )?;
-        if request.action == "run" {
-            let spec_id = request
-                .spec_id
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("factory activity run requires specId"))?;
-            // The preflight reads the harness states, the model catalog,
-            // and the auth caches from disk — blocking work off the
-            // executor (the daemon's established settings-read posture:
-            // `spawn_blocking`, never the async lane), so a stalled
-            // filesystem can never stall the worker's other activity.
-            let host = self.factory_host.clone();
-            let spec_id = spec_id.to_string();
-            let preflight = tokio::task::spawn_blocking(move || host.preflight_run(&spec_id))
-                .await
-                .map_err(|join| anyhow::anyhow!("factory run preflight join failed: {join}"))?;
-            preflight?;
-        }
         let manager = self
             .provisioner
             .manager()
