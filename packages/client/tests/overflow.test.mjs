@@ -38,45 +38,50 @@ test('a PARKED nextFrame pull observes the sticky overflow branch', async () => 
   const socketPath = tmpSocket('overflow-parked');
   const stop = await startMock(socketPath, 'flood-trigger');
   const connection = await DaemonConnection.connect(socketPath, { frameBuffer: 1 });
-  // Readiness barrier: the gated mock sent hello ONLY; the queue is empty
-  // and stays empty until the trigger, so every parked pull below parks
-  // with a PROVABLY empty queue.
-  await connection.request({
-    type: 'get_connection_state',
-    activeSessionId: 'wire',
-    floodTrigger: true,
-  }).catch((error) => error);
-  let witnessed = 0;
-  for (let attempt = 0; attempt < 512 && witnessed === 0; attempt += 1) {
-    // Both handlers attach at creation: the parked pull's settlement
-    // never passes through an unhandled window.
-    const pull = connection
-      .nextFrame()
-      .then(
-        (frame) => ({ frame }),
-        (error) => ({ error }),
-      );
-    // The single-consumer probe proves the pull holds the pending poll:
-    // a concurrent pull MUST reject while the first is parked.
-    const probe = connection
-      .nextFrame()
-      .then(
-        () => {
-          throw new Error('the probe should have rejected');
-        },
-        (error) => error,
-      );
-    const probeError = await probe;
-    assert.ok(/single-consumer/.test(probeError.message));
-    const outcome = await pull;
-    if (outcome.error !== undefined) {
-      assert.ok(outcome.error instanceof OverflowError);
-      witnessed += 1;
-    }
-    // A pre-mark frame is a legal interleave: repark with a fresh
-    // proven-pending pull and keep witnessing.
-  }
-  assert.ok(witnessed > 0, 'no proven-pending pull ever witnessed the overflow');
+  // The gated mock sent hello ONLY: the queue is empty and the connection
+  // live. Park the pull FIRST - provably pending before any flood.
+  const parked = connection
+    .nextFrame()
+    .then(
+      (frame) => ({ frame }),
+      (error) => ({ error }),
+    );
+  // The single-consumer probe proves the parked pull holds the pending
+  // poll: a concurrent pull MUST reject while the first is parked.
+  const probeError = await connection
+    .nextFrame()
+    .then(
+      () => {
+        throw new Error('the probe should have rejected');
+      },
+      (error) => error,
+    );
+  assert.ok(/single-consumer/.test(probeError.message));
+  // Only NOW the trigger command starts the flood (its response is
+  // deliberately delayed): the in-flight trigger settles Uncertain with
+  // cause overflow, and the PROVEN-pending parked pull settles through
+  // the sticky terminal branch.
+  const trigger = connection
+    .request({
+      type: 'get_connection_state',
+      activeSessionId: 'wire',
+      floodTrigger: true,
+    })
+    .then(
+      (value) => value,
+      (error) => error,
+    );
+  const triggerSettled = await trigger;
+  assert.ok(
+    triggerSettled instanceof UncertainError && triggerSettled.cause === 'overflow',
+    `trigger class: ${triggerSettled?.kind}:${triggerSettled?.cause}`,
+  );
+  const parkedOutcome = await parked;
+  assert.ok(
+    parkedOutcome.error instanceof OverflowError,
+    `parked outcome: ${JSON.stringify(parkedOutcome)}`,
+  );
+  assert.ok(parkedOutcome.error instanceof OverflowError);
   // Sticky thereafter.
   await assert.rejects(connection.nextFrame(), (error) => error instanceof OverflowError);
   assert.equal(connection.currentStatus().type, 'overflow');

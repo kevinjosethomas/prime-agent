@@ -77,6 +77,9 @@ const server = net.createServer((socket) => {
   if (mode === 'flood') {
     floodNow(socket);
   }
+  // The flood timer can outlive a torn-down connection: socket write
+  // errors after the client drops are expected, never fatal.
+  socket.on('error', () => {});
   socket.on('data', (chunk) => {
     buffer += chunk;
     let newline;
