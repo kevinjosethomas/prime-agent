@@ -355,9 +355,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // serve live views per request.
     crate::mcp::McpManager::register_host_handlers(&mcp_manager, &mut handlers);
     let turn_boundary = Arc::new(super::turn_boundary::TurnBoundaryRequests::new());
-    let _ = turn_boundary
-        .refinement_settings
-        .set(refinement_settings.reopen());
     turn_boundary.register_model_info_handler(&mut handlers, model_info.clone());
     let keep_recent_tokens = compaction_settings
         .keep_recent_tokens
@@ -380,12 +377,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         });
     let local_harness_dir =
         crate::refinement::get_local_harness_state_dir(session_artifact_dir.as_deref());
-    // The only sessions whose `refine.*` host requests register and the
-    // compact-trigger auto-refine may run for.
+    // The only sessions the compact-trigger auto-refine may run for.
     let auto_refine_allowed = config.rlm_depth.unwrap_or(0) == 0 && local_harness_dir.is_some();
-    if auto_refine_allowed {
-        turn_boundary.register_refine_handlers(&mut handlers);
-    }
     // Kernel boots (duration, cold/revived, outcome) count into the
     // session counters.
     let on_bootstrap_result = config.telemetry.as_ref().map(|_| {
@@ -581,10 +574,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             .iter()
             .any(|name| name == PYTHON_TOOL_NAME),
         include_shell_examples: active_tool_names.iter().any(|name| name == "bash"),
-        include_refine: resources.skills.iter().any(|skill| {
-            !skill.disable_model_invocation
-                && skill.name == crate::prompts::system_prompt::REFINE_SKILL_NAME
-        }),
+        include_refine: false,
     };
     let (existing_messages, has_thinking_entry, has_service_tier_entry) = {
         let session = wiring.session.lock().await;
