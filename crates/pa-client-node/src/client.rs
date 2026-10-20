@@ -286,7 +286,7 @@ impl Inner {
                 *gate = CloseState::Closing;
                 let inner = Arc::clone(self);
                 bridge(async move {
-                    inner.close_chain(reason).await;
+                    inner.close_chain().await;
                 });
             }
         }
