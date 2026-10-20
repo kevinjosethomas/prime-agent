@@ -1,108 +1,45 @@
-//! NAPI spike for the PR3b Node adapter. NOT the final API.
+//! Prime Agent's Node-API binding crate: the native addon Node 22 and
+//! Electron 44 hosts load to talk to the daemon through the shared
+//! `pa-client` transport.
 //!
-//! Proves, on the real target toolchain: (1) the isolated workspace resolves
-//! the pa-client/pa-types path dependencies and their workspace-inherited
-//! deps from the root Cargo.toml; (2) the pinned napi-rs 3.x line builds;
-//! (3) async fns ride the tokio_rt runtime; (4) ThreadsafeFunctions deliver
-//! non-blocking and release cleanly (drop-release, no abort) so Node exits
-//! naturally after teardown; (5) the `unsafe_code = "forbid"` lint question
-//! for macro output.
+//! Scope rules (the review's hard constraints):
+//!
+//! - **Runtime locality:** every core future is bridged onto this crate's
+//!   shared tokio runtime ([`runtime::bridge`]); the napi async fns only
+//!   await the bridge's join handle. `pa-client`'s internal reader/writer
+//!   task spawns therefore always land on the binding-owned reactor, never
+//!   on napi's private `tokio_rt`.
+//! - **Frame delivery is pull-based and fail-closed:** one bounded queue
+//!   (1024 frames by default, a COUNT cap — with the 64 MiB opt-in frame
+//!   cap the worst-case queue memory is `frameBuffer * maxFrameBytes`), a
+//!   single-consumer `nextFrame`, and a terminal `Overflow` error when the
+//!   queue fills — frames are never dropped or coalesced. The core's tap
+//!   channel is unbounded by design (see `pa-client`): the pump draining
+//!   promptly is the only backpressure transfer point, and no hard bound on
+//!   the transient core-side backlog is claimed.
+//! - **Ordering:** tap frames arrive in per-socket wire order; `nextFrame`
+//!   yields frames interleaved across sockets with NO cross-socket ordering
+//!   claimed (the 3c1 tap contract carries over verbatim).
+//! - **Errors are structural:** the binding preserves `pa-client`'s
+//!   `NotSent`/`Uncertain`/`Rejected` classes through a JSON payload the
+//!   TypeScript wrapper decodes into typed errors; in-flight requests torn
+//!   down by overflow settle as `Uncertain` with cause `overflow` (never
+//!   re-classified as the channel's `Overflow`), new requests after
+//!   overflow fail as `NotSent` with the overflow cause surfaced.
+//! - **Interim teardown honesty (pre shutdown-PR):** explicit `close()`
+//!   stops the binding's pumps, wakes every pending pull, severs the JS
+//!   queues, and calls core `close()`. Synchronous joining of the core's
+//!   reader/writer tasks is NOT claimed here — that is the shutdown-core
+//!   work this binding will call once it lands, and the crate is explicitly
+//!   marked non-mergeable until then. Dropping the JS handle without
+//!   `close()` leaks the connection (runtime threads + core tasks persist
+//!   until process exit); the napi finalizer performs no core teardown.
+//!
+//! See `README.md` for the crate's scope, non-goals, and public API.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+mod client;
+mod errors;
+mod meta;
+mod runtime;
 
-/// The binding's own tokio runtime: a sync napi fn thread has no ambient
-/// reactor, and napi-rs keeps its shared runtime module private. Detached
-/// pumps (and, in the real adapter, every pa-client future bridged here so
-/// its internal task spawns land on the same reactor) run on this runtime;
-/// its parked worker threads never hold the Node event loop.
-fn runtime() -> &'static tokio::runtime::Runtime {
-    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-    RUNTIME.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build()
-            .expect("the client-node runtime builds")
-    })
-}
-
-use napi::bindgen_prelude::*;
-use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
-use napi_derive::napi;
-use pa_client::daemon_client::{DaemonClientOptions, DEFAULT_REQUEST_TIMEOUT_MS};
-
-#[napi(object)]
-pub struct SpikeMeta {
-    pub version: String,
-    pub default_request_timeout_ms: u32,
-    pub pa_client_options_linked: bool,
-}
-
-#[napi]
-/// Build-boundary metadata plus a pa-client dependency-resolution proof.
-pub fn spike_metadata() -> SpikeMeta {
-    SpikeMeta {
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        default_request_timeout_ms: u32::try_from(DEFAULT_REQUEST_TIMEOUT_MS)
-            .expect("the default request timeout fits a u32"),
-        pa_client_options_linked: DaemonClientOptions::default().raw_tap.is_none(),
-    }
-}
-
-#[napi]
-/// Proves async fns work on the napi-rs tokio runtime.
-pub async fn spike_delay(ms: u32) -> u32 {
-    tokio::time::sleep(Duration::from_millis(u64::from(ms))).await;
-    ms
-}
-
-/// A periodic ThreadsafeFunction ticker whose handle stops it again. The
-/// Node test asserts ticks arrive, and that after `stop()` the process ends
-/// naturally: napi-rs 3 releases a ThreadsafeFunction when the last Rust
-/// reference drops, so teardown is "drop every reference", not "abort".
-#[napi]
-pub struct SpikeTicker {
-    stop: Arc<AtomicBool>,
-    tsfn: Option<Arc<ThreadsafeFunction<u32>>>,
-}
-
-#[napi]
-impl SpikeTicker {
-    #[napi(constructor)]
-    pub fn new(callback: ThreadsafeFunction<u32>) -> Result<Self> {
-        // A ThreadsafeFunction param is napi-rs' direct conversion path: the
-        // JS function arrives already bound with the struct's callee-handled
-        // defaults (call(Ok(value), mode)). Not Clone in v3 — the docs' idiom
-        // wraps it in Arc; the last drop releases the underlying function.
-        let tsfn = Arc::new(callback);
-        let task_tsfn = Arc::clone(&tsfn);
-        let stop = Arc::new(AtomicBool::new(false));
-        let task_stop = Arc::clone(&stop);
-        // Runs on the napi-rs tokio_rt runtime; the loop exits on the stop
-        // flag and drops its TSFN clone, so a stopped ticker leaves nothing
-        // holding the Node event loop.
-        runtime().spawn(async move {
-            let mut tick = 0_u32;
-            while !task_stop.load(Ordering::SeqCst) {
-                task_tsfn.call(Ok(tick), ThreadsafeFunctionCallMode::NonBlocking);
-                tick = tick.saturating_add(1);
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        });
-        Ok(Self {
-            stop,
-            tsfn: Some(tsfn),
-        })
-    }
-
-    #[napi]
-    pub fn stop(&mut self) -> Result<()> {
-        self.stop.store(true, Ordering::SeqCst);
-        // Drop the binding's reference: with the task's clone gone one loop
-        // iteration later, the TSFN releases and the event loop can drain.
-        self.tsfn = None;
-        Ok(())
-    }
-}
+pub use meta::client_metadata;
