@@ -456,6 +456,7 @@ enum RestoreOutcome {
 /// connection — the clone is what the final join drains. Every state
 /// (connect, backoff sleep, service) selects cancellation and the
 /// consumer-closed signal; a future is never lost to a lost wake-up.
+#[allow(clippy::too_many_lines)]
 async fn driver_run(
     session: std::sync::Weak<SessionState>,
     config: LifecycleConfig,
@@ -501,8 +502,8 @@ async fn driver_run(
             tokio::pin!(connect);
             // The window's deadline is armed against the connect itself: a
             // hung hello cannot outlive a bounded recovery.
-            let result = match deadline {
-                Some(expiry) => tokio::select! {
+            let result = if let Some(expiry) = deadline {
+                tokio::select! {
                     result = &mut connect => result,
                     _ = cancel.changed() => break,
                     () = state.events.closed() => break,
@@ -510,12 +511,13 @@ async fn driver_run(
                         expire(&state, kind);
                         break;
                     }
-                },
-                None => tokio::select! {
+                }
+            } else {
+                tokio::select! {
                     result = &mut connect => result,
                     _ = cancel.changed() => break,
                     () = state.events.closed() => break,
-                },
+                }
             };
             match result {
                 Ok((fresh, _legacy_events)) => {
@@ -850,7 +852,11 @@ mod tests {
             frames: Vec<Value>,
             hold_attach: bool,
             drop_first_after_release: bool,
-        ) -> (Self, std::path::PathBuf, tokio::sync::Notify) {
+        ) -> (
+            Self,
+            std::path::PathBuf,
+            std::sync::Arc<tokio::sync::Notify>,
+        ) {
             let socket = dir.path().join("d.sock");
             let listener = UnixListener::bind(&socket).unwrap();
             let commands = Arc::new(Mutex::new(Vec::new()));
@@ -1162,6 +1168,7 @@ mod tests {
         let list = tokio::time::timeout(Duration::from_secs(10), list)
             .await
             .expect("the concurrent request settled")
+            .unwrap()
             .unwrap();
         assert_eq!(list["ok"], true);
         session.stop().await;
@@ -1249,7 +1256,7 @@ mod tests {
                 }
             });
         }
-        let (session, mut events) = DaemonClientSession::start(config(&socket)).await.unwrap();
+        let (session, events) = DaemonClientSession::start(config(&socket)).await.unwrap();
         tokio::time::timeout(Duration::from_secs(5), async {
             while !accepted.load(Ordering::SeqCst) {
                 tokio::time::sleep(Duration::from_millis(10)).await;
