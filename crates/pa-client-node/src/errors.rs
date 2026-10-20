@@ -35,7 +35,7 @@ pub(crate) struct ErrorPayload {
 }
 
 /// Rejection with the `NotSent` class.
-pub(crate) fn not_sent(message: String) -> napi::Error {
+pub(crate) fn not_sent(message: String) -> ErrorPayload {
     payload(ErrorPayload {
         kind: "NotSent",
         message,
@@ -45,7 +45,7 @@ pub(crate) fn not_sent(message: String) -> napi::Error {
 }
 
 /// Rejection with the `Uncertain` class and a teardown cause.
-pub(crate) fn uncertain(message: String, cause: Option<&'static str>) -> napi::Error {
+pub(crate) fn uncertain(message: String, cause: Option<&'static str>) -> ErrorPayload {
     payload(ErrorPayload {
         kind: "Uncertain",
         message,
@@ -58,7 +58,7 @@ pub(crate) fn uncertain(message: String, cause: Option<&'static str>) -> napi::E
 pub(crate) fn rejected(
     message: String,
     info: Option<serde_json::Value>,
-) -> napi::Error {
+) -> ErrorPayload {
     payload(ErrorPayload {
         kind: "Rejected",
         message,
@@ -68,7 +68,7 @@ pub(crate) fn rejected(
 }
 
 /// Rejection with the `NotSent` class and a teardown cause surfaced.
-pub(crate) fn not_sent_cause(cause: Option<&'static str>) -> napi::Error {
+pub(crate) fn not_sent_cause(cause: Option<&'static str>) -> ErrorPayload {
     let cause_text = match cause {
         Some("overflow") => "the connection was torn down after the frame queue overflowed",
         _ => "the connection was torn down",
@@ -82,7 +82,7 @@ pub(crate) fn not_sent_cause(cause: Option<&'static str>) -> napi::Error {
 }
 
 /// Rejection with the terminal `Overflow` class.
-pub(crate) fn overflow() -> napi::Error {
+pub(crate) fn overflow() -> ErrorPayload {
     payload(ErrorPayload {
         kind: "Overflow",
         message: "the frame queue overflowed and the connection was torn down".to_string(),
@@ -92,7 +92,7 @@ pub(crate) fn overflow() -> napi::Error {
 }
 
 /// Rejection with the `Transport` class.
-pub(crate) fn transport(message: String) -> napi::Error {
+pub(crate) fn transport(message: String) -> ErrorPayload {
     payload(ErrorPayload {
         kind: "Transport",
         message,
@@ -101,7 +101,14 @@ pub(crate) fn transport(message: String) -> napi::Error {
     })
 }
 
-fn payload(payload: ErrorPayload) -> napi::Error {
+fn payload(payload: ErrorPayload) -> ErrorPayload {
+    payload
+}
+
+/// The napi-side conversion: `napi::Error` carries JS references in this
+/// napi-rs line and is not `Send`, so payloads cross runtime channels and
+/// only the napi fn itself constructs the actual error.
+pub(crate) fn napi_error(payload: ErrorPayload) -> napi::Error {
     napi::Error::new(
         napi::Status::GenericFailure,
         serde_json::to_string(&payload).unwrap_or_else(|_| payload.kind.to_string()),
@@ -109,7 +116,7 @@ fn payload(payload: ErrorPayload) -> napi::Error {
 }
 
 /// Classify one `anyhow` chain from a core request per the transport rules.
-pub(crate) fn classify(error: anyhow::Error, cause: Option<&'static str>) -> napi::Error {
+pub(crate) fn classify(error: anyhow::Error, cause: Option<&'static str>) -> ErrorPayload {
     if is_command_not_sent(&error) {
         not_sent(error.to_string())
     } else if is_command_result_uncertain(&error) {

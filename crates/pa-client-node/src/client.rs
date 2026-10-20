@@ -38,7 +38,9 @@ use pa_types::daemon::DaemonCommand;
 use serde_json::Value;
 use tokio::sync::{mpsc, watch, Notify};
 
-use crate::errors::{classify, not_sent, not_sent_cause, overflow, transport, uncertain};
+use crate::errors::{
+    classify, napi_error, not_sent, not_sent_cause, overflow, transport, uncertain, ErrorPayload,
+};
 use crate::runtime::bridge;
 
 /// The default bounded frame-queue capacity. Reported in the README.
@@ -124,16 +126,16 @@ impl Inner {
     /// queue tore the connection down.
     fn client_arc(&self) -> Result<Arc<DaemonClient>> {
         if self.closed.load(Ordering::SeqCst) {
-            return Err(self.closed_refusal());
+            return Err(napi_error(self.closed_refusal()));
         }
         self.client
             .lock()
             .expect("the client slot is not poisoned")
             .clone()
-            .ok_or_else(|| self.closed_refusal())
+            .ok_or_else(|| napi_error(self.closed_refusal()))
     }
 
-    fn closed_refusal(&self) -> napi::Error {
+    fn closed_refusal(&self) -> ErrorPayload {
         if self.overflow.load(Ordering::SeqCst) {
             not_sent(
                 "the connection was torn down after the frame queue overflowed; the command was never queued".to_string(),
@@ -336,7 +338,7 @@ impl PrimeDaemonClient {
     pub async fn upgrade_direct(&self, active_session_id: String) -> Result<bool> {
         let client = self.inner.client_arc()?;
         let (result_tx, result_rx) =
-            tokio::sync::oneshot::channel::<Result<bool, napi::Error>>();
+            tokio::sync::oneshot::channel::<Result<bool, ErrorPayload>>();
         let handle = bridge(async move {
             let outcome = client
                 .upgrade_direct(&active_session_id)
@@ -347,13 +349,18 @@ impl PrimeDaemonClient {
         self.inner.track_bridge(handle);
         result_rx
             .await
-            .map_err(|_| transport("the direct upgrade task failed".to_string()))?
+            .map_err(|_| {
+                napi_error(transport("the direct upgrade task failed".to_string()))
+            })?
+            .map_err(napi_error)
     }
 
     #[napi]
     pub async fn next_frame(&self) -> Result<Option<Value>> {
         let mut receiver = self.inner.frame_rx.try_lock().map_err(|_| {
-            transport("a frame pull is already pending: nextFrame is single-consumer".to_string())
+            napi_error(transport(
+                "a frame pull is already pending: nextFrame is single-consumer".to_string(),
+            ))
         })?;
         // The wakeup is BINDING-OWNED: register on the teardown notify
         // BEFORE checking the flags, then race the queue against the wake —
@@ -363,7 +370,7 @@ impl PrimeDaemonClient {
         tokio::pin!(notified);
         notified.as_mut().enable();
         if self.inner.overflow.load(Ordering::SeqCst) {
-            return Err(overflow());
+            return Err(napi_error(overflow()));
         }
         if self.inner.teardown_cause().is_some() {
             return Ok(None);
@@ -381,7 +388,7 @@ impl PrimeDaemonClient {
                 }
                 None => {
                     if self.inner.overflow.load(Ordering::SeqCst) {
-                        Err(overflow())
+                        Err(napi_error(overflow()))
                     } else {
                         Ok(None)
                     }
@@ -389,7 +396,7 @@ impl PrimeDaemonClient {
             },
             _ = &mut notified => {
                 if self.inner.overflow.load(Ordering::SeqCst) {
-                    Err(overflow())
+                    Err(napi_error(overflow()))
                 } else {
                     Ok(None)
                 }
@@ -431,14 +438,14 @@ impl PrimeDaemonClient {
         let client = self.inner.client_arc()?;
         let command: DaemonCommand = serde_json::from_value(command)
             .map_err(|error| {
-                not_sent(format!("command deserialize failed: {error}"))
+                napi_error(not_sent(format!("command deserialize failed: {error}")))
             })?;
         let timeout = u64::from(
             timeout_ms.unwrap_or(u32::try_from(DEFAULT_REQUEST_TIMEOUT_MS).expect(
                 "the default request timeout fits a u32",
             )),
         );
-        let (result_tx, result_rx) = tokio::sync::oneshot::channel::<Result<Value, napi::Error>>();
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel::<Result<Value, ErrorPayload>>();
         let inner = Arc::clone(&self.inner);
         // ONE tracked task carries the operation; the napi promise rides a
         // oneshot so a cancelled JS promise never detaches the work — close
@@ -483,7 +490,8 @@ impl PrimeDaemonClient {
         self.inner.track_bridge(handle);
         result_rx
             .await
-            .map_err(|_| transport("the request task failed".to_string()))?
+            .map_err(|_| napi_error(transport("the request task failed".to_string())))?
+            .map_err(napi_error)
     }
 
     #[napi]
@@ -491,9 +499,9 @@ impl PrimeDaemonClient {
         let client = self.inner.client_arc()?;
         let command: DaemonCommand = serde_json::from_value(command)
             .map_err(|error| {
-                not_sent(format!("command deserialize failed: {error}"))
+                napi_error(not_sent(format!("command deserialize failed: {error}")))
             })?;
-        let (result_tx, result_rx) = tokio::sync::oneshot::channel::<Result<Value, napi::Error>>();
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel::<Result<Value, ErrorPayload>>();
         let inner = Arc::clone(&self.inner);
         let handle = bridge(async move {
             let notified = inner.teardown.notified();
@@ -523,7 +531,8 @@ impl PrimeDaemonClient {
         self.inner.track_bridge(handle);
         result_rx
             .await
-            .map_err(|_| transport("the request task failed".to_string()))?
+            .map_err(|_| napi_error(transport("the request task failed".to_string())))?
+            .map_err(napi_error)
     }
 
     #[napi]
@@ -551,15 +560,15 @@ pub async fn connect(
     let options = options.unwrap_or_default();
     let frame_buffer = options.frame_buffer.unwrap_or(DEFAULT_FRAME_BUFFER);
     if frame_buffer == 0 || frame_buffer > MAX_FRAME_BUFFER {
-        return Err(transport(format!(
+        return Err(napi_error(transport(format!(
             "frameBuffer must be between 1 and {MAX_FRAME_BUFFER}"
-        )));
+        ))));
     }
     if options.max_frame_bytes.is_some_and(|cap| cap == 0) {
-        return Err(transport("maxFrameBytes must be at least 1".to_string()));
+        return Err(napi_error(transport("maxFrameBytes must be at least 1".to_string())));
     }
     if options.max_pending.is_some_and(|cap| cap == 0) {
-        return Err(transport("maxPending must be at least 1".to_string()));
+        return Err(napi_error(transport("maxPending must be at least 1".to_string())));
     }
     let (tap_tx, tap_rx) = mpsc::unbounded_channel::<Value>();
     let core_options = DaemonClientOptions {
@@ -578,8 +587,10 @@ pub async fn connect(
         DaemonClient::connect_with_options(&path, core_options).await
     })
     .await
-    .map_err(|join_error| transport(format!("the connect task failed: {join_error}")))?
-    .map_err(|error| classify(error, None))?;
+    .map_err(|join_error| {
+        napi_error(transport(format!("the connect task failed: {join_error}")))
+    })?
+    .map_err(|error| napi_error(classify(error, None)))?;
     let client = Arc::new(client);
 
     let (frame_tx, frame_rx) =
