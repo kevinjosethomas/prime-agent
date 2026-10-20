@@ -2309,6 +2309,7 @@ mod tests {
         );
         // The refused fresh connection is joined.
         let joined = fresh.join_tasks().await;
+        eprintln!("DBG test: fresh join count = {joined}");
         assert_eq!(joined, 2, "the fresh connection's tasks joined");
         assert_ne!(
             session.status().state,
