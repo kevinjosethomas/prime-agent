@@ -386,6 +386,7 @@ impl DaemonClientSession {
             }
             let mut driver = self.state.driver.lock().await;
             let Some(handle) = driver.handle.as_mut() else {
+                eprintln!("DBG stop: handle-None break");
                 break; // A prior stop observed and memoized the end.
             };
             tokio::select! {
@@ -395,6 +396,7 @@ impl DaemonClientSession {
                     }
                 }
                 result = &mut *handle => {
+                    eprintln!("DBG stop: handle arm {result:?}");
                     // The driver task ended: memoize the cloneable outcome
                     // once, clear the handle (no re-poll).
                     driver.handle = None;
@@ -448,6 +450,7 @@ impl DaemonClientSession {
         // (the handle is gone): EVERY subsequent stop returns the identical
         // Err — the memo is read, never consumed (item 4).
         let outcome = self.state.driver.lock().await.memo.clone();
+        eprintln!("DBG stop tail: memo {outcome:?}");
         match outcome {
             Some(Err(message)) => Err(anyhow!("{message}")),
             _ => Ok(()),
