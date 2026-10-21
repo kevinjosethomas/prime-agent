@@ -787,6 +787,8 @@ async fn prompt_persists_tool_results() {
     // Whole-object compare through the TS wire shape (timestamp is
     // turn-dependent and asserted only by type).
     let value = serde_json::to_value(SessionAgentMessage::ToolResult(tool_result)).unwrap();
+    let duration_ms = value["details"]["durationMs"].as_f64();
+    assert!(duration_ms.is_some_and(|ms| ms >= 0.0), "value: {value}");
     assert_eq!(
         value,
         serde_json::json!({
@@ -796,6 +798,7 @@ async fn prompt_persists_tool_results() {
             "content": [{ "type": "text", "text": "tool output" }],
             "isError": false,
             "timestamp": value["timestamp"],
+            "details": { "durationMs": duration_ms },
         })
     );
     // The persisted file line carries the live-TS entry envelope: the

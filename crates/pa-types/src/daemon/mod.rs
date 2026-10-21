@@ -13,8 +13,10 @@ pub const DAEMON_PROTOCOL_NAME: &str = "prime-agent.daemon";
 pub const DAEMON_PROTOCOL_VERSION: u64 = 7;
 /// Revision 31 adds the `heartbeat_update_job` command and the `heartbeat_job_edit`
 /// server capability.
-pub const DAEMON_SCHEMA_REVISION: u64 = 31;
-pub const DAEMON_SCHEMA_ID: &str = "protocol-7-schema-31-5b2e0e3f07aa";
+/// Revision 32 adds the `response_timing` server capability and the
+/// `responseTiming` summary block on `get_state`.
+pub const DAEMON_SCHEMA_REVISION: u64 = 32;
+pub const DAEMON_SCHEMA_ID: &str = "protocol-7-schema-32-0add452274ed";
 
 pub type DaemonClientId = String;
 pub type DaemonCommandId = String;
@@ -181,8 +183,8 @@ mod tests {
     fn protocol_constants_match_ts() {
         assert_eq!(DAEMON_PROTOCOL_NAME, "prime-agent.daemon");
         assert_eq!(DAEMON_PROTOCOL_VERSION, 7);
-        assert_eq!(DAEMON_SCHEMA_REVISION, 31);
-        assert_eq!(DAEMON_SCHEMA_ID, "protocol-7-schema-31-5b2e0e3f07aa");
+        assert_eq!(DAEMON_SCHEMA_REVISION, 32);
+        assert_eq!(DAEMON_SCHEMA_ID, "protocol-7-schema-32-0add452274ed");
         assert_eq!(DAEMON_UPDATE_RESTART_FORMAT_VERSION, 1);
     }
 }

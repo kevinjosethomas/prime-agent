@@ -26,6 +26,8 @@ pub(crate) struct FinalizedToolCallOutcome {
     pub(crate) tool_call: ToolCall,
     pub(crate) result: AgentToolResult,
     pub(crate) is_error: bool,
+    /// None = never executed (blocked or unknown tool).
+    pub(crate) duration_ms: Option<f64>,
 }
 
 /// Tool lookup by name; exact matches win over alias-based dispatch.
@@ -114,6 +116,7 @@ async fn execute_tool_calls_sequential(
                 tool_call: tool_call.clone(),
                 result,
                 is_error,
+                duration_ms: None,
             },
             Preparation::Prepared(prepared) => {
                 let executed = execute_prepared_tool_call(&prepared, signal, emit).await;
@@ -189,6 +192,7 @@ async fn execute_tool_calls_parallel(
                     tool_call: tool_call.clone(),
                     result,
                     is_error,
+                    duration_ms: None,
                 };
                 emit_tool_execution_end(&finalized, emit).await?;
                 entries.push(TaskOrOutcome::Outcome(Box::new(finalized)));

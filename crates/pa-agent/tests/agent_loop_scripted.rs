@@ -681,6 +681,7 @@ fn scripted_event_shapes_round_trip_through_the_event_enum() {
         stop_reason: StopReason::Stop,
         stop_reason_raw: None,
         error_message: None,
+        timing: None,
         timestamp: 0,
     };
     let event = AssistantMessageEvent::TextDelta {

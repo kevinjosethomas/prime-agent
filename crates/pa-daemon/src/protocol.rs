@@ -367,6 +367,7 @@ pub fn default_server_capabilities() -> Vec<DaemonServerCapability> {
                 "abort_and_send_queued",
                 "agent_roster",
                 "direct_peer_transport",
+                "response_timing",
             ]
             .iter()
             .map(std::string::ToString::to_string),
