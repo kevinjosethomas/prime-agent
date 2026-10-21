@@ -274,9 +274,7 @@ pub fn kernel_provisioner(
 /// resolves them here; the caller reads the credential and runs this off the
 /// async runtime, because a `!command` key can block.
 #[must_use]
-pub(crate) fn websearch_api_key(
-    credential: Option<crate::auth::AuthCredential>,
-) -> Option<String> {
+pub(crate) fn websearch_api_key(credential: Option<crate::auth::AuthCredential>) -> Option<String> {
     if std::env::var("SERPER_API_KEY").is_ok_and(|value| !value.trim().is_empty()) {
         return None;
     }

@@ -263,11 +263,7 @@ mod ready_check_tests {
         }
         let stubs = tempfile::tempdir().expect("stub dir");
         std::fs::write(stubs.path().join("httpx.py"), "").expect("httpx stub");
-        let pythonpath = format!(
-            "{}:{}",
-            stubs.path().display(),
-            src.display()
-        );
+        let pythonpath = format!("{}:{}", stubs.path().display(), src.display());
         let output = std::process::Command::new("python3")
             .arg("-c")
             .arg(RUNTIME_READY_CHECK)

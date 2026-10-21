@@ -348,4 +348,3 @@ async fn summary_carries_the_note_past_the_run_boundary() {
         "the row carries the note's timestamp: {summary:?}"
     );
 }
-

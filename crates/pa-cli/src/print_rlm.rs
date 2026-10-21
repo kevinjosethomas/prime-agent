@@ -11,11 +11,10 @@ use std::time::Duration;
 
 use pa_core::session_engine::agent_messaging::{
     create_agent_session_message_id, create_agent_session_message_prompt,
-    create_agent_session_message_row, register_agent_observe_host_handlers,
-    AgentFamilyMember, AgentFamilyRelationship, AgentFamilyStatus, AgentMessageController,
-    AgentMessageDeliveryStatus, AgentMessagePromptPayload, AgentMessageReceipt,
-    AgentMessageSendInput, AgentObserveController, AgentObserveMessagePreview,
-    AgentObserveSummary, AgentSessionMessageRowPayload,
+    create_agent_session_message_row, register_agent_observe_host_handlers, AgentFamilyMember,
+    AgentFamilyRelationship, AgentFamilyStatus, AgentMessageController, AgentMessageDeliveryStatus,
+    AgentMessagePromptPayload, AgentMessageReceipt, AgentMessageSendInput, AgentObserveController,
+    AgentObserveMessagePreview, AgentObserveSummary, AgentSessionMessageRowPayload,
 };
 use pa_core::session_engine::engine::SessionEngine;
 use pa_core::session_engine::goal_boundary::custom_message_to_loop_row;
@@ -333,10 +332,7 @@ impl AgentObserveController for InlineObserver {
         Ok(rows)
     }
 
-    async fn get_agent(
-        &self,
-        target: &str,
-    ) -> anyhow::Result<Option<AgentObserveSummary>> {
+    async fn get_agent(&self, target: &str) -> anyhow::Result<Option<AgentObserveSummary>> {
         let rows = self.list_agents().await?;
         Ok(rows.into_iter().find(|row| {
             row.active_session_id.as_deref() == Some(target)
