@@ -197,7 +197,7 @@ fn run_turn(client: &mut Client, session_id: &str, message: &str, id: &str) {
 fn await_receipt(receipt: &Path) -> String {
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {
-        if let Some(content) = std::fs::read_to_string(receipt).ok() {
+        if let Ok(content) = std::fs::read_to_string(receipt) {
             return content;
         }
         assert!(
@@ -368,10 +368,10 @@ fn top_level_sessions_are_first_class_agents() {
     let dir = tempfile::TempDir::new().expect("temp dir");
     let dir = dir.path().to_path_buf();
     let agent_dir = &dir.join("agent");
-    std::fs::create_dir_all(&agent_dir).expect("agent dir");
+    std::fs::create_dir_all(agent_dir).expect("agent dir");
     let socket = &dir.join("supervisor.sock");
     let receipts = &dir.join("receipts");
-    std::fs::create_dir_all(&receipts).expect("receipts dir");
+    std::fs::create_dir_all(receipts).expect("receipts dir");
     let receipt = |name: &str| receipts.join(name);
     let error = |name: &str| receipts.join(format!("{name}.error"));
 
@@ -390,9 +390,9 @@ fn top_level_sessions_are_first_class_agents() {
         list_cell(&receipt("list2.json"), &error("list2")),
     ];
     let parent_script = write_parent_script(&dir, &cells);
-    let mut daemon = spawn_supervisor(&socket, &agent_dir, &kernel_python);
-    wait_socket_ready(&socket);
-    let (mut client, hello) = Client::connect(&socket);
+    let mut daemon = spawn_supervisor(socket, agent_dir, kernel_python);
+    wait_socket_ready(socket);
+    let (mut client, hello) = Client::connect(socket);
     assert_eq!(hello["type"], "daemon_hello");
     let parent = create_parent(
         &mut client,
@@ -487,7 +487,7 @@ fn top_level_sessions_are_first_class_agents() {
     let created2: Value =
         serde_json::from_str(&await_receipt(&receipt("create2.json"))).expect("create2 receipt");
     assert_no_error(&error("create2"));
-    let worker2_session_id = created2["session_id"]
+    let survivor_session_id = created2["session_id"]
         .as_str()
         .expect("session id 2")
         .to_string();
@@ -517,8 +517,8 @@ fn top_level_sessions_are_first_class_agents() {
 
     // (8) registry recovery after a daemon restart: the resumed starter
     // relists its started session from the ledger, then deletes it.
-    restart_daemon(&mut daemon, &socket, &agent_dir, &kernel_python);
-    let (mut client, hello) = Client::connect(&socket);
+    restart_daemon(&mut daemon, socket, agent_dir, kernel_python);
+    let (mut client, hello) = Client::connect(socket);
     assert_eq!(hello["type"], "daemon_hello");
     let third_cells = [
         list_cell(&receipt("list3.json"), &error("list3")),
@@ -552,14 +552,14 @@ fn top_level_sessions_are_first_class_agents() {
         serde_json::from_str(&await_receipt(&receipt("stop3.json"))).expect("stop3 receipt");
     assert_no_error(&error("stop3"));
     assert_eq!(stopped, 0, "the registry empties after the delete");
-    let worker2_file = dir
+    let survivor_file = dir
         .join("sessions")
-        .join(format!("{worker2_session_id}.jsonl"));
+        .join(format!("{survivor_session_id}.jsonl"));
     assert!(
-        worker2_file.is_file(),
+        survivor_file.is_file(),
         "the deleted top-level session keeps its file"
     );
-    let content = std::fs::read_to_string(&worker2_file).expect("worker2 session file");
+    let content = std::fs::read_to_string(&survivor_file).expect("worker2 session file");
     assert!(
         !content.contains("\"archived\""),
         "a deleted top-level session stays resumable: {content}"
