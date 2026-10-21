@@ -755,6 +755,7 @@ fn running_children_owe_the_continuation_and_settle_delivers_it() {
                 active_session_id: "child-session".to_string(),
                 session_id: None,
                 session_name: "worker-1".to_string(),
+                top_level: false,
             })
             .await;
     });

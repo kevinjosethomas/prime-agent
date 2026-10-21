@@ -1088,6 +1088,7 @@ fn roster_entry(
             .session_name()
             .unwrap_or_else(|| child.rlm_child_id.clone()),
         session_dir: child.node.session_dir.clone(),
+        top_level: false,
         status: if unsettled {
             "running"
         } else {

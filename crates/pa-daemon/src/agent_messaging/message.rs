@@ -361,11 +361,15 @@ impl LinkAgentMessageController {
                 sender["runtimeKind"] = json!(kind);
             }
             // The sender's durable parent edge rides the block so the receiving
-            // session can label the delivery by its TRUE relationship.
+            // session can label the delivery by its TRUE relationship. A
+            // started top-level session names its starter the same way: the
+            // starter labels the delivery as its child's reply.
             for (field, summary_field) in [
                 ("parentActiveSessionId", "parentActiveSessionId"),
                 ("parentSessionId", "parentSessionId"),
                 ("parentSessionPath", "parentSessionPath"),
+                ("parentActiveSessionId", "starterActiveSessionId"),
+                ("parentSessionId", "starterSessionId"),
             ] {
                 if let Some(value) = summary
                     .get(summary_field)

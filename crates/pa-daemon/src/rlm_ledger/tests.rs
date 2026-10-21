@@ -90,6 +90,7 @@ fn spawn_rename_delete_replay_in_order() {
             child: child.to_string_lossy().into(),
             depth: 1,
             name: "worker".into(),
+            top_level: false,
         })
         .unwrap();
     ledger
@@ -115,6 +116,65 @@ fn spawn_rename_delete_replay_in_order() {
     assert_eq!(ledger.edges(true).unwrap(), tombstones);
 }
 
+/// A top-level spawn edge (depth 0, `topLevel` flag) round-trips its flag
+/// and is the only depth-0 spawn the grammar accepts.
+#[test]
+fn top_level_spawn_edges_round_trip_the_flag() {
+    let dir = temp_dir("top-level-edge");
+    let ledger = ledger_for(&dir);
+    let parent = dir.join("starter.jsonl");
+    let child = dir.join("peer.jsonl");
+    fs::write(&parent, "{}").unwrap();
+    fs::write(&child, "{}").unwrap();
+    ledger
+        .append_spawn(&RlmSpawnInput {
+            child_id: "sub-tl".into(),
+            parent: parent.to_string_lossy().into(),
+            child: child.to_string_lossy().into(),
+            depth: 0,
+            name: "worker".into(),
+            top_level: true,
+        })
+        .unwrap();
+    let edges = ledger.edges(false).unwrap();
+    assert_eq!(edges.len(), 1);
+    assert_eq!(edges[0].depth, 0);
+    assert!(edges[0].top_level);
+    // A depth-0 spawn without the flag is unwritable, and the reader
+    // refuses the bare record (an old writer never produced one).
+    let bare = RlmSpawnInput {
+        child_id: "sub-bare".into(),
+        parent: parent.to_string_lossy().into(),
+        child: child.to_string_lossy().into(),
+        depth: 0,
+        name: "bare".into(),
+        top_level: false,
+    };
+    assert!(ledger.append_spawn(&bare).is_err());
+    let record = json!({
+        "v": 1, "op": "spawn", "at": "t",
+        "childId": "sub-bare",
+        "parent": parent.to_string_lossy(),
+        "child": child.to_string_lossy(),
+        "depth": 0,
+        "name": "bare",
+    })
+    .to_string();
+    assert!(
+        super::replay::parse_ledger_line(&record, 0).is_err(),
+        "a depth-0 spawn without the topLevel flag is not a readable record"
+    );
+    // A tombstone drops the top-level edge like any other.
+    ledger
+        .append_delete(
+            "sub-tl",
+            &child.to_string_lossy(),
+            RlmLedgerDeleteReason::User,
+        )
+        .unwrap();
+    assert!(ledger.edges(false).unwrap().is_empty());
+}
+
 #[test]
 fn edge_is_live_reflects_tombstones_and_files() {
     let dir = temp_dir("liveness");
@@ -131,6 +191,7 @@ fn edge_is_live_reflects_tombstones_and_files() {
             child: child_path.clone(),
             depth: 1,
             name: "w".into(),
+            top_level: false,
         })
         .unwrap();
     assert!(ledger.edge_is_live("sub-1", &child_path));
@@ -155,6 +216,7 @@ fn edge_is_live_reflects_tombstones_and_files() {
             child: other_path,
             depth: 1,
             name: "w2".into(),
+            top_level: false,
         })
         .unwrap();
     ledger
@@ -195,6 +257,7 @@ fn edge_is_live_revalidates_paths_without_a_ledger_append() {
                 child: path.to_string_lossy().into_owned(),
                 depth: 1,
                 name: "child".into(),
+                top_level: false,
             })
             .unwrap();
     }
@@ -258,6 +321,7 @@ fn a_respawned_child_id_on_a_new_path_is_live_and_the_old_one_is_not() {
                 child: child.to_string_lossy().into_owned(),
                 depth: 1,
                 name: name.into(),
+                top_level: false,
             })
             .unwrap();
     };
@@ -288,6 +352,7 @@ fn dead_child_or_parent_drops_from_live_edges() {
             child: child.to_string_lossy().into(),
             depth: 1,
             name: "w".into(),
+            top_level: false,
         })
         .unwrap();
     assert_eq!(ledger.live_edges().unwrap().len(), 1);
@@ -325,6 +390,7 @@ fn moved_edge_paths_resolve_through_the_session_id() {
             child: recorded_child.into(),
             depth: 1,
             name: "w".into(),
+            top_level: false,
         })
         .unwrap();
 
@@ -380,6 +446,7 @@ fn the_artifact_index_updates_after_a_new_partition() {
                 child: child.into(),
                 depth: 1,
                 name: "w".into(),
+                top_level: false,
             })
             .unwrap();
     };
@@ -439,6 +506,7 @@ fn live_edges_of_parent_bounds_the_liveness_work() {
             child: "/gone-root/sess-a.jsonl".into(),
             depth: 1,
             name: "a".into(),
+            top_level: false,
         })
         .unwrap();
     ledger
@@ -448,6 +516,7 @@ fn live_edges_of_parent_bounds_the_liveness_work() {
             child: resident_child.to_string_lossy().into(),
             depth: 1,
             name: "b".into(),
+            top_level: false,
         })
         .unwrap();
     let deleted_child = sessions_dir.join("sess-d.jsonl");
@@ -459,6 +528,7 @@ fn live_edges_of_parent_bounds_the_liveness_work() {
             child: deleted_child.to_string_lossy().into(),
             depth: 1,
             name: "d".into(),
+            top_level: false,
         })
         .unwrap();
     ledger
@@ -476,6 +546,7 @@ fn live_edges_of_parent_bounds_the_liveness_work() {
                 child: format!("/gone-root/sess-f{n}-child.jsonl"),
                 depth: 1,
                 name: format!("f{n}"),
+                top_level: false,
             })
             .unwrap();
     }
@@ -535,6 +606,7 @@ fn a_dead_endpoint_under_an_archived_parent_resolves_without_a_tree_walk() {
             child: child.to_string_lossy().into(),
             depth: 1,
             name: "w".into(),
+            top_level: false,
         })
         .unwrap();
     assert!(
@@ -575,6 +647,7 @@ fn live_edges_of_parent_follows_a_moved_parent() {
             child: child.to_string_lossy().into(),
             depth: 1,
             name: "w".into(),
+            top_level: false,
         })
         .unwrap();
     let edges = ledger.live_edges_of_parent(&live_parent).unwrap();
@@ -602,6 +675,7 @@ fn live_edges_of_parent_follows_a_moved_parent() {
             child: sessions_dir.join("sess-c2.jsonl").to_string_lossy().into(),
             depth: 1,
             name: "w2".into(),
+            top_level: false,
         })
         .unwrap();
     let edges = ledger.live_edges_of_parent(&elsewhere).unwrap();
@@ -626,6 +700,7 @@ fn duplicate_child_path_and_bad_spawn_inputs_fail_but_bad_lines_skip() {
             child: child.to_string_lossy().into(),
             depth: 1,
             name: "w".into(),
+            top_level: false,
         })
         .unwrap();
     let duplicate = ledger.append_spawn(&RlmSpawnInput {
@@ -634,6 +709,7 @@ fn duplicate_child_path_and_bad_spawn_inputs_fail_but_bad_lines_skip() {
         child: child.to_string_lossy().into(),
         depth: 1,
         name: "w".into(),
+        top_level: false,
     });
     assert!(duplicate.is_err());
     let depth_zero = ledger.append_spawn(&RlmSpawnInput {
@@ -642,6 +718,7 @@ fn duplicate_child_path_and_bad_spawn_inputs_fail_but_bad_lines_skip() {
         child: child.to_string_lossy().into(),
         depth: 0,
         name: "w".into(),
+        top_level: false,
     });
     assert!(depth_zero.is_err());
     // A torn tail or bad line costs that record only; later appends still land.
@@ -656,6 +733,7 @@ fn duplicate_child_path_and_bad_spawn_inputs_fail_but_bad_lines_skip() {
             child: dir.join("c4.jsonl").to_string_lossy().into(),
             depth: 1,
             name: "w".into(),
+            top_level: false,
         })
         .unwrap();
     let edges = ledger.edges(false).unwrap();
@@ -832,6 +910,7 @@ fn delete_amendment_carries_the_usage_snapshot() {
             child: child.to_string_lossy().into(),
             depth: 1,
             name: "w".into(),
+            top_level: false,
         })
         .unwrap();
     ledger
@@ -902,6 +981,7 @@ fn append_delete_with_usage_sanitizes_a_rejectable_cost() {
             child: child.to_string_lossy().into(),
             depth: 1,
             name: "w".into(),
+            top_level: false,
         })
         .unwrap();
     for bad_cost in [-0.40, -0.0, f64::NAN, f64::INFINITY] {
@@ -949,6 +1029,7 @@ fn tombstone_child_path_with_usage_snapshots_every_edge() {
                 child: child.to_string_lossy().into(),
                 depth: 1,
                 name: "w".into(),
+                top_level: false,
             })
             .unwrap();
         ledger
@@ -1004,6 +1085,7 @@ fn bucket_folds_own_snapshots_post_order_without_double_counting() {
                 child: child.to_string_lossy().into(),
                 depth,
                 name: "w".into(),
+                top_level: false,
             })
             .unwrap();
     };
@@ -1097,6 +1179,7 @@ fn bucket_legacy_tombstones_fall_back_then_gap_to_zero() {
             child: child.to_string_lossy().into(),
             depth: 1,
             name: "w".into(),
+            top_level: false,
         })
         .unwrap();
     ledger
@@ -1198,6 +1281,7 @@ fn bucket_bills_tombstoned_children_without_catalog_rows() {
                 child: child.to_string_lossy().into(),
                 depth: 1,
                 name: "w".into(),
+                top_level: false,
             })
             .unwrap();
     };
@@ -1330,6 +1414,7 @@ fn bucket_skips_recreated_live_paths() {
             child: child.to_string_lossy().into(),
             depth: 1,
             name: "w".into(),
+            top_level: false,
         })
         .unwrap();
     ledger
@@ -1347,6 +1432,7 @@ fn bucket_skips_recreated_live_paths() {
             child: child.to_string_lossy().into(),
             depth: 1,
             name: "w2".into(),
+            top_level: false,
         })
         .unwrap();
     let bucket = ledger.deleted_descendant_usage_by_parent().unwrap();
@@ -1376,6 +1462,7 @@ fn the_bucket_updates_after_an_append_on_the_same_ledger() {
                 child: child.to_string_lossy().into(),
                 depth: 1,
                 name: "w".into(),
+                top_level: false,
             })
             .unwrap();
         ledger
@@ -1428,6 +1515,7 @@ fn a_restored_tombstoned_child_stops_billing_the_parent_without_an_append() {
             child: child.to_string_lossy().into(),
             depth: 1,
             name: "child".into(),
+            top_level: false,
         })
         .unwrap();
     ledger
@@ -1474,6 +1562,7 @@ fn the_artifact_index_rechecks_deleted_and_relocated_transcripts_without_an_appe
             child: "/gone/child.jsonl".into(),
             depth: 1,
             name: "child".into(),
+            top_level: false,
         })
         .unwrap();
     let initial = ledger.live_edges().unwrap();
@@ -1507,6 +1596,7 @@ fn artifact_misses_stay_cached_until_a_directory_changes() {
             child: "/gone/child.jsonl".into(),
             depth: 1,
             name: "child".into(),
+            top_level: false,
         })
         .unwrap();
     let scans = replay::ARTIFACT_SCANS.with(std::cell::Cell::get);
@@ -1520,6 +1610,7 @@ fn artifact_misses_stay_cached_until_a_directory_changes() {
         parent: canonical_session_path(&parent).to_string_lossy().into(),
         child: canonical_session_path(&restored).to_string_lossy().into(),
         depth: 1,
+        top_level: false,
         name: "child".into(),
         deleted: None,
         deleted_usage: None,

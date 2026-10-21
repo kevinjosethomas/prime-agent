@@ -414,6 +414,118 @@ impl Supervisor {
                             }
                         } else if let DaemonCommand::Kill { rest, .. } = command {
                             if let Some(reason) = rest
+                                .get("rlmTopLevelDelete")
+                                .and_then(Value::as_str)
+                                .and_then(crate::rlm_ledger::RlmLedgerDeleteReason::from_wire)
+                            {
+                                // The delete of a started top-level session: a live
+                                // worker takes the kill directly (the rebind retargets
+                                // the stale routing id); a stopped one needs only the
+                                // ledger tombstone — the session file stays resumable.
+                                let child_id = rest
+                                    .get("rlmChildId")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_string);
+                                let ledger = match self.rlm_spawn_ledger_for(None).await {
+                                    Ok(ledger) => ledger,
+                                    Err(error) => {
+                                        return (
+                                            vec![response_line(&response_failure(
+                                                Some(&command_id),
+                                                &type_name,
+                                                &format!(
+                                                    "Failed to delete the top-level session: {error:#}"
+                                                ),
+                                                None,
+                                            ))],
+                                            false,
+                                        );
+                                    }
+                                };
+                                let edges = match ledger.live_edges() {
+                                    Ok(edges) => edges,
+                                    Err(error) => {
+                                        return (
+                                            vec![response_line(&response_failure(
+                                                Some(&command_id),
+                                                &type_name,
+                                                &format!(
+                                                    "Failed to delete the top-level session: {error:#}"
+                                                ),
+                                                None,
+                                            ))],
+                                            false,
+                                        );
+                                    }
+                                };
+                                let Some((edge_child_id, session_file)) =
+                                    resolve_ledger_child(&edges, &selector, child_id.as_deref())
+                                else {
+                                    return (
+                                        vec![response_line(&response_failure(
+                                            Some(&command_id),
+                                            &type_name,
+                                            &format!(
+                                                "top-level session \"{selector}\" is not in the spawn ledger"
+                                            ),
+                                            None,
+                                        ))],
+                                        false,
+                                    );
+                                };
+                                match self.registry.find_by_session_file(&session_file).await {
+                                    Some(resident) if resident.route_state().session_ready => {
+                                        rebound_to = Some(
+                                            self.rebind_connection(&selector, &resident, attached)
+                                                .await,
+                                        );
+                                        resident
+                                    }
+                                    Some(resident) => {
+                                        return (
+                                            vec![response_line(&response_failure(
+                                                Some(&command_id),
+                                                &type_name,
+                                                &format!(
+                                                    "top-level session worker {} is not ready; retry the delete",
+                                                    resident.worker_id
+                                                ),
+                                                None,
+                                            ))],
+                                            false,
+                                        );
+                                    }
+                                    None => match ledger.append_delete(
+                                        &edge_child_id,
+                                        &session_file,
+                                        reason,
+                                    ) {
+                                        Ok(()) => {
+                                            return (
+                                                vec![response_line(&response_success(
+                                                    Some(&command_id),
+                                                    &type_name,
+                                                    None,
+                                                ))],
+                                                false,
+                                            );
+                                        }
+                                        Err(error) => {
+                                            return (
+                                                vec![response_line(&response_failure(
+                                                    Some(&command_id),
+                                                    &type_name,
+                                                    &format!(
+                                                        "Failed to delete the top-level session: {error:#}"
+                                                    ),
+                                                    None,
+                                                ))],
+                                                false,
+                                            );
+                                        }
+                                    },
+                                }
+                            } else if let Some(reason) = rest
                                 .get("rlmLedgerDelete")
                                 .and_then(Value::as_str)
                                 .and_then(crate::rlm_ledger::RlmLedgerDeleteReason::from_wire)
@@ -456,21 +568,23 @@ impl Supervisor {
                                         );
                                     }
                                 }
+                            } else {
+                                // No delete marker: a kill of a stopped session stays the
+                                // plain unknown-session error — nothing to kill.
+                                let message =
+                                    self.restore_failure_for(&selector).unwrap_or_else(|| {
+                                        format!("Unknown active session: {selector}")
+                                    });
+                                return (
+                                    vec![response_line(&response_failure(
+                                        Some(&command_id),
+                                        &type_name,
+                                        &message,
+                                        None,
+                                    ))],
+                                    false,
+                                );
                             }
-                            // No delete marker: a kill of a stopped session stays the plain
-                            // unknown-session error — nothing to kill.
-                            let message = self
-                                .restore_failure_for(&selector)
-                                .unwrap_or_else(|| format!("Unknown active session: {selector}"));
-                            return (
-                                vec![response_line(&response_failure(
-                                    Some(&command_id),
-                                    &type_name,
-                                    &message,
-                                    None,
-                                ))],
-                                false,
-                            );
                         } else {
                             let message = self
                                 .restore_failure_for(&selector)
@@ -490,11 +604,13 @@ impl Supervisor {
             }
         };
         // The plain-kill gate (TS `isRootKill`): the `rlmCloseReason` marker is a child-close
-        // cascade, not a root kill. Only the plain kill tombstones and finalizes BEFORE the
-        // worker is told, so a mid-stop death adopts the tombstone.
+        // cascade, not a root kill, and a `rlmTopLevelDelete` stop is graceful. Only the
+        // plain kill tombstones and finalizes BEFORE the worker is told, so a mid-stop
+        // death adopts the tombstone.
         let plain_kill = match command {
             DaemonCommand::Kill { rest, .. } => {
-                let no_marker = !rest.contains_key("rlmCloseReason");
+                let graceful_marker =
+                    rest.contains_key("rlmCloseReason") || rest.contains_key("rlmTopLevelDelete");
                 let target_depth = resident
                     .descriptor
                     .lock()
@@ -504,7 +620,7 @@ impl Supervisor {
                     .get("rlmDepth")
                     .and_then(Value::as_u64)
                     .unwrap_or(0);
-                no_marker || target_depth == 0
+                !graceful_marker || (target_depth == 0 && !rest.contains_key("rlmTopLevelDelete"))
             }
             _ => false,
         };
@@ -519,6 +635,45 @@ impl Supervisor {
                     ))],
                     false,
                 );
+            }
+        }
+        // A top-level delete's boundary is the same ledger tombstone,
+        // but the session stays resumable: the kill is the graceful
+        // shutdown close and the stop is the passivating worker stop.
+        if let DaemonCommand::Kill { rest, .. } = command {
+            if let Some(reason) = rest
+                .get("rlmTopLevelDelete")
+                .and_then(Value::as_str)
+                .and_then(crate::rlm_ledger::RlmLedgerDeleteReason::from_wire)
+            {
+                let session_file = resident.descriptor.lock().await.session_file.clone();
+                if let Some(session_file) = session_file {
+                    let ledger = match self.rlm_spawn_ledger_for(None).await {
+                        Ok(ledger) => ledger,
+                        Err(error) => {
+                            return (
+                                vec![response_line(&response_failure(
+                                    Some(&command_id),
+                                    &type_name,
+                                    &format!("Failed to delete the top-level session: {error:#}"),
+                                    None,
+                                ))],
+                                false,
+                            );
+                        }
+                    };
+                    if let Err(error) = ledger.tombstone_child_path(&session_file, reason) {
+                        return (
+                            vec![response_line(&response_failure(
+                                Some(&command_id),
+                                &type_name,
+                                &format!("Failed to delete the top-level session: {error:#}"),
+                                None,
+                            ))],
+                            false,
+                        );
+                    }
+                }
             }
         }
         // A delete's deletion boundary persists BEFORE the teardown: a failed tombstone is

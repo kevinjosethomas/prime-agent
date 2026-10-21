@@ -121,6 +121,8 @@ pub struct RlmChildIdentity {
     pub active_session_id: String,
     pub session_id: Option<String>,
     pub session_name: String,
+    /// A depth-0 session this starter created (a first-class agent, not a nested child).
+    pub top_level: bool,
 }
 
 /// The selector that reaches a child whether or not its worker is
@@ -142,6 +144,10 @@ struct ChildRecord {
     model: String,
     label: String,
     started_at_ms: u64,
+    /// A depth-0 session this starter created (`rlm.create_session`): it
+    /// joins the registry like a child but outlives the starter and never
+    /// cascades at parent close.
+    top_level: bool,
     /// Terminal state (`done` | `error` | `cancelled`); running while absent.
     settled_status: Option<&'static str>,
     /// Set only by the settle funnel, after the terminal notice is delivered; the
@@ -262,10 +268,13 @@ impl ChildRecord {
     }
 }
 
-/// Whether any record's settle funnel has not fired yet.
+/// Whether any nested child's settle funnel has not fired yet. Top-level
+/// records never gate the starter's quiescence: the starter is not
+/// "working" while its started top-level sessions run.
 async fn any_unsettled(children: &[Arc<Mutex<ChildRecord>>]) -> bool {
     for record in children {
-        if !record.lock().await.settled {
+        let child = record.lock().await;
+        if !child.top_level && !child.settled {
             return true;
         }
     }
@@ -285,6 +294,7 @@ struct DeletedChild {
     session_name: String,
     session_dir: String,
     started_at_ms: u64,
+    top_level: bool,
     /// The roster status the row carried at its delete (the idempotent
     /// re-delete receipt reports it verbatim, so a repeated retire reads
     /// the same verdict as the first).
@@ -636,6 +646,7 @@ impl SupervisorChildSessions {
                 active_session_id: record.active_session_id.clone(),
                 session_id: record.session_id.clone(),
                 session_name: record.session_name.clone(),
+                top_level: record.top_level,
             });
         }
         identities
@@ -693,6 +704,7 @@ impl SupervisorChildSessions {
                 active_session_id: identity.active_session_id,
                 session_id: identity.session_id,
                 session_dir: String::new(),
+                top_level: identity.top_level,
                 model: String::new(),
                 label: String::new(),
                 started_at_ms: 0,
@@ -771,6 +783,7 @@ impl SupervisorChildSessions {
             session_id: record.session_id.clone(),
             session_name: record.session_name.clone(),
             session_dir: record.session_dir.clone(),
+            top_level: record.top_level,
             status: record.roster_status(),
             // Live tool introspection across worker processes is a follow-up;
             // a running child reports `executing`.

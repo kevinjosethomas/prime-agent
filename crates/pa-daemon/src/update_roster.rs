@@ -176,6 +176,10 @@ fn subagent_rows(
         .with_context(|| "read the RLM spawn ledger for the update roster")?;
     let mut rows = Vec::new();
     for edge in edges {
+        // A started top-level session is an ordinary roster row, never a subagent.
+        if edge.top_level {
+            continue;
+        }
         let parent_stem = file_stem(&edge.parent);
         let child_dir = agent_dir
             .join("session-artifacts")
@@ -337,6 +341,7 @@ pub(crate) fn build_update_roster(
     let child_parents: HashSet<PathBuf> = ledger
         .live_edges()?
         .into_iter()
+        .filter(|edge| !edge.top_level)
         .map(|edge| canonical_session_path(Path::new(&edge.parent)))
         .collect();
     let resident_files: HashSet<PathBuf> = workers
@@ -500,6 +505,7 @@ mod tests {
                 child_id: "child-c1".into(),
                 depth: 1,
                 name: "api-reviewer".into(),
+                top_level: false,
             })
             .unwrap();
         (ledger, sessions_dir)

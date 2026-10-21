@@ -629,6 +629,8 @@ pub(crate) fn session_summary(core: &SessionCore, inputs: SummaryInputs) -> Sess
         parent_session_path: store.and_then(|store| store.header.parent_session.clone()),
         parent_active_session_id: core.parent_active_session_id.clone(),
         parent_session_id: core.parent_session_id.clone(),
+        starter_active_session_id: core.starter_active_session_id.clone(),
+        starter_session_id: core.starter_session_id.clone(),
         rlm_child_id: core.rlm_child_id.clone(),
         usage,
         response_timing,

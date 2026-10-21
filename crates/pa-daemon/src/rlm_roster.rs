@@ -83,6 +83,11 @@ pub fn walk_passive_rlm_children(
             continue;
         };
         for edge in edges.iter().copied() {
+            // A started top-level session is its own roster root, never a
+            // passive subagent row.
+            if edge.top_level {
+                continue;
+            }
             let child = canonical_session_path(std::path::Path::new(&edge.child));
             if !visited.insert(child.clone()) {
                 continue;
@@ -267,6 +272,7 @@ mod tests {
                 parent: "/live/root.jsonl".to_string(),
                 child: child.to_string_lossy().to_string(),
                 depth: 1,
+                top_level: false,
                 name: "worker-a".to_string(),
                 deleted: None,
                 deleted_usage: None,
@@ -288,6 +294,7 @@ mod tests {
                 parent: "/live/root.jsonl".to_string(),
                 child: plain.to_string_lossy().to_string(),
                 depth: 1,
+                top_level: false,
                 name: "worker-b".to_string(),
                 deleted: None,
                 deleted_usage: None,
@@ -322,6 +329,7 @@ mod tests {
                 parent: "/live/root.jsonl".to_string(),
                 child: child.to_string_lossy().to_string(),
                 depth: 1,
+                top_level: false,
                 name: "worker-c".to_string(),
                 deleted: None,
                 deleted_usage: None,
@@ -371,6 +379,7 @@ mod tests {
                 child: child.to_string_lossy().into(),
                 depth: 1,
                 name: "w1".into(),
+                top_level: false,
             })
             .unwrap();
         ledger
@@ -380,6 +389,7 @@ mod tests {
                 child: grandchild.to_string_lossy().into(),
                 depth: 2,
                 name: "w2".into(),
+                top_level: false,
             })
             .unwrap();
         ledger
@@ -389,6 +399,7 @@ mod tests {
                 child: dead.to_string_lossy().into(),
                 depth: 1,
                 name: "gone".into(),
+                top_level: false,
             })
             .unwrap();
         // A deleted child tombstones out of the walk.
@@ -462,6 +473,7 @@ mod tests {
                 child: child.to_string_lossy().into(),
                 depth: 1,
                 name: "worker".into(),
+                top_level: false,
             })
             .unwrap();
         let walked = walk_passive_rlm_children(

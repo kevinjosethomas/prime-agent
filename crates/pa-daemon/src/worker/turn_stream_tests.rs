@@ -40,6 +40,8 @@ fn burst_runner(engine: Arc<dyn SessionEngine>) -> TurnRunner {
         rlm_child_id: None,
         parent_active_session_id: None,
         parent_session_id: None,
+        starter_active_session_id: None,
+        starter_session_id: None,
         child_script: None,
         service_tier: None,
         active_service_tier: None,

@@ -897,6 +897,7 @@ mod tests {
                 parent: "/tmp/root.jsonl".to_string(),
                 child: path.to_string_lossy().to_string(),
                 depth: 1,
+                top_level: false,
                 name: "worker".to_string(),
                 deleted: None,
                 deleted_usage: None,

@@ -62,6 +62,9 @@ pub struct AgentObserveSummary {
     pub session_name: Option<String>,
     pub relationship: Option<AgentFamilyRelationship>,
     pub runtime_kind: Option<String>,
+    /// A `relationship: child` row this session started via
+    /// `rlm.create_session`: a depth-0 peer tracked like a child.
+    pub top_level: bool,
     pub status: AgentFamilyStatus,
     /// The live activity of a resident session; `None` for family members
     /// with no live session in this daemon (TS marks the field absent).
@@ -87,6 +90,7 @@ impl AgentObserveSummary {
             "sessionName": self.session_name,
             "relationship": self.relationship.map(|r| r.as_str()),
             "runtimeKind": self.runtime_kind,
+            "topLevel": self.top_level,
             "status": self.status.as_str(),
             "note": self.note,
             "noteAt": self.note_at,

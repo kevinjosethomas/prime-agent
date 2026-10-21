@@ -48,6 +48,7 @@ fn record_with_file(child_id: &str, session_file: &Path) -> Arc<Mutex<ChildRecor
         active_session_id: "child-live".to_string(),
         session_id: None,
         session_dir: String::new(),
+        top_level: false,
         model: String::new(),
         label: "child".to_string(),
         started_at_ms: 0,
