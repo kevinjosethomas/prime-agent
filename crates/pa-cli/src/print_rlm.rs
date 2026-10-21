@@ -280,6 +280,7 @@ impl InlineObserver {
                 }
                 .to_string(),
             ),
+            top_level: false,
             status: if running {
                 AgentFamilyStatus::Running
             } else {
