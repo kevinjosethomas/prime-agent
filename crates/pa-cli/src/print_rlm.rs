@@ -6,6 +6,7 @@
 //! `waitForRlmQuiescence` minus the #2270 bug (print must wait for RLM
 //! quiescence, not just headless idle).
 
+use std::future::Future;
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
 
