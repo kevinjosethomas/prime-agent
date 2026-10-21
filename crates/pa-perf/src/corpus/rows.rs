@@ -42,7 +42,7 @@ const MODELS: [(&str, &str); 5] = [
     ("google", "gemini-4-pro"),
 ];
 /// The user-message word bank: plain lowercase words, joined into sentences.
-const WORDS: [&str; 49] = [
+const WORDS: [&str; 47] = [
     "the",
     "quick",
     "bench",
@@ -74,8 +74,6 @@ const WORDS: [&str; 49] = [
     "context",
     "compaction",
     "summary",
-    "refine",
-    "harness",
     "memory",
     "skill",
     "label",
@@ -335,8 +333,6 @@ pub(crate) fn write_session_file(
                     from_hook: Some(false),
                     custom_instructions: None,
                     usage: Some(usage(rng)),
-                    harness_digest: None,
-                    harness_state_fingerprint: None,
                 })?,
                 rng,
             )?;

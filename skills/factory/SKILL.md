@@ -1,22 +1,24 @@
 ---
 name: factory
-description: Run state-machine workflows of spawned child agents: store a validated machine or dag spec as a continual-harness factory entry (rlm.harness.create_factory), then run, watch, stop, and resume it through rlm.factory. For the full authoring reference and API guide, call rlm.factory.help() in the kernel.
+description: Run state-machine workflows of spawned child agents: author machines in the library (MACHINE.md files, validated by `prime-agent factory import`) and run, watch, stop, and resume them through rlm.factory. For the full authoring reference and API guide, call rlm.factory.help() in the kernel.
 ---
 
 # Factory
 
-The factory runs state-machine workflows of spawned child agents. A stored
-factory entry — harness kind `factory`, written with
-`rlm.harness.create_factory` — declares the machine: states, each backed by
-a subagent spec, plus guarded transitions between them. The spec validates
-at write time (machine form, or `dag` sugar that compiles to one; pass
-exactly one), and an invalid spec is never stored.
-`await rlm.factory.run('<spec_id>')` then spawns each state's subagent as an
-ordinary child, feeds captured outputs into the successors' prompts, and
-drives the run to quiescence in a background kernel task — the call
-returns immediately and the run continues after the model turn ends. Use
-it when a workflow needs shape: fan-out, bounded loops (review/fix until a
-verdict approves), joins, or one child per list item.
+The factory runs state-machine workflows of spawned child agents. A machine
+declares the workflow: states, each backed by an inline subagent object,
+plus guarded transitions between them. Machines live in the machine
+library and nowhere else: a `MACHINE.md` file (frontmatter plus one
+`machine-spec` fence, machine form or `dag` sugar that compiles to one),
+imported with `prime-agent factory import <path>` — the import validates,
+so an invalid machine never persists.
+`await rlm.factory.run('<name>')` runs a library machine (which
+re-validates before starting) and spawns each state's subagent as an ordinary child, feeds
+captured outputs into the successors' prompts, and drives the run to
+quiescence in a background kernel task — the call returns immediately and
+the run continues after the model turn ends. Use it when a workflow needs
+shape: fan-out, bounded loops (review/fix until a verdict approves), joins,
+or one child per list item.
 
 **For the full authoring reference and API guide — states, ports, guards,
 joins, foreach, residents, budgets and policies, and the `rlm.factory`
@@ -29,7 +31,7 @@ PR; on builds without it, the module docstring in
 
 The factory ships disabled. `rlm.factory.help()` answers while it is off
 (the authoring guide stays readable before opting in), but every other
-`rlm.factory` call and every factory harness write refuses with one
+`rlm.factory` call refuses with one
 message: `the factory is disabled; run /factory on to enable it`. The
 user turns it on with `/factory on` in the client (`/factory off`
 disables it again — refused while the session still has live runs, and

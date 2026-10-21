@@ -1,5 +1,5 @@
-//! Print-mode session slash-command execution: `/compact`, `/refine`,
-//! `/goal`, and `/autonomous` run through the pa-core session-command
+//! Print-mode session slash-command execution: `/compact`, `/goal`, and
+//! `/autonomous` run through the pa-core session-command
 //! executor and stream the TS print-json shapes; a failed command rejects
 //! the prompt wait (stderr, exit 1, never the later prompts).
 
@@ -84,7 +84,6 @@ pub(crate) async fn execute_prompt_session_command(
     goal: &Arc<PrintGoalSurface>,
     model: &Model,
     api_key: Option<String>,
-    global_harness_dir: std::path::PathBuf,
     autonomous: &Arc<tokio::sync::Mutex<AutonomousRuntimeState>>,
     command: &SessionSlashCommand,
     images: &[pa_agent::types::ImageContent],
@@ -103,15 +102,11 @@ pub(crate) async fn execute_prompt_session_command(
         }
         goal.emit_stream_event(&event);
     }
-    // The refinement rows the executor's refine run appends (streamed in TS order
-    // ahead of `refine_complete`).
-    let entries_before = engine.session.entries().await.len();
     let execution = {
         let mut autonomous = autonomous.lock().await;
         let mut params = SessionCommandParams {
             model,
             api_key,
-            global_harness_dir,
             autonomous: &mut autonomous,
         };
         execute_session_command(engine, &mut params, command, images).await
@@ -142,23 +137,6 @@ pub(crate) async fn execute_prompt_session_command(
             )
         };
         goal.emit_stream_event(&end);
-    }
-    // `/refine`: the durable refinement rows stream as message pairs, then
-    // `refine_complete` (or `refine_failed`), before the result row.
-    if command.name == "refine" {
-        for row in
-            crate::print_boundary::TurnBoundary::refinement_rows_since(engine, entries_before).await
-        {
-            goal.emit_row_pair(&row);
-        }
-        if let Some(error) = &execution.refinement_failed {
-            goal.emit_stream_event(&json!({ "type": "refine_failed", "error": error }));
-        } else if let Some(result) = &execution.refinement {
-            goal.emit_stream_event(&json!({
-                "type": "refine_complete",
-                "result": serde_json::to_value(result).unwrap_or(Value::Null),
-            }));
-        }
     }
     // `/goal`: the state change publishes unconditionally, before the queue frame of a scheduled
     // continuation.
@@ -253,8 +231,6 @@ mod tests {
                         )
                     }
                 }
-                "refine_complete" => "refine_complete".to_string(),
-                "refine_failed" => "refine_failed".to_string(),
                 other => other.to_string(),
             })
             .collect()
@@ -286,7 +262,6 @@ mod tests {
         goal: Arc<PrintGoalSurface>,
         autonomous: Arc<tokio::sync::Mutex<AutonomousRuntimeState>>,
         frames: Frames,
-        harness_dir: std::path::PathBuf,
         /// Keeps the composed hook's autonomous arm alive for the bed's lifetime (the hook holds it
         /// weakly).
         _run: Arc<crate::headless_autonomous::HeadlessAutonomous>,
@@ -386,7 +361,6 @@ mod tests {
             goal,
             autonomous,
             frames,
-            harness_dir: dir.path().join("harness"),
             _run: run,
             _dir: dir,
         }
@@ -404,7 +378,6 @@ mod tests {
             &bed.goal,
             &bed.model,
             None,
-            bed.harness_dir.clone(),
             &bed.autonomous,
             &command(text),
             &[],
@@ -421,7 +394,6 @@ mod tests {
                     &mut boundary,
                     &bed.model,
                     None,
-                    bed.harness_dir.clone(),
                     &continuation,
                 )
                 .await
@@ -429,13 +401,7 @@ mod tests {
         }
         let mut boundary = TurnBoundary::new(false);
         bed.goal
-            .drive_boundary(
-                &bed.engine,
-                &mut boundary,
-                &bed.model,
-                None,
-                bed.harness_dir.clone(),
-            )
+            .drive_boundary(&bed.engine, &mut boundary, &bed.model, None)
             .await
             .unwrap();
         None

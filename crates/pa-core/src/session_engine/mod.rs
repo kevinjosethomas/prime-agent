@@ -3,7 +3,6 @@
 //! persistence); the Agent owns the loop, this layer decides admission.
 
 pub mod agent_messaging;
-pub mod auto_refine_trigger;
 pub mod auto_retry;
 pub mod auxiliary_model;
 pub mod branch_summarization;
@@ -17,7 +16,6 @@ pub mod error_classify;
 pub mod factory_host;
 pub mod goal_boundary;
 pub mod goal_driver;
-pub mod harness_digest;
 pub mod headless;
 pub mod host_requests;
 pub mod image_model_routing;
@@ -27,8 +25,6 @@ pub mod provider_adapter;
 pub mod provider_failover;
 pub mod provider_park;
 pub mod provider_retry;
-pub mod refine;
-mod refinement_gate;
 pub mod request_timing;
 pub mod response_timing;
 pub mod rlm_host;
@@ -125,26 +121,12 @@ pub struct AgentSession {
     session: Arc<tokio::sync::Mutex<SessionManager>>,
     prompt_templates: Vec<PromptTemplate>,
     slash_commands: SlashCommandRegistry,
-    /// Harness digest inputs; `None` without harness state.
-    harness_digest: Option<harness_digest::HarnessDigestContext>,
-    /// Fresh sessions defer the first-turn digest so untouched sessions
-    /// stay empty.
-    digest_pending: std::sync::atomic::AtomicBool,
     /// Compaction settings; defaults until the engine wiring resolves
     /// them.
     compaction: std::sync::RwLock<compaction::CompactionSettings>,
     /// Auxiliary-model routing for compaction summaries; `None` keeps
     /// every summarizer on the session model.
     auxiliary_model: Option<auxiliary_model::AuxiliaryModelContext>,
-    /// Whether this session may auto-refine; defaults off until the
-    /// engine wiring resolves it.
-    auto_refine_allowed: bool,
-    refinement_settings: Option<crate::settings::SettingsManager>,
-    /// The resolved auto-refine gates; the compact trigger reads them.
-    auto_refine: refine::AutoRefineGates,
-    /// Session-side auto-refine state the transport surfaces arm and
-    /// consume.
-    compact_auto_refine: std::sync::Mutex<auto_refine_trigger::CompactAutoRefineState>,
     /// The kernel-state probe behind the post-compaction
     /// `ipython_state` notice; `None` without a kernel.
     kernel_state: Option<std::sync::Arc<dyn ipython_state::CompactionKernelProbe>>,
@@ -178,14 +160,6 @@ pub struct AgentSession {
     /// a side question on an unwired session fails with the model-selection
     /// error (no fallback to the agent's id-carrying fn).
     side_question_stream_fn: std::sync::Mutex<Option<pa_agent::stream::StreamFn>>,
-    /// The session's agent dir (the settings root): the refine flow
-    /// resolves the `factory.enabled` opt-in from its settings.json on
-    /// every run, immediately before the plan applies, mirroring the
-    /// kernel-side factory gate that reads the same file through
-    /// `PRIME_AGENT_CODING_AGENT_DIR`. `None` until the engine wiring
-    /// resolves it (verification harnesses building the session directly
-    /// keep `None`, which reads as the fail-closed disabled default).
-    agent_dir: Option<std::path::PathBuf>,
     prompt_sources: Option<Arc<prompt_refresh::PromptSources>>,
     pinned_prompt: std::sync::RwLock<Option<String>>,
     prompt_guidelines: std::sync::RwLock<Option<Vec<String>>>,
@@ -206,7 +180,6 @@ impl AgentSession {
             agent,
             Arc::new(tokio::sync::Mutex::new(session)),
             prompt_templates,
-            None,
         )
         .await
     }
@@ -223,7 +196,6 @@ impl AgentSession {
         agent: Arc<Agent>,
         session: Arc<tokio::sync::Mutex<SessionManager>>,
         prompt_templates: Vec<PromptTemplate>,
-        harness_digest: Option<harness_digest::HarnessDigestContext>,
     ) -> anyhow::Result<Self> {
         let persistence = session.clone();
         agent
@@ -240,14 +212,8 @@ impl AgentSession {
             session,
             prompt_templates,
             slash_commands: SlashCommandRegistry::builtin(),
-            harness_digest,
-            digest_pending: std::sync::atomic::AtomicBool::new(false),
             compaction: std::sync::RwLock::new(compaction::CompactionSettings::default()),
             auxiliary_model: None,
-            auto_refine_allowed: false,
-            refinement_settings: None,
-            auto_refine: refine::AutoRefineGates::default(),
-            compact_auto_refine: std::sync::Mutex::default(),
             kernel_state: None,
             pending_next_turn_rows: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             skills: Vec::new(),
@@ -256,13 +222,11 @@ impl AgentSession {
             compaction_summary_sink: std::sync::Mutex::new(None),
             semantic_edges: std::sync::Mutex::new(None),
             side_question_stream_fn: std::sync::Mutex::new(None),
-            agent_dir: None,
             prompt_sources: None,
             pinned_prompt: std::sync::RwLock::new(None),
             prompt_guidelines: std::sync::RwLock::new(None),
             compaction_flight: tokio::sync::Mutex::new(()),
         };
-        this.ensure_harness_digest_context().await?;
         Ok(this)
     }
 
@@ -514,6 +478,16 @@ pub fn rebuilt_loop_messages(rebuilt: Vec<SessionAgentMessage>) -> Vec<AgentMess
         .into_iter()
         .filter_map(|message| session_message_to_loop(&message))
         .collect()
+}
+
+/// Session-artifact directory implied by a conversation-log path (the
+/// `session-artifacts/<id>` sibling tree). Shared by the engine's
+/// session-local resolution and the daemon's semantic-edge identity.
+#[must_use]
+pub fn session_artifact_dir_for_log(log: &std::path::Path) -> Option<std::path::PathBuf> {
+    let id = log.file_stem()?.to_string_lossy().to_string();
+    let artifacts_root = log.parent()?.parent()?.join("session-artifacts");
+    Some(artifacts_root.join(id))
 }
 
 fn now_millis() -> u64 {

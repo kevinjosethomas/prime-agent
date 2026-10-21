@@ -321,9 +321,6 @@ impl AgentSessionEngine {
                         return OverflowAttempt::Cancelled;
                     }
                 }
-                // The compaction arms the compact-trigger review; the
-                // retried turn's settled boundary services it.
-                self.mark_compact_auto_refine_pending();
                 // The wire result is the `CompactionResult` shape; the
                 // end event carries `willRetry: true` (the turn re-issues).
                 let result = crate::compaction::compaction_result_value(&run.result, &run.entry);

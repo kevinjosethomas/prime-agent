@@ -52,7 +52,7 @@ pub struct SessionEngineConfig {
     /// the only surface.
     pub progress_note_emit: Option<super::rlm_host::RlmProgressNoteEmit>,
     /// The session's depth in the RLM recursion tree (0 for top-level
-    /// sessions); gates the `refine.*` host requests.
+    /// sessions).
     pub rlm_depth: Option<u32>,
     /// Whether the session runs without a daemon: nothing outside the
     /// session itself (no scheduler, no bash-completion wake) starts a
@@ -131,7 +131,6 @@ pub struct SessionEngine {
     /// request surface over the kernel's factory runs, built from the
     /// session facts captured in `create_session` (the #3184 capture
     /// pattern) and reached through [`SessionEngine::factory_activity`].
-    pub factory_host: super::factory_host::FactoryHost,
     /// The progress-note store the `rlm.progress.note` handler throttles
     /// into; the embedding mirrors the Arc for sync reads.
     pub rlm_progress_notes: std::sync::Arc<super::rlm_host::RlmProgressNotes>,
@@ -250,21 +249,14 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         config.cron_store.clone(),
     );
 
-    let refinement_settings = settings.reopen();
     let service_tier_preference = settings.get_default_service_tier();
     // Captured before `settings` moves into the resource loader: the
-    // compaction budget and the auto-refine gates.
+    // compaction budget.
     let compaction_settings = settings.settings().compaction.clone().unwrap_or_default();
     let compaction_threshold_percent = settings.get_compaction_threshold_percent();
-    let auto_refine_gates =
-        super::refine::AutoRefineGates::from_settings(settings.settings().auto_refine.as_ref());
     // Request timing: the settings half of the flag is read once here
     // (`settings` moves into the loader); the `PI_REQUEST_TIMING` half stays live.
     let request_timing_settings = settings.get_request_timing();
-    // Captured before `settings` moves into the resource loader: the
-    // factory host bridge's preflight facts (the daemon `allowedModels`
-    // pin), like the request-timing snapshot above.
-    let factory_allowed_models = settings.get_allowed_models();
     let (mcp_skill_overrides, mcp_generic_servers, built_manager) =
         mcp_gating(&settings, config.agent_dir.clone()).await?;
     let mcp_manager = config
@@ -355,9 +347,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // serve live views per request.
     crate::mcp::McpManager::register_host_handlers(&mcp_manager, &mut handlers);
     let turn_boundary = Arc::new(super::turn_boundary::TurnBoundaryRequests::new());
-    let _ = turn_boundary
-        .refinement_settings
-        .set(refinement_settings.reopen());
     turn_boundary.register_model_info_handler(&mut handlers, model_info.clone());
     let keep_recent_tokens = compaction_settings
         .keep_recent_tokens
@@ -376,16 +365,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             config
                 .conversation_log_path
                 .as_deref()
-                .and_then(super::harness_digest::session_artifact_dir_for_log)
+                .and_then(super::session_artifact_dir_for_log)
         });
-    let local_harness_dir =
-        crate::refinement::get_local_harness_state_dir(session_artifact_dir.as_deref());
-    // The only sessions whose `refine.*` host requests register and the
-    // compact-trigger auto-refine may run for.
-    let auto_refine_allowed = config.rlm_depth.unwrap_or(0) == 0 && local_harness_dir.is_some();
-    if auto_refine_allowed {
-        turn_boundary.register_refine_handlers(&mut handlers);
-    }
     // Kernel boots (duration, cold/revived, outcome) count into the
     // session counters.
     let on_bootstrap_result = config.telemetry.as_ref().map(|_| {
@@ -566,34 +547,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         prompt_vision_capable,
     );
 
-    // Captured before the digest context moves the local harness dir and
-    // the loop wiring moves the session model: the factory host bridge's
-    // config (the #3184 capture pattern).
-    let factory_local_harness_dir = local_harness_dir.clone();
-    let factory_session_model = Some(model.clone());
-    // Harness digest inputs: global state from the agent dir, local state
-    // from the session artifacts (or the daemon-owned conversation log), and
-    // the interfaces the digest may reference.
-    let digest_context = super::harness_digest::HarnessDigestContext {
-        global_dir: crate::refinement::get_global_harness_state_dir(&config.agent_dir),
-        local_dir: local_harness_dir,
-        include_ipython: active_tool_names
-            .iter()
-            .any(|name| name == PYTHON_TOOL_NAME),
-        include_shell_examples: active_tool_names.iter().any(|name| name == "bash"),
-        include_refine: resources.skills.iter().any(|skill| {
-            !skill.disable_model_invocation
-                && skill.name == crate::prompts::system_prompt::REFINE_SKILL_NAME
-        }),
-    };
     let (existing_messages, has_thinking_entry, has_service_tier_entry) = {
         let session = wiring.session.lock().await;
         let messages = super::compact_session::rebuilt_context_after_compaction(&session);
-        let messages = if super::refinement_gate::enabled(Some(&refinement_settings)) {
-            messages
-        } else {
-            super::refinement_gate::without_refinements(messages)
-        };
         let has_thinking_entry = session.has_thinking_level();
         let has_service_tier_entry = session.has_service_tier();
         (messages, has_thinking_entry, has_service_tier_entry)
@@ -664,10 +620,10 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         stream_fn: Some(agent_stream_fn),
         // The session conversion rules apply at the loop's LLM boundary
         // (TS `convertToLlm`): bookkeeping custom rows drop, everything
-        // else (the harness digest included) becomes a user turn.
+        // else becomes a user turn.
         convert_to_llm: Some(super::request_timing::instrument_convert_to_llm(
             std::sync::Arc::clone(&request_timing_wiring),
-            super::refinement_gate::convert_to_llm(refinement_settings.reopen()),
+            super::messages::engine_convert_to_llm(),
         )),
         // The Rust engine wires no transform, so the instrumented seam
         // wraps a pass-through that marks the turn's dispatch moment.
@@ -717,24 +673,10 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         agent.clone(),
         wiring.session.clone(),
         resources.prompts.clone(),
-        super::refinement_gate::enabled(Some(&refinement_settings))
-            .then_some(digest_context.clone()),
     )
     .await?;
     session.prompt_sources = Some(prompt_sources);
     *session.pinned_prompt.write().unwrap() = Some(system_prompt.clone());
-    session.set_auto_refine(auto_refine_allowed, auto_refine_gates);
-    session.set_agent_dir(config.agent_dir.clone());
-    // Keep the context descriptor even while disabled, so re-enabling can load it.
-    session.harness_digest = Some(digest_context);
-    session.refinement_settings = Some(refinement_settings);
-    // A disabled startup has never delivered its filtered digest. Defer that
-    // first delivery without re-arming digests already consumed in a live session.
-    if !session.harness_refinements_enabled() {
-        session
-            .digest_pending
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-    }
     // Every compaction path reads the session's resolved compaction
     // settings (TS `getCompactionSettings`): `/compact` matches the
     // `compact.*` turn-boundary tool's `keepRecentTokens`/`reserveTokens`.
@@ -841,20 +783,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         wiring.rlm_usage.set_telemetry(telemetry.clone());
     }
     let goal_driver = wiring.runtime.goal_driver().clone();
-    // The factory host bridge: registered from `create_session` (the #3184
-    // pattern), so the daemon/TUI factory surface resolves against this
-    // session's harness dirs, model registry, and the allowlist pin. The
-    // kernel owns the runs; the bridge prefights and tunnels. Captured
-    // before the loop wiring moves the session model and the digest moves
-    // the local harness dir.
-    let factory_host =
-        super::factory_host::FactoryHost::new(super::factory_host::FactoryHostConfig {
-            agent_dir: config.agent_dir.clone(),
-            global_harness_dir: crate::refinement::get_global_harness_state_dir(&config.agent_dir),
-            local_harness_dir: factory_local_harness_dir,
-            session_model: factory_session_model,
-            allowed_models: factory_allowed_models,
-        });
     Ok(SessionEngine {
         session,
         skills: resources.skills,
@@ -868,7 +796,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         turn_boundary,
         telemetry,
         rlm_usage: wiring.rlm_usage,
-        factory_host,
         rlm_progress_notes: Arc::clone(&wiring.rlm.notes),
         provisioner,
     })
@@ -947,17 +874,14 @@ impl SessionEngine {
     }
 
     /// One factory activity over this session's live kernel: the `/factory`
-    /// view's bridge lane (graph/status/watch/run/stop/resume). A `run`
-    /// prefights the spec's declared models first (allowlist pin, request
-    /// auth) so a doomed run fails before any child spawns; then the
+    /// view's bridge lane (graph/status/watch/run/stop/resume). The
     /// out-of-band frame carries the request into the kernel's executor,
-    /// which owns the run registry.
+    /// which owns the run registry and the machine library resolution.
     ///
     /// # Errors
     ///
-    /// Returns an error when the arguments are invalid, the preflight
-    /// fails, the session has no running kernel, or the kernel request
-    /// fails or does not settle.
+    /// Returns an error when the arguments are invalid, the session has no
+    /// running kernel, or the kernel request fails or does not settle.
     pub async fn factory_activity(
         &self,
         action: &str,
@@ -968,23 +892,6 @@ impl SessionEngine {
         let request = super::factory_host::FactoryActivityRequest::parse(
             action, run_id, spec_id, timeout_ms,
         )?;
-        if request.action == "run" {
-            let spec_id = request
-                .spec_id
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("factory activity run requires specId"))?;
-            // The preflight reads the harness states, the model catalog,
-            // and the auth caches from disk — blocking work off the
-            // executor (the daemon's established settings-read posture:
-            // `spawn_blocking`, never the async lane), so a stalled
-            // filesystem can never stall the worker's other activity.
-            let host = self.factory_host.clone();
-            let spec_id = spec_id.to_string();
-            let preflight = tokio::task::spawn_blocking(move || host.preflight_run(&spec_id))
-                .await
-                .map_err(|join| anyhow::anyhow!("factory run preflight join failed: {join}"))?;
-            preflight?;
-        }
         let manager = self
             .provisioner
             .manager()

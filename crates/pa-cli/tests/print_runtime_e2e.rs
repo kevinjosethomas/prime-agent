@@ -482,9 +482,6 @@ fn print_mode_overflow_retry_recovers_the_turn() {
             overflow_error(0),
             {"text": "the summary"},
             {"text": "recovered reply"},
-            // The compact-trigger auto-refine review the recovered turn's
-            // checkpoint runs: a decline, so the review stays silent.
-            r#"{"shouldRefine": false, "rationale": "one-off tool output"}"#,
         ]
     });
     let seed = format!("seed turn {}", "x".repeat(48_000));
@@ -660,9 +657,6 @@ fn print_mode_stale_overflow_recovers_before_the_next_prompt_after_a_resume() {
         "responses": [
             {"text": "the stale recovery summary"},
             {"text": "recovered after the resume"},
-            // The compact-trigger auto-refine review the recovered turn's
-            // checkpoint runs: a decline, so the review stays silent.
-            r#"{"shouldRefine": false, "rationale": "one-off tool output"}"#,
         ]
     });
     let (stdout, stderr, code) =
@@ -681,66 +675,6 @@ fn print_mode_stale_overflow_recovers_before_the_next_prompt_after_a_resume() {
 }
 
 // The json event stream's TS parity surface (verified against the TS binary).
-
-/// The harness digest pair (TS commit-time injection): the first turn
-/// streams the digest pair between `turn_start` and the user pair.
-#[test]
-fn print_mode_json_streams_the_harness_digest_pair() {
-    let home = isolated_home();
-    let script = serde_json::json!({ "responses": ["json answer"] });
-    let (stdout, stderr, code) = run_in_home(home.path(), &["--mode", "json", "-p", "hi"], &script);
-    assert_eq!(code, 0, "stderr: {stderr}");
-    let events: Vec<serde_json::Value> = stdout
-        .lines()
-        .map(serde_json::from_str)
-        .collect::<Result<_, _>>()
-        .unwrap();
-    let digest_at = events
-        .iter()
-        .position(|event| {
-            event["type"] == "message_start"
-                && event["message"]["role"] == "custom"
-                && event["message"]["customType"] == "harness_digest"
-        })
-        .expect("the digest message_start event");
-    let turn_start_at = events
-        .iter()
-        .position(|event| event["type"] == "turn_start")
-        .expect("turn_start");
-    let user_at = events
-        .iter()
-        .position(|event| event["type"] == "message_start" && event["message"]["role"] == "user")
-        .expect("the user message pair");
-    assert!(turn_start_at < digest_at && digest_at < user_at);
-    let digest = &events[digest_at]["message"];
-    assert!(digest["content"].is_string());
-    assert!(digest["content"]
-        .as_str()
-        .unwrap()
-        .starts_with("[harness-digest]"));
-    assert!(digest["content"]
-        .as_str()
-        .unwrap()
-        .ends_with("</harness_state>"));
-    assert_eq!(digest["display"], false);
-    assert!(digest["details"]["digest"].is_string());
-    assert!(digest["details"]["digest"]
-        .as_str()
-        .unwrap()
-        .contains("# Continual Harness State"));
-    let digest_end_at = events
-        .iter()
-        .position(|event| {
-            event["type"] == "message_end"
-                && event["message"]["role"] == "custom"
-                && event["message"]["customType"] == "harness_digest"
-        })
-        .expect("the digest message_end event");
-    assert_eq!(
-        events[digest_at]["message"],
-        events[digest_end_at]["message"]
-    );
-}
 
 /// The streaming deltas (TS `message_update`): the wire carries the slim
 /// deltas (`partial` never rides the wire).

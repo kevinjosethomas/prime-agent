@@ -216,7 +216,6 @@ impl AgentView {
             | ChatEntry::AgentMessage(_)
             | ChatEntry::ShellCompletion(_)
             | ChatEntry::InjectedPrompt(_)
-            | ChatEntry::RefinementOutcome(_)
             | ChatEntry::CustomPanel(_) => true,
             ChatEntry::Assistant(message) => !message.streaming,
             ChatEntry::Tool(card) => {
@@ -260,10 +259,9 @@ impl AgentView {
             // chat's last child is an agent message).
             ChatEntry::BashExecution(card) => !card.suppress_leading_space,
             ChatEntry::Assistant(_) => preceded_by_tool_activity,
-            ChatEntry::Status { .. }
-            | ChatEntry::InjectedPrompt(_)
-            | ChatEntry::RefinementOutcome(_)
-            | ChatEntry::CustomPanel(_) => false,
+            ChatEntry::Status { .. } | ChatEntry::InjectedPrompt(_) | ChatEntry::CustomPanel(_) => {
+                false
+            }
         }
     }
 

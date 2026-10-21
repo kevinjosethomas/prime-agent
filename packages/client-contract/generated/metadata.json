@@ -673,13 +673,6 @@
       "longRunning": false
     },
     {
-      "type": "refine",
-      "plane": "session",
-      "mutating": true,
-      "sessionPlane": true,
-      "longRunning": false
-    },
-    {
       "type": "abort_compaction",
       "plane": "session",
       "mutating": true,

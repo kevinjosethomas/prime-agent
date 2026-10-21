@@ -782,9 +782,6 @@ impl AgentSessionEngine {
         // CURRENT model.
         *self.provider_target.write().expect("provider target lock") = None;
         if let Some(engine) = built {
-            // The teardown drops the compact-trigger state with a version bump: an in-flight
-            // review round never applies its edits.
-            engine.session.discard_compact_auto_refine();
             if let Some(telemetry) = &engine.telemetry {
                 let _ = telemetry.end().await;
             }
@@ -907,7 +904,6 @@ impl AgentSessionEngine {
         let mut params = SessionCommandParams {
             model: &model,
             api_key,
-            global_harness_dir: self.config.agent_dir.clone(),
             autonomous: &mut autonomous,
         };
         // The lock covers the clone only: the command below can run a summarizer call, so the

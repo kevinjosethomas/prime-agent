@@ -5,9 +5,6 @@ use crate::skills::{format_skills_for_prompt, Skill};
 
 use super::layers;
 
-/// The bundled skill the refinement trigger guidance keys on.
-pub const REFINE_SKILL_NAME: &str = "refine";
-
 /// Whether a prompt segment belongs to the cache-stable prefix or the
 /// session-specific tail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -416,7 +413,6 @@ mod tests {
             messages_path: Some("/log.jsonl".to_string()),
             skills: vec![
                 skill("web-search", Some("websearch")),
-                skill("refine", Some("refine")),
                 skill("agent-message", Some("agent_message")),
             ],
             ..Default::default()

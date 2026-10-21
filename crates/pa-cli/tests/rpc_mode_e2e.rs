@@ -277,7 +277,7 @@ fn rpc_prompt_streams_events_after_the_response() {
         before.is_empty(),
         "the prompt response precedes every turn event: {before:?}"
     );
-    // The harness digest rides ahead as its own row, so the reply starts
+    // The prompt's preface rows ride ahead, so the reply starts
     // at the first ASSISTANT `message_start`.
     let deadline = Instant::now() + TIMEOUT;
     loop {
@@ -904,7 +904,7 @@ fn rpc_sigterm_during_replacement_exits_promptly() {
     client.spawn_stderr = None;
 }
 
-/// A deterministic large session fixture (header, harness-digest, user/assistant/
+/// A deterministic large session fixture (header, user/assistant/
 /// toolResult turns, final marker pair) sized to scale the pre-summarizer CPU span.
 fn write_corpus_fixture(path: &std::path::Path, size_mib: usize) {
     let home = path.parent().unwrap().parent().unwrap();
@@ -936,9 +936,9 @@ fn write_corpus_fixture(path: &std::path::Path, size_mib: usize) {
             &mut counter,
             &mut parent,
             json!({
-                "customType": "harness_digest",
+                "customType": "corpus_note",
                 "content": format!(
-                    "[harness-digest] base note {base}: persistent state summary for the corpus."
+                    "[corpus-note] base note {base}: persistent state summary for the corpus."
                 ),
                 "type": "custom_message",
             }),
@@ -1017,9 +1017,9 @@ fn write_corpus_fixture(path: &std::path::Path, size_mib: usize) {
                 &mut counter,
                 &mut parent,
                 json!({
-                    "customType": "harness_digest",
+                    "customType": "corpus_note",
                     "content": format!(
-                        "[harness-digest] note {turn}: persistent state summary for the corpus."
+                        "[corpus-note] note {turn}: persistent state summary for the corpus."
                     ),
                     "type": "custom_message",
                 }),

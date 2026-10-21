@@ -311,15 +311,6 @@ impl SessionEngine for AgentSessionEngine {
         decision.fallback_message
     }
 
-    /// The `compact` command path: the compact-trigger auto-refine round
-    /// runs after the compaction answered (the same gated body as the
-    /// boundaries).
-    fn consume_compact_auto_refine(
-        &self,
-    ) -> anyhow::Result<Option<pa_core::refinement::RefinementResult>> {
-        self.consume_compact_auto_refine_round()
-    }
-
     /// The worker's live session summary, rendered into the sender identity block.
     fn set_session_summary(&self, summary: Value) {
         *self
@@ -685,8 +676,6 @@ impl SessionEngine for AgentSessionEngine {
                         telemetry.note_compaction(Some(run.duration_ms));
                     }
                 }
-                // The compact-trigger auto-refine review runs after every successful compaction.
-                self.mark_compact_auto_refine_pending();
                 CompactionOutcome::Compacted {
                     run: Box::new(CompactionRun {
                         // The wire result is the TS `CompactionResult` shape;
@@ -807,8 +796,6 @@ impl SessionEngine for AgentSessionEngine {
             let Some(engine) = guard.as_deref() else {
                 return Ok(());
             };
-            // The moved branch invalidates an armed review.
-            engine.session.discard_compact_auto_refine();
             engine
                 .session
                 .rebuild_branch_context(branch_entries)
@@ -864,7 +851,6 @@ impl SessionEngine for AgentSessionEngine {
         &self,
         identity: crate::engine::RlmSessionIdentity,
     ) -> anyhow::Result<()> {
-        // This session's own depth gates the kernel `refine.*` host requests (depth-0 only).
         self.rlm_depth
             .store(identity.rlm_depth, std::sync::atomic::Ordering::Relaxed);
         if let Some(thinking) = &identity.thinking {
@@ -899,7 +885,7 @@ impl SessionEngine for AgentSessionEngine {
                 .session_file
                 .as_deref()
                 .map(std::path::Path::new)
-                .and_then(pa_core::session_engine::harness_digest::session_artifact_dir_for_log);
+                .and_then(pa_core::session_engine::session_artifact_dir_for_log);
             pa_core::session_engine::semantic_edges::SemanticEdgeIdentity {
                 session_id,
                 ledger_path: pa_core::session_engine::semantic_edges::semantic_edge_ledger_path(
@@ -1246,35 +1232,6 @@ impl SessionEngine for AgentSessionEngine {
                 "parameters": tool.parameters(),
             }))
         })
-    }
-
-    fn run_refinement(
-        &self,
-        options: pa_core::session_engine::refine::RefineOptions,
-    ) -> anyhow::Result<Value> {
-        let model = self.resolve_model()?;
-        self.ensure_core_session(&model)?;
-        let api_key = self.resolve_request_api_key(&model);
-        let global_harness_dir = self.config.agent_dir.clone();
-        // The lock covers the clone only; the model call below must not ride it.
-        let core = self
-            .session
-            .blocking_lock()
-            .clone()
-            .expect("session built by ensure_core_session");
-        let result = self.runtime.block_on(async {
-            core.session
-                .refine(
-                    &options,
-                    pa_core::session_engine::refine::RefinementSource::User,
-                    &model,
-                    api_key,
-                    global_harness_dir,
-                )
-                .await
-        })?;
-        serde_json::to_value(&result)
-            .map_err(|error| anyhow::anyhow!("refinement result conversion failed: {error}"))
     }
 
     fn rlm_max_depth_status(&self) -> Value {

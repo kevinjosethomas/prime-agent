@@ -13,15 +13,11 @@ pub const COMPACTION_SUMMARY_PREFIX: &str = "[compaction-summary]\n\nThe convers
 pub const COMPACTION_SUMMARY_SUFFIX: &str = "\n</summary>";
 pub const BRANCH_SUMMARY_PREFIX: &str = "[branch-summary]\n\nThe following is a summary of a branch that this conversation came back from:\n\n<summary>\n";
 pub const BRANCH_SUMMARY_SUFFIX: &str = "\n</summary>";
-pub const HARNESS_DIGEST_PREFIX: &str = "[harness-digest]\n\nThe persistent memories produced across this session so far:\n\n<harness_state>\n";
-pub const HARNESS_DIGEST_SUFFIX: &str = "\n</harness_state>";
 
 pub use pa_types::slash_commands::{
     SESSION_SLASH_COMMAND_CUSTOM_TYPE, SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE,
 };
 pub const COMPACTION_OUTCOME_CUSTOM_TYPE: &str = "compaction_outcome";
-pub const REFINEMENT_OUTCOME_CUSTOM_TYPE: &str = "refinement_outcome";
-pub const REFINEMENT_NOTICE_CUSTOM_TYPE: &str = "refinement_notice";
 /// The durable single-row disclosure of one provider-retry episode (SANCTIONED
 /// DIVERGENCE, operator ruling 2026-09-23): a user-facing disclosure, never
 /// model context — `convert_to_llm` drops it.
@@ -323,7 +319,6 @@ pub fn convert_to_llm(messages: &[AgentMessage]) -> Vec<AgentMessage> {
                     SESSION_SLASH_COMMAND_CUSTOM_TYPE
                         | SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE
                         | COMPACTION_OUTCOME_CUSTOM_TYPE
-                        | REFINEMENT_OUTCOME_CUSTOM_TYPE
                         | PROVIDER_RETRY_OUTCOME_CUSTOM_TYPE
                         | crate::prompts::model_prompts::MODEL_PROMPT_ERROR_CUSTOM_TYPE
                 ) {
@@ -350,23 +345,14 @@ pub fn convert_to_llm(messages: &[AgentMessage]) -> Vec<AgentMessage> {
                 timestamp: summary.timestamp,
                 rest: serde_json::Map::default(),
             }),
-            AgentMessage::CompactionSummary(summary) => {
-                let digest_block = summary
-                    .harness_digest
-                    .as_deref()
-                    .map(|digest| {
-                        format!("{HARNESS_DIGEST_PREFIX}{digest}{HARNESS_DIGEST_SUFFIX}\n\n")
-                    })
-                    .unwrap_or_default();
-                AgentMessage::User(UserMessage {
-                    content: UserContent::Blocks(vec![text_block(format!(
-                        "{digest_block}{COMPACTION_SUMMARY_PREFIX}{}{COMPACTION_SUMMARY_SUFFIX}",
-                        summary.summary
-                    ))]),
-                    timestamp: summary.timestamp,
-                    rest: serde_json::Map::default(),
-                })
-            }
+            AgentMessage::CompactionSummary(summary) => AgentMessage::User(UserMessage {
+                content: UserContent::Blocks(vec![text_block(format!(
+                    "{COMPACTION_SUMMARY_PREFIX}{}{COMPACTION_SUMMARY_SUFFIX}",
+                    summary.summary
+                ))]),
+                timestamp: summary.timestamp,
+                rest: serde_json::Map::default(),
+            }),
             AgentMessage::User(_) | AgentMessage::Assistant(_) | AgentMessage::ToolResult(_) => {
                 message.clone()
             }
@@ -382,7 +368,7 @@ pub type LlmToolResultMessage = ToolResultMessage;
 
 /// The loop-boundary LLM conversion wired into the agent's seam: standard rows pass
 /// through; custom rows cross through the session wire shape so the session conversion
-/// rules apply (what lets the harness-digest row ride the loop to the provider).
+/// rules apply (what lets a custom note row ride the loop to the provider).
 #[must_use]
 pub fn loop_convert_to_llm(
     messages: Vec<pa_agent::types::AgentMessage>,
@@ -560,8 +546,6 @@ mod tests {
                 tokens_before: 1,
                 retained_message_count: None,
                 custom_instructions: None,
-                harness_digest: Some("digest".to_string()),
-                harness_state_fingerprint: None,
                 timestamp: 0,
             }),
         ];
@@ -583,24 +567,18 @@ mod tests {
             AgentMessage::User(user) => user.content.text(),
             _ => panic!("expected user"),
         };
-        assert!(compaction.contains("[harness-digest]"));
-        assert!(compaction.contains("<harness_state>\ndigest\n</harness_state>"));
         assert!(compaction.contains("[compaction-summary]"));
         assert!(compaction.contains("the story"));
     }
 
     #[test]
     fn loop_conversion_applies_session_rules_to_custom_rows() {
-        let digest_row: pa_agent::types::AgentMessage = serde_json::from_value(serde_json::json!({
+        let note_row: pa_agent::types::AgentMessage = serde_json::from_value(serde_json::json!({
             "role": "custom",
-            "customType": "harness_digest",
-            "content": "[harness-digest]
-
-<harness_state>
-state
-</harness_state>",
+            "customType": "engine_note",
+            "content": "an engine note",
             "display": false,
-            "details": { "digest": "state" },
+            "details": { "note": "engine" },
             "timestamp": 5
         }))
         .unwrap();
@@ -618,17 +596,17 @@ state
             serde_json::from_value(serde_json::json!({ "role": "arbitrary", "payload": "x" }))
                 .unwrap();
         let user = pa_agent::types::AgentMessage::user("keep");
-        let converted = loop_convert_to_llm(vec![digest_row, user, outcome_row, unknown_row]);
+        let converted = loop_convert_to_llm(vec![note_row, user, outcome_row, unknown_row]);
         assert_eq!(converted.len(), 2);
         match &converted[0] {
             pa_agent::types::Message::User(user) => {
-                // The digest row converts to a text-part array, not a
+                // The note row converts to a text-part array, not a
                 // bare string.
                 assert!(
                     matches!(&user.content, pa_agent::types::UserContent::Parts(parts)
                         if parts.iter().any(|part| matches!(part,
                             pa_agent::types::UserPart::Text(text)
-                                if text.text.contains("[harness-digest]"))))
+                                if text.text.contains("an engine note"))))
                 );
                 assert_eq!(user.timestamp, 5);
             }

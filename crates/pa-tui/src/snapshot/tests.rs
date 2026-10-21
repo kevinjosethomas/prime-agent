@@ -1533,7 +1533,7 @@ fn session_command_rows_respect_display_and_shape() {
     let hidden = json!({
         "role": "custom",
         "customType": "session_slash_command_result",
-        "content": "Refined continual harness state: 1 edit applied.",
+        "content": "Goal cleared.",
         "display": false,
     });
     assert!(custom_message_entries(&hidden).is_empty());
@@ -1556,8 +1556,8 @@ fn session_command_rows_respect_display_and_shape() {
     );
     let other = json!({
         "role": "custom",
-        "customType": "harness_digest",
-        "content": "digest",
+        "customType": "engine_note",
+        "content": "a note",
         "display": true,
     });
     assert!(matches!(

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Hosted actual factory harness validator API receipt.
+"""Hosted actual factory machine-validator receipt.
 
-Rust executes real harness writes through its kernel. Historical TS absence
-is scoped to its actual capability advertisement, not full behavior parity.
+The host seeds fixture machines in the user machine library; the Rust
+kernel validates them through its spec validator (a machine whose spec
+fails validation is refused as broken). Historical TS absence is scoped to
+its actual capability advertisement, not full parity.
 """
 import argparse
 import http.server
@@ -21,17 +23,13 @@ from review_restore_notice_parity import texts
 
 MARKER = 'FACTORY_VALIDATION_RESULT='
 CELL = '''import json
-fixture_harness = rlm.get_harness_state()
 fixture_results = []
-for label, retries in [('positive', 1), ('zero', 0), ('malformed', 'bad')]:
+for label in ('positive', 'zero', 'malformed'):
     try:
-        value = fixture_harness.create_factory('Validation fixture', 'Production harness write',
-            id='fixture-' + label, dag={'nodes': [{'id': 'watcher', 'lifecycle': 'resident',
-                'subagent': {'prompt': 'Watch fixture'}, 'retries': retries}]})
-        fixture_results.append({'case': label, 'stored': fixture_harness.get('factory', 'fixture-' + label) is not None})
+        await rlm.factory.graph('fixture-' + label)
+        fixture_results.append({'case': label, 'resolved': True})
     except ValueError as error:
-        fixture_results.append({'case': label, 'error': str(error),
-            'stored': fixture_harness.get('factory', 'fixture-' + label) is not None})
+        fixture_results.append({'case': label, 'error': str(error), 'resolved': False})
 print('FACTORY_VALIDATION_RESULT=' + json.dumps(fixture_results))'''
 
 
@@ -97,10 +95,10 @@ def extract(requests):
 def validate(probe):
     assert len(probe) == 3, probe
     positive, zero, malformed = probe
-    assert positive['case'] == 'positive' and positive['stored'] is False, positive
+    assert positive['case'] == 'positive' and positive['resolved'] is False, positive
     assert 'resident node watcher cannot declare retries' in positive['error'], positive
-    assert zero == {'case': 'zero', 'stored': True}, zero
-    assert malformed['case'] == 'malformed' and malformed['stored'] is False, malformed
+    assert zero == {'case': 'zero', 'resolved': True}, zero
+    assert malformed['case'] == 'malformed' and malformed['resolved'] is False, malformed
     assert 'retries must be an integer between 0 and 10' in malformed['error'], malformed
 
 
@@ -137,6 +135,16 @@ def observe(binary, kind, root, observed):
             active = created.get('activeSessionId') or created.get('id')
             assert active, created
             control.call('attach', activeSessionId=active)
+            for label, retries in (('positive', 1), ('zero', 0), ('malformed', 'bad')):
+                machine_dir = root / 'agent' / 'machines' / ('fixture-' + label)
+                machine_dir.mkdir(parents=True, exist_ok=True)
+                spec = {'nodes': [{'id': 'watcher', 'lifecycle': 'resident',
+                    'subagent': {'prompt': 'Watch fixture'}, 'retries': retries}]}
+                (machine_dir / 'MACHINE.md').write_text(
+                    '---\nname: fixture-%s\ndescription: Validation fixture %s\n'
+                    'version: 1\nauthor: Prime Agent\n---\n\n'
+                    '# fixture-%s\n\n```machine-spec\n%s\n```\n'
+                    % (label, label, label, json.dumps(spec, indent=2)))
             control.call('prompt', activeSessionId=active, message='Run FACTORY_VALIDATION_PARENT')
             control.call('wait_for_idle', timeout_seconds=120, activeSessionId=active)
             observed['probe'] = extract(server.parent_requests)

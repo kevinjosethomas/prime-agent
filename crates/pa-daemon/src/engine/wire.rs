@@ -106,33 +106,26 @@ pub enum EngineEvent {
     /// forwards only the later runs' (the worker's frame opens the first run).
     AgentStart,
     /// An agent run ended (TS wire `agent_end`): the run's whole message
-    /// set in the session wire shapes — the prompt rows (the harness digest
-    /// and the user row), every assistant row, the tool results, and every
+    /// set in the session wire shapes — the prompt rows (the user row),
+    /// every assistant row, the tool results, and every
     /// steering/follow-up/continuation row drained within the run. Emitted
     /// per agent run, aborts and provider errors included (the messages
     /// carry the aborted/error row), like the TS session's loop-event
     /// forwarding. The rows themselves persist and broadcast through
     /// their own events; this frame carries only the accumulated payload.
-    AgentEnd {
-        messages: Vec<Value>,
-    },
+    AgentEnd { messages: Vec<Value> },
     /// A durable custom message (wire `role: "custom"`): recorded into the
     /// session store, framed to clients as a `message_start` + `message_end` pair.
     CustomMessage(Value),
     /// A compaction run started (TS `compaction_start` wire event); the
     /// payload is the complete event. Emitted before the summarizer runs so
     /// attached clients can swap their loader to the compaction label.
-    CompactionStart {
-        event: Value,
-    },
+    CompactionStart { event: Value },
     /// A compaction settled (TS `compaction_end` wire event): `entry` is the
     /// `compaction` record to persist (null when the run skipped or
     /// failed), `event` the complete client-facing event (result on
     /// success, errorMessage with its severity otherwise).
-    Compaction {
-        entry: Value,
-        event: Value,
-    },
+    Compaction { entry: Value, event: Value },
     /// The prompt completed (successfully or not).
     Done(std::result::Result<(), String>),
     /// The prompt settled as aborted: like `Done(Err(..))`, except an
@@ -141,9 +134,7 @@ pub enum EngineEvent {
     /// `goal_update`: the session goal state changed (TS wire event; the
     /// ACP adapter surfaces it as the namespaced `_meta.goal` update).
     /// The payload is the TS `GoalState` wire object.
-    GoalUpdate {
-        goal: Value,
-    },
+    GoalUpdate { goal: Value },
     /// `auto_retry_start`: a provider failure is being retried (TS wire
     /// event; the interactive transcript shows the retry countdown). A
     /// `Backup` reason is a provider-failover switch: the failed turn
@@ -163,12 +154,6 @@ pub enum EngineEvent {
         attempt: u32,
         final_error: Option<String>,
         restored_model: Option<String>,
-    },
-    RefineComplete {
-        result: Value,
-    },
-    RefineFailed {
-        error: String,
     },
 }
 

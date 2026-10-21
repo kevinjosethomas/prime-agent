@@ -350,8 +350,8 @@ impl PrintGoalSurface {
         }
     }
 
-    /// One raw stream event (the session-command events: `compaction_start`, `compaction_end`,
-    /// `refine_complete`, `refine_failed`).
+    /// One raw stream event (the session-command events: `compaction_start`,
+    /// `compaction_end`).
     pub(crate) fn emit_stream_event(&self, event: &Value) {
         self.emit(event);
     }
@@ -526,36 +526,21 @@ impl PrintGoalSurface {
         boundary: &mut crate::print_boundary::TurnBoundary,
         model: &pa_types::ai::Model,
         api_key: Option<String>,
-        global_harness_dir: std::path::PathBuf,
     ) -> Result<bool, String> {
         let mut ran = false;
         loop {
             if let Some(message) = self.take_threshold_continuation().await {
                 // A goal that went inactive mid-turn drops its queued continuation.
                 if engine.goal_state().await.status == pa_types::goal::GoalStatus::Active {
-                    self.run_queued_turn(
-                        engine,
-                        boundary,
-                        model,
-                        api_key.clone(),
-                        global_harness_dir.clone(),
-                        &message,
-                    )
-                    .await?;
+                    self.run_queued_turn(engine, boundary, model, api_key.clone(), &message)
+                        .await?;
                     ran = true;
                     continue;
                 }
             }
             if let Some(steer) = self.take_budget_steer().await {
-                self.run_queued_turn(
-                    engine,
-                    boundary,
-                    model,
-                    api_key.clone(),
-                    global_harness_dir.clone(),
-                    &steer,
-                )
-                .await?;
+                self.run_queued_turn(engine, boundary, model, api_key.clone(), &steer)
+                    .await?;
                 ran = true;
                 continue;
             }
@@ -578,7 +563,6 @@ impl PrintGoalSurface {
                         model,
                         api_key.clone(),
                         pa_core::session_engine::goal_driver::GOAL_BACKOFF_WAKE_MARKER_TEXT,
-                        global_harness_dir.clone(),
                     )
                     .await?;
                 ran = true;
@@ -597,7 +581,6 @@ impl PrintGoalSurface {
         boundary: &mut crate::print_boundary::TurnBoundary,
         model: &pa_types::ai::Model,
         api_key: Option<String>,
-        global_harness_dir: std::path::PathBuf,
         message: &CustomMessage,
     ) -> Result<(), String> {
         let label = compact_rlm_text(&custom_message_text(message), 160);
@@ -614,7 +597,7 @@ impl PrintGoalSurface {
             .map_err(|error| format!("{error:#}"))?;
         engine.session.agent().wait_for_idle().await;
         boundary
-            .run_at_settled_turn(engine, model, api_key.clone(), global_harness_dir)
+            .run_at_settled_turn(engine, model, api_key.clone())
             .await?;
         if let Some(error_message) =
             crate::headless_autonomous::latest_assistant_error(engine).await
@@ -638,7 +621,6 @@ impl PrintGoalSurface {
         boundary: &mut crate::print_boundary::TurnBoundary,
         model: &pa_types::ai::Model,
         api_key: Option<String>,
-        global_harness_dir: std::path::PathBuf,
         message: &CustomMessage,
     ) -> Result<(), String> {
         // The queued goal turn's run completes its admission: the held continuation
@@ -657,9 +639,7 @@ impl PrintGoalSurface {
             .map_err(|error| format!("{error:#}"))?;
         engine.session.agent().wait_for_idle().await;
         self.emit_action_drained().await;
-        boundary
-            .run_at_settled_turn(engine, model, api_key, global_harness_dir)
-            .await?;
+        boundary.run_at_settled_turn(engine, model, api_key).await?;
         Ok(())
     }
 }
@@ -894,13 +874,11 @@ mod tests {
             &autonomous_run,
             /*root_node*/ None,
         );
-        let harness_dir = dir.path().join("harness");
         GoalBed {
             engine,
             model,
             surface,
             frames,
-            harness_dir,
             _accounting: accounting,
             _autonomous_run: autonomous_run,
             _dir: dir,
@@ -912,7 +890,6 @@ mod tests {
         model: pa_types::ai::Model,
         surface: Arc<PrintGoalSurface>,
         frames: Frames,
-        harness_dir: std::path::PathBuf,
         _accounting: pa_agent::agent::Subscription,
         /// Keeps the composed hook's autonomous arm alive for the bed's lifetime (the hook holds it
         /// weakly).
@@ -936,17 +913,11 @@ mod tests {
                 .unwrap();
             self.engine.session.agent().wait_for_idle().await;
             boundary
-                .run_at_settled_turn(&self.engine, &self.model, None, self.harness_dir.clone())
+                .run_at_settled_turn(&self.engine, &self.model, None)
                 .await
                 .unwrap();
             self.surface
-                .drive_boundary(
-                    &self.engine,
-                    &mut boundary,
-                    &self.model,
-                    None,
-                    self.harness_dir.clone(),
-                )
+                .drive_boundary(&self.engine, &mut boundary, &self.model, None)
                 .await
                 .unwrap();
             self.engine.goal_owns_continuation_wakeup().await
@@ -1283,7 +1254,6 @@ mod tests {
                     "reserveTokens": 1,
                     "keepRecentTokens": 10,
                 },
-                "autoRefine": { "enabled": false },
             }),
         )
         .await;
@@ -1515,7 +1485,6 @@ mod tests {
             model,
             surface,
             frames,
-            harness_dir: dir.path().join("harness"),
             _accounting: accounting,
             _autonomous_run: autonomous_run,
             _dir: dir,

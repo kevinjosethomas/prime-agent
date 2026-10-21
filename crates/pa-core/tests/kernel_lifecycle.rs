@@ -206,7 +206,7 @@ async fn rlm_bootstrap_injects_the_kernel_surface() {
 
     let result = execute(
         &manager,
-        "callable(rlm.spawn) and callable(rlm.find_models) and hasattr(rlm, 'harness') and callable(bash) and hasattr(rlm, 'get_harness_state')",
+        "callable(rlm.spawn) and callable(rlm.find_models) and callable(bash)",
     )
     .await;
     assert_eq!(
@@ -217,7 +217,7 @@ async fn rlm_bootstrap_injects_the_kernel_surface() {
     assert_eq!(
         result.result.as_deref(),
         Some("True"),
-        "rlm/bash/harness must be usable"
+        "rlm/bash must be usable"
     );
 
     manager

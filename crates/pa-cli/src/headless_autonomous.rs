@@ -166,7 +166,6 @@ impl HeadlessAutonomous {
         boundary: &mut crate::print_boundary::TurnBoundary,
         model: &Model,
         api_key: Option<String>,
-        global_harness_dir: PathBuf,
     ) -> Result<bool, String> {
         if !self
             .awaits_rlm_work
@@ -184,7 +183,7 @@ impl HeadlessAutonomous {
         };
         if let Some(text) = self.follow_up_text(&message).await {
             boundary
-                .admit_continuation(engine, model, api_key, &text, global_harness_dir)
+                .admit_continuation(engine, model, api_key, &text)
                 .await?;
         }
         Ok(true)
@@ -193,25 +192,17 @@ impl HeadlessAutonomous {
     /// The settled boundary's autonomous drain: each held continuation runs as
     /// this invocation's follow-up turn; a re-crossing threshold holds the
     /// next. Returns whether any turn ran.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn drive_boundary(
         &self,
         engine: &SessionEngine,
         boundary: &mut crate::print_boundary::TurnBoundary,
         model: &Model,
         api_key: Option<String>,
-        global_harness_dir: PathBuf,
     ) -> Result<bool, String> {
         let mut ran = false;
         while let Some(text) = self.held.lock().await.take() {
             boundary
-                .admit_continuation(
-                    engine,
-                    model,
-                    api_key.clone(),
-                    &text,
-                    global_harness_dir.clone(),
-                )
+                .admit_continuation(engine, model, api_key.clone(), &text)
                 .await?;
             ran = true;
         }

@@ -3152,47 +3152,6 @@
           "properties": {
             "type": {
               "type": "string",
-              "const": "refine"
-            },
-            "id": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "activeSessionId": {
-              "type": "string"
-            },
-            "instructions": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "rollbackId": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "global": {
-              "type": [
-                "boolean",
-                "null"
-              ]
-            }
-          },
-          "required": [
-            "type",
-            "activeSessionId"
-          ],
-          "additionalProperties": true
-        },
-        {
-          "type": "object",
-          "properties": {
-            "type": {
-              "type": "string",
               "const": "abort_compaction"
             },
             "id": {
@@ -5026,20 +4985,6 @@
         },
         "customInstructions": {
           "description": "User instructions that guided the summary (`/compact <instructions>`).",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "harnessDigest": {
-          "description": "Harness digest snapshot attached mechanically at compaction.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "harnessStateFingerprint": {
-          "description": "Fingerprint of the harness state behind `harness_digest`; lets cold\nboundaries skip re-delivery (TS #2400).",
           "type": [
             "string",
             "null"

@@ -174,28 +174,6 @@ const KERNEL_LOCAL_TOKENS: &[&str] = &[
     "mcp.describe_tool",
 ];
 
-/// The harness-state API of the vendored runtime (`rlm.harness` CRUD and
-/// `rlm.get_harness_state`). Update together with the runtime sidecar.
-const HARNESS_TOKENS: &[&str] = &[
-    "rlm.harness.create_memory",
-    "rlm.harness.update_memory",
-    "rlm.harness.delete_memory",
-    "rlm.harness.create_prompt_note",
-    "rlm.harness.update_prompt_note",
-    "rlm.harness.delete_prompt_note",
-    "rlm.harness.create_skill",
-    "rlm.harness.update_skill",
-    "rlm.harness.delete_skill",
-    "rlm.harness.create_subagent",
-    "rlm.harness.update_subagent",
-    "rlm.harness.delete_subagent",
-    "rlm.harness.record_refinement",
-    "rlm.harness.plan_refinement",
-    "rlm.harness.overview",
-    "rlm.harness.search",
-    "rlm.get_harness_state",
-];
-
 /// A host-request type literal: lowercase dotted name (`rlm.collect`).
 fn is_request_type_literal(literal: &str) -> bool {
     !literal.is_empty()
@@ -372,7 +350,7 @@ fn bundled_python_skills() -> Vec<(String, Vec<String>)> {
 }
 
 /// The surface tokens the prompt is allowed to document: kernel-bound names, registered host
-/// requests, bundled Python skills, and the runtime-package (harness + generic MCP) API.
+/// requests, bundled Python skills, and the runtime-package generic MCP API.
 fn allowed_surface_tokens() -> BTreeSet<String> {
     let mut allowed = BTreeSet::new();
     allowed.extend(kernel_bound_names());
@@ -387,7 +365,7 @@ fn allowed_surface_tokens() -> BTreeSet<String> {
             allowed.insert(format!("{import}.{function}"));
         }
     }
-    for token in KERNEL_LOCAL_TOKENS.iter().chain(HARNESS_TOKENS) {
+    for token in KERNEL_LOCAL_TOKENS {
         allowed.insert(token.to_string());
     }
     allowed
@@ -411,7 +389,7 @@ fn required_surface_tokens() -> BTreeSet<String> {
             required.insert(format!("{import}.{function}"));
         }
     }
-    for token in KERNEL_LOCAL_TOKENS.iter().chain(HARNESS_TOKENS) {
+    for token in KERNEL_LOCAL_TOKENS {
         required.insert(token.to_string());
     }
     required
@@ -487,8 +465,9 @@ fn core_layer_documents_the_real_tool_surface() {
 
 // Packaged-set parity (TS packages/coding-agent/skills)
 
-/// The packaged skill set at TS tip `f62dae4d0` (`packages/coding-agent/skills/`): 12 skills — the
-/// generic `mcp` doc skill in, the per-service linear/notion pair out (TS removed theirs when the
+/// The packaged skill set at TS tip `f62dae4d0` (`packages/coding-agent/skills/`), minus this
+/// fork's removed `refine` skill (the continual-harness feature removal): 11 skills — the generic
+/// `mcp` doc skill in, the per-service linear/notion pair out (TS removed theirs when the
 /// generic MCP surface landed).
 const TS_PACKAGED_SKILL_SET: &[&str] = &[
     "agent-message",
@@ -499,7 +478,6 @@ const TS_PACKAGED_SKILL_SET: &[&str] = &[
     "goal",
     "mcp",
     "prime-intellect",
-    "refine",
     "rlm-heartbeat",
     "skill-creator",
     "websearch",

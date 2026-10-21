@@ -513,7 +513,7 @@ pub(crate) enum ChildLane {
 }
 
 /// The assembled headless engine, so host transports can drive session-command
-/// executors (compact/refine) with the session's own model.
+/// executors (compact) with the session's own model.
 pub(crate) struct HeadlessEngine {
     pub(crate) engine: pa_core::session_engine::engine::SessionEngine,
     pub(crate) model: Model,
@@ -1463,8 +1463,6 @@ async fn run_prompts_and_emit(
         &autonomous,
         Some(root_node),
     );
-    let global_harness_dir =
-        pa_core::refinement::get_global_harness_state_dir(&options.config.agent_dir);
     let mut boundary = crate::print_boundary::TurnBoundary::new(json_mode);
     // The autonomous runtime state the session-command executor mutates —
     // `/autonomous` rewrites what the hook, accounting, and exit contract read.
@@ -1487,7 +1485,6 @@ async fn run_prompts_and_emit(
                 &goal,
                 model,
                 api_key.clone(),
-                global_harness_dir.clone(),
                 &autonomous_state,
                 &command,
                 &images,
@@ -1505,21 +1502,14 @@ async fn run_prompts_and_emit(
                     &mut boundary,
                     model,
                     api_key.clone(),
-                    global_harness_dir.clone(),
                     &continuation,
                 )
                 .await?;
             }
             // The same queue drain a settled turn gets: held continuations and armed steers run as
             // this prompt's follow-up turns.
-            goal.drive_boundary(
-                engine,
-                &mut boundary,
-                model,
-                api_key.clone(),
-                global_harness_dir.clone(),
-            )
-            .await?;
+            goal.drive_boundary(engine, &mut boundary, model, api_key.clone())
+                .await?;
             continue;
         }
         boundary
@@ -1536,29 +1526,17 @@ async fn run_prompts_and_emit(
             .map_err(|error| format!("{error:#}"))?;
         engine.session.agent().wait_for_idle().await;
         boundary
-            .run_at_settled_turn(engine, model, api_key.clone(), global_harness_dir.clone())
+            .run_at_settled_turn(engine, model, api_key.clone())
             .await?;
-        goal.drive_boundary(
-            engine,
-            &mut boundary,
-            model,
-            api_key.clone(),
-            global_harness_dir.clone(),
-        )
-        .await?;
+        goal.drive_boundary(engine, &mut boundary, model, api_key.clone())
+            .await?;
         // The autonomous arm runs only when the goal does not own the boundary (the goal arm takes
         // exclusive priority).
         if !engine.goal_owns_continuation_wakeup().await {
             // The held threshold continuation drains as this invocation's follow-up
             // turn; the stop surfaces only through the exit contract.
             autonomous
-                .drive_boundary(
-                    engine,
-                    &mut boundary,
-                    model,
-                    api_key.clone(),
-                    global_harness_dir.clone(),
-                )
+                .drive_boundary(engine, &mut boundary, model, api_key.clone())
                 .await
                 .map_err(|error| format!("{error:#}"))?;
         }
@@ -1572,9 +1550,6 @@ async fn run_prompts_and_emit(
         if let Some(subscription) = unsubscribe {
             subscription.unsubscribe().await;
         }
-        boundary
-            .drain_compact_auto_refine_at_disposal(engine, model, api_key, global_harness_dir)
-            .await;
         return Ok(1);
     }
     // The #2270 fix: print waits for RLM quiescence — every admitted
@@ -1593,7 +1568,6 @@ async fn run_prompts_and_emit(
             &mut boundary,
             model,
             api_key.clone(),
-            global_harness_dir.clone(),
         )
         .await?
         {
@@ -1601,25 +1575,12 @@ async fn run_prompts_and_emit(
         }
         if let Some(continuation) = engine.take_owed_goal_continuation().await {
             goal.publish_goal_update(engine).await;
-            goal.run_queued_turn(
-                engine,
-                &mut boundary,
-                model,
-                api_key.clone(),
-                global_harness_dir.clone(),
-                &continuation,
-            )
-            .await?;
+            goal.run_queued_turn(engine, &mut boundary, model, api_key.clone(), &continuation)
+                .await?;
             continue;
         }
         if autonomous
-            .deliver_rlm_continuation(
-                engine,
-                &mut boundary,
-                model,
-                api_key.clone(),
-                global_harness_dir.clone(),
-            )
+            .deliver_rlm_continuation(engine, &mut boundary, model, api_key.clone())
             .await?
         {
             continue;
@@ -1629,23 +1590,11 @@ async fn run_prompts_and_emit(
         // around — the leading quiescence pass then waits for whatever
         // they left behind.
         let mut boundary_ran = goal
-            .drive_boundary(
-                engine,
-                &mut boundary,
-                model,
-                api_key.clone(),
-                global_harness_dir.clone(),
-            )
+            .drive_boundary(engine, &mut boundary, model, api_key.clone())
             .await?;
         if !engine.goal_owns_continuation_wakeup().await {
             boundary_ran |= autonomous
-                .drive_boundary(
-                    engine,
-                    &mut boundary,
-                    model,
-                    api_key.clone(),
-                    global_harness_dir.clone(),
-                )
+                .drive_boundary(engine, &mut boundary, model, api_key.clone())
                 .await?;
         }
         if boundary_ran {
@@ -1698,11 +1647,6 @@ async fn run_prompts_and_emit(
         eprintln!("{stderr}");
         exit_code = 1;
     }
-    // The disposal order: the exit code first, then the teardown drains a
-    // compact-trigger auto-refine no later boundary consumed.
-    boundary
-        .drain_compact_auto_refine_at_disposal(engine, model, api_key, global_harness_dir)
-        .await;
     Ok(exit_code)
 }
 

@@ -133,15 +133,3 @@ pub(super) fn count_text(text: &str, width: usize) -> usize {
         })
         .sum()
 }
-
-pub(super) fn count_runs<'a>(runs: impl IntoIterator<Item = &'a str>, width: usize) -> usize {
-    let runs: Vec<&str> = runs.into_iter().collect();
-    if width == 0 || runs.iter().map(|run| str_width(run)).sum::<usize>() <= width {
-        return 1;
-    }
-    traverse(
-        runs.into_iter().map(|run| (run, Style::default())),
-        width,
-        |_| {},
-    )
-}

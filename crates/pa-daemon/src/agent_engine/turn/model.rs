@@ -397,10 +397,7 @@ impl AgentSessionEngine {
                             // would lose its explicit stop and goal-continuation semantics.
                             let core = self.session.lock().await.clone();
                             let pending = match core {
-                                Some(core) => {
-                                    core.turn_boundary.compaction_scheduled().await
-                                        || core.turn_boundary.refine_pending().await
-                                }
+                                Some(core) => core.turn_boundary.compaction_scheduled().await,
                                 None => false,
                             };
                             if aborted() {

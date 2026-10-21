@@ -79,13 +79,3 @@ pub struct SessionManager {
     admitted_user_rows: std::collections::VecDeque<String>,
     persist_listeners: Vec<SessionPersistListener>,
 }
-
-/// The refine transcript's consumed artifacts: the conversation message
-/// rows (sequence order) and the in-session refinement history (the audit
-/// scan's output). Extracting them directly spares an owned copy of every
-/// entry.
-#[derive(Debug, Default)]
-pub struct RefineTranscriptParts {
-    pub messages: Vec<AgentMessage>,
-    pub refinement_history: Vec<crate::refinement::RefinementResult>,
-}

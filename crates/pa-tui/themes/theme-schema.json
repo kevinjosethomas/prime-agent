@@ -33,7 +33,7 @@
 		},
 		"colors": {
 			"type": "object",
-			"description": "Theme color definitions (mdBody defaults to text; refinement colors have purple defaults)",
+			"description": "Theme color definitions (mdBody defaults to text)",
 			"required": [
 				"accent",
 				"border",
@@ -160,13 +160,13 @@
 					"$ref": "#/$defs/colorValue",
 					"description": "Custom message type label color"
 				},
-				"refinementHeader": {
+				"compactionHeader": {
 					"$ref": "#/$defs/colorValue",
-					"description": "Harness refinement status (defaults to purple)"
+					"description": "Compaction summary header (defaults to purple)"
 				},
-				"refinementSummary": {
+				"compactionSummary": {
 					"$ref": "#/$defs/colorValue",
-					"description": "Harness refinement semantic summary (defaults to softer purple)"
+					"description": "Compaction summary body (defaults to softer purple)"
 				},
 				"toolPendingBg": {
 					"$ref": "#/$defs/colorValue",
