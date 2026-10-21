@@ -824,15 +824,6 @@ export type DaemonCommand =
       [k: string]: unknown;
     }
   | {
-      type: "refine";
-      id?: string | null;
-      activeSessionId: string;
-      instructions?: string | null;
-      rollbackId?: string | null;
-      global?: boolean | null;
-      [k: string]: unknown;
-    }
-  | {
       type: "abort_compaction";
       id?: string | null;
       activeSessionId: string;
