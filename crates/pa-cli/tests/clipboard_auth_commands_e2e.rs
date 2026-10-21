@@ -468,7 +468,9 @@ impl ProviderAuthCommands for ScriptedProviderAuth {
             .unwrap()
             .push("login_on_panel".to_string());
         Box::pin(async move {
+            eprintln!("[auth-phase] before first progress at {:?}", std::time::Instant::now());
             panel.progress("Loading Prime teams...");
+            eprintln!("[auth-phase] after first progress at {:?}", std::time::Instant::now());
             let teams = vec![
                 pa_tui::auth_panel::PrimeTeamOption {
                     team_id: "team-acme".to_string(),
