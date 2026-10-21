@@ -66,6 +66,9 @@ pub const WORKER_TELEMETRY_DISABLED_ENV: &str =
 /// unreachable for this long exits instead of lingering orphaned.
 pub const WORKER_SUPERVISOR_LOST_EXIT_MS_ENV: &str =
     "PRIME_AGENT_INTERNAL_WORKER_SUPERVISOR_LOST_EXIT_MS";
+/// The trusted tasks-reporter configuration (canonical JSON) the supervisor
+/// stamps on every worker it provisions; the worker's kernels inherit it.
+pub const TASKS_REPORTER_ENV: &str = "PRIME_AGENT_INTERNAL_TASKS_REPORTER";
 
 /// The worker identity/handshake set the supervisor stamps on a worker
 /// spawn ([`crate::descriptor::worker_launch_env`]), minus the public
@@ -77,6 +80,7 @@ pub const WORKER_SUPERVISOR_LOST_EXIT_MS_ENV: &str =
 /// binary entry stays the one owner of the strip.
 const INHERITED_WORKER_ENV: &[&str] = &[
     WORKER_ROLE_ENV,
+    TASKS_REPORTER_ENV,
     WORKER_TOKEN_ENV,
     WORKER_INSTANCE_ID_ENV,
     WORKER_ACTIVE_SESSION_ID_ENV,

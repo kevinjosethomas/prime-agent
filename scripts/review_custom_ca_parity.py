@@ -21,7 +21,7 @@ import time
 from review_goal_backoff_parity import TS_ARCHIVE_SHA256, sha256
 from review_restore_notice_parity import texts
 from review_agent_bounce_parity import Client
-from review_draft_disconnect_parity import stop
+from review_draft_disconnect_parity import kernel_env_for, stop
 
 PROMPT = 'Complete the custom CA transport fixture.'
 ANSWER = 'Custom CA transport completed.'
@@ -170,8 +170,10 @@ def run_case(binary, label, root, trusted, key, cert, ca_cert, unrelated, observ
     for name in ('home', 'agent', 'sessions', 'work', 'tmp'):
         (root / name).mkdir(parents=True)
     agent, sessions, cwd = root / 'agent', root / 'sessions', root / 'work'
-    env = {key: os.environ[key] for key in ('PATH', 'LANG', 'LC_ALL', 'TZ',
-           'PRIME_AGENT_KERNEL_PYTHON', 'PA_E2E_KERNEL_PYTHON') if key in os.environ}
+    env = {key: os.environ[key] for key in ('PATH', 'LANG', 'LC_ALL', 'TZ') if key in os.environ}
+    kernel_python = kernel_env_for(label)
+    env['PRIME_AGENT_KERNEL_PYTHON'] = kernel_python
+    env['PA_E2E_KERNEL_PYTHON'] = kernel_python
     if label == 'ts':
         env['PI_PACKAGE_DIR'] = os.environ['PI_PACKAGE_DIR']
     env.update(HOME=str(root / 'home'), TMPDIR=str(root / 'tmp'), DO_NOT_TRACK='1',

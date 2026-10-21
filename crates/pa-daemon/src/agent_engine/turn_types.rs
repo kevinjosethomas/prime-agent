@@ -106,6 +106,7 @@ pub(crate) fn aborted_message(model: &Model) -> pa_agent::types::AssistantMessag
         stop_reason: StopReason::Aborted,
         stop_reason_raw: None,
         error_message: None,
+        timing: None,
         timestamp: pa_agent::now_ms(),
     }
 }

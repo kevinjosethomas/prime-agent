@@ -213,6 +213,7 @@ mod tests {
     /// A minimal partial assistant message (the faux wire fields).
     fn partial(content: Vec<AssistantContent>) -> AssistantMessage {
         AssistantMessage {
+            timing: None,
             content,
             api: "faux".to_string(),
             provider: "faux".to_string(),

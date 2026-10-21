@@ -2,11 +2,8 @@
 
 The Prime Agent daemon client for Node 22 / Electron 44 main-process hosts:
 the loader with fail-closed provenance verification, the typed error
-classes, and the thin `DaemonConnection` wrapper over the native addon
-(`crates/pa-client-node`).
-
-**Merge status: follows the addon crate — cannot merge until the core
-shutdown PR lands.**
+classes, and the thin `DaemonConnection` and `ManagedDaemonSession`
+wrappers over the native addon (`crates/pa-client-node`).
 
 ## Loader and provenance
 
@@ -19,9 +16,9 @@ test override only.
 
 ## Wire types
 
-`request`/`requestOk` accept and return `unknown`: there is deliberately
-NO hand-written TypeScript wire mirror. Generated command/response types
-come from the client contract package (PR3a) when it lands.
+`request`/`requestOk` accept and return typed values from the generated
+client contract package (`prime-agent-client-contract`, PR3a): there is
+deliberately NO hand-written TypeScript wire mirror.
 
 ## Test battery
 
@@ -32,8 +29,20 @@ reader, pending cap, deserialize failure, timeout, refusal with
 `errorInfo`, socket death), verbatim raw frames incl. unknown frame types,
 status changes, single-consumer enforcement, overflow fail-closed
 (sticky terminal error, in-flight stays `Uncertain` with cause
-`overflow`, new sends `NotSent`), loader fail-closed verification, and
-natural exit after explicit close (no `process.exit` anywhere; a leaked
-handle hangs the child and fails the suite). The GC-drop-without-close
-case is intentionally absent until the shutdown PR lands — the interim
-semantics leak the connection and are documented as such.
+`overflow`, new sends `NotSent`), loader fail-closed verification, GC-drop
+teardown observed through the mock's client-side EOF, and natural exit
+after explicit close (no `process.exit` anywhere; a leaked handle hangs
+the child and fails the suite).
+
+## Managed session
+
+`ManagedDaemonSession` (`startSession` in the addon) exposes the shared
+Rust lifecycle: reconnect/restore-attach/dedupe stay in Rust, JS pulls
+serialized events (`nextEvent`, single-consumer, fail-closed bounded
+queue), sends requests with class-based timeouts, registers/forgets
+attachments, and stops explicitly — an awaited, idempotent stop with the
+driver's honest completion. The managed battery covers the status
+lifecycle, verbatim frames, the reattach/reattached/reattachFailed
+events after a scripted loss, replay dedupe, the fail-closed overflow
+matrix, connect-failure structural `errorCode` labels, and GC-drop
+teardown observed while the mock stays alive.

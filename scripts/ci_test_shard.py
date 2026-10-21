@@ -150,11 +150,26 @@ def enumerate_units() -> list[dict]:
 def run_unit(unit: dict) -> dict:
     cmd = ["cargo", "test", "--locked", "-p", unit["package"], *unit["target_args"]]
     start = time.monotonic()
+    # The failover e2e hangs report EAGAIN panics without a backtrace naming the
+    # read site; every other unit inherits the ambient environment unchanged.
+    env = None
+    if (
+        unit["package"] == "pa-daemon"
+        and unit["kind"] == "test"
+        and unit["name"] == "provider_failover_e2e"
+    ):
+        env = {**os.environ, "RUST_BACKTRACE": "1"}
+    elif (
+        unit["package"] == "pa-cli"
+        and unit["kind"] == "test"
+        and unit["name"] == "clipboard_auth_commands_e2e"
+    ):
+        env = {**os.environ, "PA_TUI_DEBUG_EVENTS": "1"}
     # Streaming (not capture-then-print) so a hung binary is attributable from
     # the live log: the unit header is printed before the invocation starts.
     proc = subprocess.Popen(
         cmd, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, errors="replace",
+        text=True, errors="replace", env=env,
     )
     output_lines = []
     assert proc.stdout is not None

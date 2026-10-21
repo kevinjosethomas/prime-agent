@@ -58,6 +58,7 @@ fn final_message(model: &pa_agent::types::Model) -> pa_agent::types::AssistantMe
 
 fn empty_partial(model: &pa_agent::types::Model) -> pa_agent::types::AssistantMessage {
     pa_agent::types::AssistantMessage {
+        timing: None,
         content: Vec::new(),
         api: model.api.clone(),
         provider: model.provider.clone(),

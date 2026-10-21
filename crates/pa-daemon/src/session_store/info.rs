@@ -34,6 +34,8 @@ pub struct SessionInfo {
     /// The own-usage summary — assistant aggregates plus summarization calls,
     /// minus every attributed child block; `None` when the session recorded no billable work.
     pub usage: Option<crate::session_usage::SessionUsageSummary>,
+    /// Whole-file response-timing summary; None when nothing was measured.
+    pub response_timing: Option<crate::session_timing::ResponseTimingSummary>,
     /// The recursive spend of ledger-tombstoned descendants, attached by the
     /// catalog's listing arm from the spawn ledger. Never set by the file
     /// scan: ledger-derived, not transcript-derived.
@@ -106,8 +108,9 @@ impl SessionInfoGeneration {
     }
 }
 
-/// The cross-file memory budget on retained assistant usage records and
-/// stable attribution IDs: keeps large families resident without unbounded retry history.
+/// The cross-file memory budget on retained assistant usage records, stable
+/// attribution IDs, and the response-timing fold's per-id rows: keeps large
+/// families resident without unbounded retry history.
 const SESSION_SCAN_MAX_RETAINED_USAGE_ENTRIES: usize = 400_000;
 
 /// The cached-state count ceiling: the cap must sit well ABOVE a catalog
@@ -173,7 +176,8 @@ impl SessionInfoScanCache {
     pub(super) fn store_state(&mut self, path: &Path, state: SessionScanState) {
         self.drop_state(path);
         let mut state = state;
-        state.accounted_usage_entries = state.acc.usage_scan.retained_entries();
+        state.accounted_usage_entries =
+            state.acc.usage_scan.retained_entries() + state.acc.timing_scan.retained_entries();
         self.retained_usage_entries += state.accounted_usage_entries;
         self.states.insert(path.to_path_buf(), state);
         self.mark_recent(path);
@@ -224,6 +228,8 @@ pub(super) struct SessionScanAccumulator {
     last_activity_ms: Option<u64>,
     last_user_prompt_ms: Option<u64>,
     usage_scan: crate::session_usage::UsageScan,
+    /// The response-timing twin of `usage_scan`.
+    timing_scan: crate::session_timing::ResponseTimingScan,
 }
 
 /// One cached scan state (TS `SessionScanState`): the generation the state
@@ -276,6 +282,7 @@ impl SessionScanState {
                 last_activity_ms: self.acc.last_activity_ms,
                 last_user_prompt_ms: self.acc.last_user_prompt_ms,
                 usage_scan: self.acc.usage_scan.clone(),
+                timing_scan: self.acc.timing_scan.clone(),
             },
             offset: self.offset,
             tail: self.tail,
@@ -369,6 +376,12 @@ pub(super) struct SessionInfoMessage<'a> {
     /// Borrowed `content` span (zero copy): read only when the fold's guard passes.
     #[serde(default, borrow)]
     pub(super) content: Option<&'a serde_json::value::RawValue>,
+    /// Borrowed timing span (read only by the timing fold).
+    #[serde(default, borrow)]
+    timing: Option<&'a serde_json::value::RawValue>,
+    /// Borrowed details span (timing reads durationMs).
+    #[serde(default, borrow)]
+    details: Option<&'a serde_json::value::RawValue>,
 }
 
 #[derive(Deserialize)]
@@ -563,6 +576,7 @@ impl SessionScanState {
             None => &self.acc,
         };
         let usage = acc.usage_scan.summary();
+        let response_timing = acc.timing_scan.summary();
         let header = acc.header.as_ref()?;
         // The newest user/assistant message timestamp, then the header's
         // creation timestamp, then the file's mtime — never scan time; only
@@ -596,6 +610,7 @@ impl SessionScanState {
             },
             all_messages_text: acc.all_messages_text.clone(),
             usage,
+            response_timing,
             // Ledger-derived, never the file scan's: the listing arm attaches it from the ledger.
             deleted_descendant_usage: None,
         })
@@ -694,6 +709,31 @@ pub(super) fn fold_scan_entry(acc: &mut SessionScanAccumulator, raw: &str) -> Op
                 let role = role.as_deref();
                 acc.usage_scan
                     .fold_message(&entry.id, role, message.usage.map(Usage::from));
+                // The timing fold rides the same message arm.
+                let timing = message
+                    .timing
+                    .and_then(|raw| serde_json::from_str(raw.get()).ok())
+                    .unwrap_or_default();
+                match role {
+                    Some("assistant") => acc.timing_scan.fold_assistant(
+                        &entry.id,
+                        timing,
+                        message
+                            .usage
+                            .map(Usage::from)
+                            .map_or(0, |usage| usage.output),
+                    ),
+                    Some("toolResult") => {
+                        let duration_ms = message
+                            .details
+                            .and_then(|raw| serde_json::from_str::<Value>(raw.get()).ok())
+                            .as_ref()
+                            .and_then(|details| details.get("durationMs"))
+                            .and_then(Value::as_f64);
+                        acc.timing_scan.fold_tool_result(&entry.id, duration_ms);
+                    }
+                    _ => {}
+                }
                 if role == Some("assistant") {
                     if let (Some(provider), Some(model_id)) =
                         (raw_string(message.provider), raw_string(message.model))

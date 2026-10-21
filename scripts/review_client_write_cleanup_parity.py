@@ -133,6 +133,21 @@ def validate_rename_trigger(kind, data, active):
         assert isinstance(data.get('workerPid'), int), 'Rust rename summary omitted worker identity'
 
 
+def validate_enqueue_accept(kind, data):
+    """Pin the queued-prompt accept receipt: TS 0.9.8 answers no data; the Rust
+    baseline (7653da009, stable queued-input ids) answers the queue-control
+    receipt {accepted, inputId}. Version-specific assertion, not normalization."""
+    if kind == 'ts':
+        assert data is None, 'TS queued-prompt accept unexpectedly returned response data'
+        return
+    assert isinstance(data, dict), 'Rust queued-prompt accept omitted its receipt'
+    assert set(data) == {'accepted', 'inputId'}, 'Rust accept receipt changed shape'
+    assert data['accepted'] is True, 'Rust accept receipt is not an accepted bool'
+    input_id = data['inputId']
+    assert isinstance(input_id, str) and input_id.startswith('qi_') and len(input_id) > len('qi_'), \
+        'Rust accept receipt lacks a non-empty qi_ queued-input id'
+
+
 def pause_released(client, active, pause_id):
     """A non-owner cannot release this lease; success means cleanup removed it."""
     try:
@@ -211,6 +226,8 @@ def run_case(binary, kind, root, observed):
             threading.Event().wait(0.025)
         responses['enqueue_second_client'] = b.call('prompt',
             activeSessionId=active, message=SECOND, streamingBehavior='followUp')
+        validate_enqueue_accept(kind, responses['enqueue_second_client'])
+        observed['enqueue_accept_response'] = responses.pop('enqueue_second_client')
         observed['before_provider_release'] = b.call('get_queue', activeSessionId=active)
         queued = observed['before_provider_release']
         assert SECOND in queued['steering'] + queued['followUp'], queued
@@ -277,6 +294,7 @@ def main():
         'preexisting_admission_difference': 'TS rejects new prompt admission while a pause is held; fixture submits followUp only after disconnect cleanup, without redesigning Rust policy',
         'normalization': 'only generated pauseId in compared cleanup/pause/queued-delivery action response data; raw JSONL preserved',
         'fixture_trigger_response_deviation': 'Existing set_session_name returns no data in TS and a full session summary in Rust. Both expected shapes are asserted and their complete responses preserved separately; rename payload parity is outside this cleanup change.',
+        'queue_accept_response_deviation': 'The queued-prompt accept response differs by baseline: TS 0.9.8 answers no data; Rust (7653da009, stable ids and controls for queued human input) answers the queue-control receipt {accepted: true, inputId: qi_...}. Both expected shapes are asserted and the raw accept response is preserved separately as enqueue_accept_response; accept-payload parity is outside this cleanup scenario and queue CONTENT parity is still compared via get_queue.',
         'not_covered': 'admission cancellation races or direct worker attach-state introspection'}
     try:
         archive = Path(os.environ['PA_TS_ARCHIVE'])

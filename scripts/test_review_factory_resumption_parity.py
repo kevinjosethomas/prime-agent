@@ -1,7 +1,8 @@
 import copy
 import json
 import unittest
-from review_factory_resumption_parity import MARKER, extract, validate
+from types import SimpleNamespace
+from review_factory_resumption_parity import MARKER, extract, snapshot_live_counts, validate
 
 
 class FactoryReceiptGuards(unittest.TestCase):
@@ -38,6 +39,24 @@ class FactoryReceiptGuards(unittest.TestCase):
                         [{}, {'messages': [{**tool, 'tool_call_id': 'historical'}]}]]:
             with self.assertRaises(AssertionError):
                 extract(changed)
+
+
+class LiveCountSnapshotGuard(unittest.TestCase):
+    def test_snapshot_copies_arrivals_and_reads_counters(self):
+        server = SimpleNamespace(requests=[1, 2], parent_requests=[1],
+                                 child_requests=[1, 2],
+                                 request_arrivals=[(10.0, 'parent'), (11.0, 'child'), (12.0, 'child')])
+        clock = iter([42.0])
+        snapshot = snapshot_live_counts(server, clock=lambda: next(clock))
+        self.assertEqual(snapshot, {
+            'total_requests': 2,
+            'parent_requests': 1,
+            'child_requests': 2,
+            'request_arrivals': [(10.0, 'parent'), (11.0, 'child'), (12.0, 'child')],
+            'snapshot_time': 42.0,
+        })
+        server.request_arrivals.append((13.0, 'child'))
+        self.assertEqual(len(snapshot['request_arrivals']), 3)
 
 
 if __name__ == '__main__':

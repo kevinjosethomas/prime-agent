@@ -27,7 +27,7 @@ fn supervisor_end_to_end_scripted_session_lifecycle() {
         hello["schemaId"]
             .as_str()
             .map(std::string::ToString::to_string),
-        Some("protocol-7-schema-31-5b2e0e3f07aa".to_string())
+        Some("protocol-7-schema-32-0add452274ed".to_string())
     );
     assert!(hello["supervisorOwnerToken"].is_string());
     assert!(hello["supervisorProcessStartId"]
@@ -53,6 +53,7 @@ fn supervisor_end_to_end_scripted_session_lifecycle() {
             "subagent_model_defaults",
             "global_harness_defaults",
             "prompt_guidelines",
+            "task_reporter",
             "mcp_multi_account",
             "workstream_classification",
             "side_question_transcript",
@@ -70,6 +71,7 @@ fn supervisor_end_to_end_scripted_session_lifecycle() {
             "abort_and_send_queued",
             "agent_roster",
             "direct_peer_transport",
+            "response_timing",
         ])
     );
 

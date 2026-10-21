@@ -1298,6 +1298,24 @@ pub enum DaemonCommand {
         #[serde(flatten)]
         rest: JsonMap,
     },
+    /// Desktop -> supervisor (capability `task_reporter`): set the trusted local
+    /// tasks-reporter configuration. The supervisor stores it, stamps it on
+    /// every worker it spawns, and forwards it to live workers; the
+    /// configuration never rides a prompt.
+    SetTaskReporter {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        /// Nonempty argv for the reporter process; never a shell string.
+        command: Vec<String>,
+        /// Optional extra reporter env; string values only.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        env: Option<std::collections::BTreeMap<String, String>>,
+        /// Optional reporter timeout in seconds (default 15, capped by the supervisor).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout: Option<f64>,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
     AckResult {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,

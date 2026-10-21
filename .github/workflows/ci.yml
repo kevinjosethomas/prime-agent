@@ -405,6 +405,25 @@ jobs:
           export PA_E2E_KERNEL_PYTHON="${PRIME_AGENT_KERNEL_PYTHON}"
           export PYTHONPATH="${reference}/package/skills/goal/src"
           test -x "${PRIME_AGENT_KERNEL_PYTHON}"
+          # Version-owned kernel venvs: the pinned TS reference runs its own
+          # era's runtime from the checked archive (the current tree's wheel
+          # no longer carries the rlm.harness contract TS 0.9.8 requires);
+          # the Rust binary keeps the current bootstrap venv above. The two
+          # explicit keys are REQUIRED by the verifiers (kernel_env_for):
+          # no fallback and no cross-era inheritance. The TS venv never
+          # replaces or touches the Rust bootstrap venv.
+          uv venv "${RUNNER_TEMP}/ts-kernel-venv"
+          uv pip install --python "${RUNNER_TEMP}/ts-kernel-venv/bin/python" \
+            "${reference}/package/prime-agent-runtime"
+          # The kernel's default extra packages (DEFAULT_RLM_EXTRA_PACKAGES)
+          # plus dill, so the TS-era kernel venv carries the same default
+          # import surface as the bootstrap venv.
+          uv pip install --python "${RUNNER_TEMP}/ts-kernel-venv/bin/python" \
+            requests httpx pyyaml tomli python-dotenv pandas numpy scipy \
+            beautifulsoup4 lxml pydantic tyro dill
+          export PA_TS_KERNEL_PYTHON="${RUNNER_TEMP}/ts-kernel-venv/bin/python"
+          export PA_RUST_KERNEL_PYTHON="${PRIME_AGENT_KERNEL_PYTHON}"
+          test -x "${PA_TS_KERNEL_PYTHON}" && test -x "${PA_RUST_KERNEL_PYTHON}"
           # The pinned TS @ provider needs the real fd executable. Stage
           # the distro binary only for the completion fixture; enumeration
           # stays in the actual product rather than a mocked tool.

@@ -125,6 +125,7 @@ fn emit(fixture: &Fixture, event: AgentEvent) {
 
 fn assistant_message() -> AssistantMessage {
     AssistantMessage {
+        timing: None,
         content: vec![AssistantContent::Text(TextContent {
             text: "private assistant text".to_string(),
             text_signature: None,

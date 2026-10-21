@@ -58,6 +58,7 @@ fn quota_failure_message(
         "retryAfterMs": retry_after_ms,
     });
     pa_agent::types::AssistantMessage {
+        timing: None,
         content: vec![],
         api: "openai-completions".to_string(),
         provider: "battery".to_string(),

@@ -139,6 +139,7 @@ fn worker_row(
     supervisor_socket: &str,
     snapshot: &WorkerSnapshot,
     session_ids: &[String],
+    tasks_reporter: Option<&str>,
 ) -> UpdateRosterWorker {
     UpdateRosterWorker {
         worker_id: snapshot.worker_id.clone(),
@@ -155,6 +156,7 @@ fn worker_row(
                 .as_deref()
                 .unwrap_or_default(),
             &snapshot.descriptor,
+            tasks_reporter,
         ),
         rest: Map::default(),
     }
@@ -309,6 +311,9 @@ pub(crate) struct UpdateRosterInputs<'a> {
     pub(crate) to_version: &'a str,
     pub(crate) created_at_ms: u64,
     pub(crate) ledger: &'a RlmSpawnLedger,
+    /// The accepted tasks-reporter configuration, carried into the roster's
+    /// worker `launch_env` rows so a crash respawn replays it.
+    pub(crate) tasks_reporter: Option<String>,
 }
 
 /// Assemble the full update roster (spec §8) from the collected worker
@@ -326,6 +331,7 @@ pub(crate) fn build_update_roster(
         to_version,
         created_at_ms,
         ledger,
+        tasks_reporter,
     } = inputs;
     // Live edges group by parent session file: one row's `rlm_children`.
     let child_parents: HashSet<PathBuf> = ledger
@@ -352,6 +358,7 @@ pub(crate) fn build_update_roster(
             socket_path,
             snapshot,
             std::slice::from_ref(&row.session_id),
+            tasks_reporter.as_deref(),
         ));
         sessions.push(row);
     }
@@ -563,6 +570,7 @@ mod tests {
                 to_version: "0.2.0",
                 created_at_ms: 1_000,
                 ledger: &ledger,
+                tasks_reporter: None,
             },
             &workers,
         )
@@ -654,6 +662,7 @@ mod tests {
                 to_version: "b",
                 created_at_ms: 1,
                 ledger: &ledger,
+                tasks_reporter: None,
             },
             &[snapshot],
         )

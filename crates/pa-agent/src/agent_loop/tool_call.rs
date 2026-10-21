@@ -107,11 +107,18 @@ async fn prepare_tool_call_inner(
 pub(crate) struct ExecutedToolCallOutcome {
     result: AgentToolResult,
     is_error: bool,
+    /// Wall time of the execute call only (one decimal, ms).
+    duration_ms: f64,
 }
 
 /// Race the tool against abort, stream `tool_execution_update` events
 /// through a background emitter task, and return an error tool result when
 /// the tool fails (or aborts, with the TS message "Tool execution aborted").
+// The tool executor's own drain/error ladder sits at 103 lines with the
+// execution-duration measurement added; the style gate stays at 100, so the
+// narrow allow documents the one-function exception rather than splitting a
+// single-use helper out (the no-single-use-helpers rule wins).
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn execute_prepared_tool_call(
     prepared: &PreparedToolCall,
     signal: Option<&AbortSignal>,
@@ -151,6 +158,7 @@ pub(crate) async fn execute_prepared_tool_call(
         })
     };
 
+    let execute_started_at = std::time::Instant::now();
     let execute_result = race_with_abort(
         (Arc::clone(&prepared.tool)).execute(
             prepared.tool_call.id.clone(),
@@ -161,6 +169,7 @@ pub(crate) async fn execute_prepared_tool_call(
         signal,
     )
     .await;
+    let duration_ms = round_ms(elapsed_ms(execute_started_at));
 
     accepting_updates.store(false, std::sync::atomic::Ordering::SeqCst);
     drop(update_tx);
@@ -184,6 +193,7 @@ pub(crate) async fn execute_prepared_tool_call(
                         return ExecutedToolCallOutcome {
                             result: error_tool_result(signal, &error),
                             is_error: true,
+                            duration_ms,
                         };
                     }
                 }
@@ -193,6 +203,7 @@ pub(crate) async fn execute_prepared_tool_call(
                         return ExecutedToolCallOutcome {
                             result: error_tool_result(signal, &error),
                             is_error: true,
+                            duration_ms,
                         };
                     }
                 }
@@ -200,6 +211,7 @@ pub(crate) async fn execute_prepared_tool_call(
             ExecutedToolCallOutcome {
                 result,
                 is_error: false,
+                duration_ms,
             }
         }
         Err(error) => {
@@ -218,9 +230,20 @@ pub(crate) async fn execute_prepared_tool_call(
             ExecutedToolCallOutcome {
                 result: error_tool_result(signal, &error),
                 is_error: true,
+                duration_ms,
             }
         }
     }
+}
+
+/// Milliseconds between the measurement start and now.
+fn elapsed_ms(from: std::time::Instant) -> f64 {
+    from.elapsed().as_secs_f64() * 1000.0
+}
+
+/// One decimal of precision.
+fn round_ms(delta_ms: f64) -> f64 {
+    (delta_ms * 10.0).round() / 10.0
 }
 
 fn error_tool_result(signal: Option<&AbortSignal>, error: &anyhow::Error) -> AgentToolResult {
@@ -240,8 +263,11 @@ pub(crate) async fn finalize_executed_tool_call(
     config: &AgentLoopConfig,
     signal: Option<&AbortSignal>,
 ) -> anyhow::Result<FinalizedToolCallOutcome> {
-    let mut result = executed.result;
-    let mut is_error = executed.is_error;
+    let ExecutedToolCallOutcome {
+        mut result,
+        mut is_error,
+        duration_ms,
+    } = executed;
 
     if let Some(after_tool_call) = config.after_tool_call.as_ref() {
         let after_result = race_with_abort(
@@ -289,6 +315,7 @@ pub(crate) async fn finalize_executed_tool_call(
         tool_call: prepared.tool_call.clone(),
         result,
         is_error,
+        duration_ms: Some(duration_ms),
     })
 }
 
@@ -308,15 +335,29 @@ pub(crate) async fn emit_tool_execution_end(
 pub(crate) fn create_tool_result_message(
     finalized: &FinalizedToolCallOutcome,
 ) -> ToolResultMessage {
+    // The loop's uniform wall durationMs overwrites a tool-local value
+    // (intentional fork deviation; the cumulative metric never mixes spans).
+    // A scalar details value keeps its shape unmeasured.
+    let mut details = if finalized.result.details.is_null() {
+        None
+    } else {
+        Some(finalized.result.details.clone())
+    };
+    if let Some(duration_ms) = finalized.duration_ms {
+        details = match details {
+            Some(serde_json::Value::Object(mut map)) => {
+                map.insert("durationMs".to_string(), serde_json::json!(duration_ms));
+                Some(serde_json::Value::Object(map))
+            }
+            None => Some(serde_json::json!({ "durationMs": duration_ms })),
+            Some(other) => Some(other),
+        };
+    }
     ToolResultMessage {
         tool_call_id: finalized.tool_call.id.clone(),
         tool_name: finalized.tool_call.name.clone(),
         content: finalized.result.content.clone(),
-        details: if finalized.result.details.is_null() {
-            None
-        } else {
-            Some(finalized.result.details.clone())
-        },
+        details,
         is_error: finalized.is_error,
         timestamp: crate::now_ms(),
     }

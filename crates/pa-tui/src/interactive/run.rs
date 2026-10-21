@@ -1231,10 +1231,12 @@ async fn run_interactive_surface(
             let deadline = headless_settle_deadline
                 .get_or_insert(Instant::now() + Duration::from_millis(HEADLESS_SETTLE_TIMEOUT_MS));
             if Instant::now() >= *deadline {
+                let frame = renderer.settle_frame_text(&mut view);
                 anyhow::bail!(
-                    "the headless run's settle did not complete within {}ms of the plan's completion: {}",
+                    "the headless run's settle did not complete within {}ms of the plan's completion: {}{}",
                     HEADLESS_SETTLE_TIMEOUT_MS,
-                    settle.blockers().join("; ")
+                    settle.blockers().join("; "),
+                    frame.map(|frame| format!("\nthe last frame:\n{frame}")).unwrap_or_default()
                 );
             }
         }

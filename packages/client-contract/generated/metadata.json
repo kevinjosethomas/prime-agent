@@ -2,8 +2,8 @@
   "protocol": {
     "name": "prime-agent.daemon",
     "version": 7,
-    "schemaRevision": 31,
-    "schemaId": "protocol-7-schema-31-5b2e0e3f07aa",
+    "schemaRevision": 32,
+    "schemaId": "protocol-7-schema-32-0add452274ed",
     "negotiation": "envelope protocolVersion is exactly 7; the supervisor enforces 7. pa-client records min(server, client) per session as client behavior — that is not the wire contract."
   },
   "commands": [
@@ -855,6 +855,13 @@
       "longRunning": false
     },
     {
+      "type": "set_task_reporter",
+      "plane": "control",
+      "mutating": true,
+      "sessionPlane": false,
+      "longRunning": false
+    },
+    {
       "type": "ack_result",
       "plane": "control",
       "mutating": false,
@@ -970,6 +977,7 @@
       "subagent_model_defaults",
       "global_harness_defaults",
       "prompt_guidelines",
+      "task_reporter",
       "mcp_multi_account",
       "workstream_classification",
       "side_question_transcript",
@@ -987,7 +995,8 @@
       "acp_mcp_servers",
       "abort_and_send_queued",
       "agent_roster",
-      "direct_peer_transport"
+      "direct_peer_transport",
+      "response_timing"
     ]
   },
   "timeouts": {
