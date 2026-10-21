@@ -208,7 +208,7 @@ impl Sandbox {
 /// One ipython cell that proves the kernel runs, then the closing text turn.
 fn kernel_boot_script(receipt: &Path) -> serde_json::Value {
     let cell = format!(
-        "import json\nfrom rlm import rlm as _r\npayload = {{\n  \"kernel_boot\": True,\n  \"rlm_available\": _r is not None,\n  \"spawn\": callable(_r.spawn),\n}}\nopen({receipt:?}, \"w\").write(json.dumps(payload))\nprint(\"KERNEL_BOOT_OK\")",
+        "import json\nimport rlm\npayload = {{\n  \"kernel_boot\": True,\n  \"rlm_available\": callable(rlm.host_request),\n  \"spawn\": callable(agents.spawn),\n}}\nopen({receipt:?}, \"w\").write(json.dumps(payload))\nprint(\"KERNEL_BOOT_OK\")",
         receipt = receipt.display().to_string(),
     );
     serde_json::json!({
