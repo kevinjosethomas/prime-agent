@@ -16,10 +16,10 @@
 //!   the boundary — never a hand-maintained TS wire mirror — and preserve
 //!   the precise `NotSent`/`Uncertain`/`Rejected` classes with no
 //!   auto-resend.
-//! - `close()` stops the binding's pumps and releases the core client.
-//!   Honest scope: synchronous teardown of the core's reader/writer tasks
-//!   is the shutdown-core work owned elsewhere; this binding claims only
-//!   that it holds no tasks, channels, or event-loop handles after `close`.
+//! - `close()` stops the binding's pumps, releases the core client, and
+//!   joins the core's registered task set to a real completion
+//!   (`shutdown()` + `join_tasks()`, the landed shutdown-core work): no
+//!   task, channel, or event-loop handle survives `close`.
 //!
 //! The core tap channel is unbounded on the core side (documented there):
 //! this binding's bounded queue bounds the FRAME DELIVERY backlog, not the
@@ -720,6 +720,7 @@ pub async fn connect(
         max_pending: options
             .max_pending
             .and_then(|cap| usize::try_from(cap).ok()),
+        client_id: None,
     };
     let caps = Caps {
         frame_buffer,

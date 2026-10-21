@@ -23,20 +23,11 @@ class Report:
 
 
 class DeliveryError(RuntimeError):
-    """Delivery was not confirmed; retry ``report`` to preserve deduplication."""
+    """Delivery was not confirmed; the exact event is redelivered internally."""
 
     def __init__(self, message: str, report: Report | None = None):
         super().__init__(message)
         self.report = report
-
-
-class AssignmentError(DeliveryError):
-    """An agent was admitted, but metadata delivery failed. Never restart it to retry."""
-
-    def __init__(self, handle: Any, error: Exception):
-        super().__init__("Agent admitted; task assignment was not confirmed. Retain handle and retry assignment, not agent creation.",
-                         error.report if isinstance(error, DeliveryError) else None)
-        self.handle = handle
 
 
 class Reporter:

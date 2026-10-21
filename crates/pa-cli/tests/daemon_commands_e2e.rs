@@ -51,7 +51,7 @@ use serde_json::{json, Value};
 
 /// Env keys this box's own worker sets; they must not leak into spawned
 /// daemons. `PI_PACKAGE_DIR` too: a Rust-checkout value kills the TS CLI.
-const SCRUB_ENV: [&str; 10] = [
+const SCRUB_ENV: [&str; 11] = [
     "PRIME_AGENT_INTERNAL_DAEMON_WORKER",
     "PRIME_AGENT_INTERNAL_DAEMON_WORKER_TOKEN",
     "PRIME_AGENT_INTERNAL_DAEMON_WORKER_ACTIVE_SESSION_ID",
@@ -61,6 +61,7 @@ const SCRUB_ENV: [&str; 10] = [
     "PRIME_AGENT_INTERNAL_ORPHAN_PROCESS_JOURNAL",
     "PRIME_AGENT_INTERNAL_SESSION_LEASES",
     "PRIME_AGENT_INTERNAL_SESSION_LEASE_OWNER_ID",
+    "PRIME_AGENT_INTERNAL_TASKS_REPORTER",
     "PI_PACKAGE_DIR",
 ];
 

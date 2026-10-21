@@ -41,29 +41,29 @@ test('a PARKED nextFrame pull observes the sticky overflow branch', async () => 
   // proven-pending pull must witness the terminal Overflow across the
   // cycles.
   let witnessed = 0;
-  for (let cycle = 0; cycle < 5 && witnessed === 0; cycle += 1) {
+  // 12 cycles: under a fully loaded parallel battery the pre-mark frame
+  // interleave wins most cycles; the witness stays a bounded certainty.
+  for (let cycle = 0; cycle < 12 && witnessed === 0; cycle += 1) {
     const socketPath = tmpSocket(`overflow-parked-${cycle}`);
     const stop = await startMock(socketPath, 'flood-trigger');
     const connection = await DaemonConnection.connect(socketPath, { frameBuffer: 1 });
-    // The gated mock sent hello ONLY: the pull parks against an empty
-    // queue — provably pending before any flood.
-    const parked = connection
-      .nextFrame()
-      .then(
-        (frame) => ({ frame }),
-        (error) => ({ error }),
-      );
-    // The single-consumer probe proves the parked pull holds the pending
-    // poll: a concurrent pull MUST reject while the first is parked.
-    const probeError = await connection
-      .nextFrame()
-      .then(
-        () => {
-          throw new Error('the probe should have rejected');
-        },
-        (error) => error,
-      );
-    assert.ok(/single-consumer/.test(probeError.message));
+    // The gated mock sent hello ONLY: one pull parks against an empty
+    // queue — provably pending before any flood. The two native calls may
+    // acquire the pending poll in EITHER order, so the proof is symmetric:
+    // the loser rejects single-consumer promptly, the owner stays parked.
+    const pulls = [
+      connection.nextFrame().then(
+        (frame) => ({ index: 0, frame }),
+        (error) => ({ index: 0, error }),
+      ),
+      connection.nextFrame().then(
+        (frame) => ({ index: 1, frame }),
+        (error) => ({ index: 1, error }),
+      ),
+    ];
+    const loser = await Promise.race(pulls);
+    assert.ok(loser.error && /single-consumer/.test(loser.error.message));
+    const parked = pulls[1 - loser.index];
     // Only NOW the trigger command starts the flood: the in-flight
     // trigger settles Uncertain-cause-overflow; the PROVEN-pending
     // parked pull settles the sticky terminal branch or a legal frame.

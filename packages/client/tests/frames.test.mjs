@@ -40,11 +40,20 @@ test('nextFrame is single-consumer: a concurrent pull rejects', async () => {
   // so the concurrent pull hits the single-consumer gate.
   const stop = await startMock(socketPath, 'echo');
   const connection = await DaemonConnection.connect(socketPath);
-  const pending = connection.nextFrame();
-  await assert.rejects(connection.nextFrame(), (error) => /single-consumer/.test(error.message));
-  // The echo mock never sends a frame: close is what ends the pending pull.
+  // Handlers attach at creation: the two native calls may acquire the
+  // pending-poll slot in EITHER order, so whichever loses must never
+  // reject through an unhandled window.
+  const first = connection.nextFrame().then((frame) => ({ frame }), (error) => ({ error }));
+  const second = connection.nextFrame().then((frame) => ({ frame }), (error) => ({ error }));
+  // The echo mock pushes no frames: the owner parks, so the first settle
+  // is always the loser's prompt single-consumer rejection.
+  const loser = await Promise.race([first, second]);
+  assert.ok(loser.error && /single-consumer/.test(loser.error.message));
+  // The echo mock never sends a frame: close is what ends the owned pull.
   connection.close();
-  assert.equal(await pending, null);
+  const [a, b] = await Promise.all([first, second]);
+  const owner = a.error === undefined ? a : b;
+  assert.equal(owner.frame, null);
   await stop();
 });
 

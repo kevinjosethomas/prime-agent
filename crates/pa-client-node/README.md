@@ -5,12 +5,6 @@ Node-API (napi-rs) binding crate for the shared Prime Agent daemon client
 delegate connect/request/direct/error/raw-frame channels without any
 TypeScript transport machinery.
 
-**Merge status: CANNOT MERGE until the core shutdown PR lands.** The
-binding explicitly does not join the core transport's reader/writer tasks;
-synchronous teardown is the shutdown-core work, and this crate wires that
-call in when it exists. Until then the crate is implementation-complete
-with the interim semantics below, honestly labeled.
-
 ## Why an isolated workspace
 
 The crate is a `cdylib` excluded from the root workspace (root `Cargo.toml`
@@ -75,21 +69,71 @@ TypeScript wrapper decodes:
   channel state, never a request class: in-flight requests stay `Uncertain`).
 - `Transport` — anything else.
 
-## Interim teardown semantics (pre shutdown-PR)
+## Teardown (the landed shutdown-core work, wired in)
 
-`close()` stops the binding's pump, wakes every pending pull (`nextFrame`
-then drains already-queued frames and returns `null`; the sticky overflow
-error wins if overflow happened), severs the JS queues, and calls core
-`close()`. Synchronous joining of the core's internal reader/writer tasks is
-NOT claimed — that is the shutdown-core work this binding will call once it
-lands. Dropping the JS handle without `close()` leaks the connection (the
-runtime threads and core tasks persist until process exit); the napi
-finalizer performs no core teardown from a GC thread.
+`close()` marks the connection closed and refuses new operations, wakes
+every pending pull (`nextFrame` drains already-queued frames and returns
+`null`; the sticky overflow error wins if overflow happened), severs the JS
+queues, shuts the core transport down, drains the binding-owned operation
+bridges, and then joins the core's registered task set (`shutdown()` +
+`join_tasks()`) to a real completion. Dropping the JS handle without
+`close()` schedules the SAME full close chain on the binding-owned runtime
+from the napi finalizer (async-safe; no core calls from a GC thread) —
+nothing leaks past a GC; with no JS handle outstanding the shared runtime
+parks and Node exits on its own.
+
+## Managed session (`startSession`)
+
+The same binding also exposes the shared Rust managed lifecycle
+(`pa-client` `lifecycle.rs` + `registry.rs`) as `startSession(options) ->
+ManagedDaemonSession`, so hosts delete their TypeScript
+reconnect/restore-attach/dedupe state machines instead of re-implementing
+them:
+
+- `options`: `socketPath`; `eventBuffer?` (bounded event queue, default
+  1024); `reconnect?` (omitted = the existing Rust desktop policy; explicit
+  `{ update?: Window|null, shutdown?: Window|null, lost: Window }` where a
+  null/omitted slot falls back to the `lost` window and an omitted
+  `windowMs` is unbounded); `attachCapabilities?` (default
+  `["attach_snapshot", "event_sequence"]`); `dedupeSessionEvents?` (default
+  true); `restoreAttemptTimeoutMs` (REQUIRED, nonzero — the desktop's own
+  attach rides its 30 s request class); `maxFrameBytes?` (default 64 MiB),
+  `maxPending?` (default 128); `clientId?` (default keeps the core's
+  `daemon-tui:{pid}` identity — a desktop host passes its own unique one).
+- `status()` — the core's synchronous snapshot
+  `{ state, socketPath, appVersion, capabilities, error, errorCode }`;
+  `errorCode` is the STRUCTURAL `io::ErrorKind` label of the last connect
+  failure (`not_found`, `connection_refused`, ...; `None` on every other
+  status) — never message-parsed.
+- `nextEvent()` — single-consumer pull of the serialized stream:
+  `{ type: 'status', status }`, `{ type: 'frame', frame }` (the same
+  verbatim raw tap frames `nextFrame` yields, full meta and unknown types
+  included; per-socket wire order), `{ type: 'reattachBegin' |
+  'reattached' | 'reattachFailed', activeSessionId, data?/error }`, and
+  `{ type: 'reconnectExpired', kind }` (the ACTUAL closing kind). Fail-closed
+  like `nextFrame`: one bounded queue, and a full queue tears the whole
+  session down — the sticky `Overflow` error precedes any buffered event. An
+  explicit `stop()` (or a GC drop) marks teardown, wakes every pending
+  pull, drains the already-queued events, and then resolves `null`;
+  `stop()` itself settles independently of the consumer draining.
+- `request`/`requestOk(command)` — serde boundary, generated contract types,
+  class-based timeouts (30 s default / 600 s `prompt_and_wait`/
+  `wait_for_idle`), the honest `NotSent`/`Uncertain`/`Rejected` classes with
+  the raw binding's worker mechanics (pre-poll barrier; biased core-first
+  select), no auto-resend.
+- `registerAttachment(id, capabilities?)` / `forgetAttachment(id)` — the
+  core registry (idempotent per id). Attach/reattach/detach/kill responses
+  adopt/drop registry entries automatically; normal flows never need these.
+- `stop()` — awaited, idempotent: the core stop (refuse requests, epoch
+  bump, client shutdown + joins, the driver's final join), then the
+  binding-owned operation drain. The driver's honest completion surfaces
+  (`Err` on a driver failure for every caller), never faked.
 
 ## Non-goals
 
 - No transport, retry, cursor, or reconnect machinery (owned by `pa-client`;
-  the managed driver is exposed after the shared-lifecycle work).
+  the managed lifecycle is exposed through `startSession` and the wrapper
+  adds only serialization, the JS event queue, and teardown scheduling).
 - No hand-maintained TypeScript wire mirror; no per-Electron rebuild (pure
   Node-API, one `.node` per platform).
 

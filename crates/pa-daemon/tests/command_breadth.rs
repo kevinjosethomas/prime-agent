@@ -540,6 +540,10 @@ const WIRE_FIXTURES: &[(&str, &str)] = &[
         "set_prompt_guidelines",
         r#"{"type": "set_prompt_guidelines", "activeSessionId": "sess", "appendSystemPrompt": []}"#,
     ),
+    (
+        "set_task_reporter",
+        r#"{"type": "set_task_reporter", "command": ["/usr/local/bin/Primer", "task-cli.cjs", "--db", "state.sqlite"], "env": {"ELECTRON_RUN_AS_NODE": "1"}, "timeout": 15}"#,
+    ),
 ];
 
 /// The accept list is the TS list, in TS order, then the Rust-native supervisor/worker frames.
@@ -576,6 +580,7 @@ fn known_command_types_match_the_ts_list() {
                     | "list_queued_inputs"
                     | "mutate_queued_input"
                     | "set_prompt_guidelines"
+                    | "set_task_reporter"
                     | "heartbeat_update_job"
                     | "set_mcp_connection_label"
             ),
