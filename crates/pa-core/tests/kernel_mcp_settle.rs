@@ -365,7 +365,7 @@ async fn generic_mcp_servers_settle_in_the_background_and_first_use_joins_the_op
     let manager = provisioner.manager().expect("the booted kernel's manager");
     let result = manager
         .execute(
-            "result = await mcp.call_tool('settle-fixture', 'echo', {'text': 'probe'})\nresult",
+            "result = await mcp.call('settle-fixture', 'echo', text='probe')\nresult",
             ExecuteOptions::default(),
         )
         .await

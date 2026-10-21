@@ -72,6 +72,11 @@ pub struct AgentObserveSummary {
     pub attached_clients: usize,
     pub queued_count: usize,
     pub is_session_active: bool,
+    /// The session's latest accepted progress note; `None` for family
+    /// members whose worker never accepted one.
+    pub note: Option<String>,
+    /// The wall-clock timestamp of the latest accepted note.
+    pub note_at: Option<String>,
 }
 
 impl AgentObserveSummary {
@@ -83,6 +88,8 @@ impl AgentObserveSummary {
             "relationship": self.relationship.map(|r| r.as_str()),
             "runtimeKind": self.runtime_kind,
             "status": self.status.as_str(),
+            "note": self.note,
+            "noteAt": self.note_at,
             "isCurrent": self.is_current,
             "isStreaming": self.is_streaming,
             "isCompacting": self.is_compacting,

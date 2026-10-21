@@ -206,18 +206,18 @@ async fn rlm_bootstrap_injects_the_kernel_surface() {
 
     let result = execute(
         &manager,
-        "callable(rlm.spawn) and callable(rlm.find_models) and callable(bash)",
+        "callable(agents.spawn) and callable(harness.models) and callable(bash)",
     )
     .await;
     assert_eq!(
         result.status,
         ExecuteStatus::Ok,
-        "bootstrap must bind the RLM surface"
+        "bootstrap must bind the runtime surface"
     );
     assert_eq!(
         result.result.as_deref(),
         Some("True"),
-        "rlm/bash must be usable"
+        "the runtime globals must be usable"
     );
 
     manager
@@ -251,11 +251,11 @@ async fn host_requests_round_trip_to_registered_handlers() {
     };
     let manager = started_manager(options).await;
 
-    // rlm.find_models runs through the runtime's host_request bridge; the
+    // harness.models runs through the runtime's host_request bridge; the
     // host reply must reach the awaiting cell.
     let result = execute(
         &manager,
-        "result = await rlm.find_models('glm', 2)\nresult[0].selector",
+        "result = await harness.models('glm', 2)\nresult[0].selector",
     )
     .await;
     assert_eq!(result.status, ExecuteStatus::Ok, "cell: {:?}", result.error);

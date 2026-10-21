@@ -1,7 +1,7 @@
 //! RLM children lifecycle on parent runtime replacement (the #237 flagged
 //! TS divergence): TS `teardownForReplacement` closes the parent-linked RLM
 //! children and the replacement session's roster starts empty;
-//! `rlm.create_session` root sessions are not parent-linked and survive.
+//! `agents.spawn(top_level=True)` root sessions are not parent-linked and survive.
 // Stack-resident futures by design on the daemon's hot paths.
 #![allow(clippy::large_futures)]
 // Narrowing casts sit at OS boundaries (pid/fd/time/size) where the kernel
@@ -249,20 +249,20 @@ fn await_receipt(receipt: &Path) -> String {
     }
 }
 
-/// The kernel cell: spawn one RLM child through the product `rlm.spawn` surface.
+/// The kernel cell: spawn one RLM child through the product `agents.spawn` surface.
 fn spawn_cell(receipt: &Path, error_receipt: &Path) -> String {
     format!(
-        "import json, traceback\ntry:\n    handle = await rlm.spawn(\"run the lane task\", name=\"kid\")\n    open({receipt:?}, \"w\").write(json.dumps({{\"rlm_child_id\": handle.rlm_child_id}}))\n    print(handle.rlm_child_id)\nexcept Exception:\n    open({error_receipt:?}, \"w\").write(traceback.format_exc())\n    raise",
+        "import json, traceback\ntry:\n    handle = await agents.spawn(\"run the lane task\", name=\"kid\")\n    open({receipt:?}, \"w\").write(json.dumps({{\"rlm_child_id\": handle.child_id}}))\n    print(handle.child_id)\nexcept Exception:\n    open({error_receipt:?}, \"w\").write(traceback.format_exc())\n    raise",
         receipt = receipt.display().to_string(),
         error_receipt = error_receipt.display().to_string(),
     )
 }
 
-/// The kernel cell: the replacement session's `rlm.list_subagents()` roster,
+/// The kernel cell: the replacement session's `agents.list()` roster,
 /// recorded verbatim.
 fn roster_cell(receipt: &Path, error_receipt: &Path) -> String {
     format!(
-        "import inspect, traceback\ntry:\n    roster = rlm.list_subagents()\n    if inspect.isawaitable(roster):\n        roster = await roster\n    open({receipt:?}, \"w\").write(repr(roster))\n    print(repr(roster))\nexcept Exception:\n    open({error_receipt:?}, \"w\").write(traceback.format_exc())\n    raise",
+        "import json, traceback\ntry:\n    roster = await agents.list()\n    open({receipt:?}, \"w\").write(json.dumps([repr(row) for row in roster]))\n    print(repr(roster))\nexcept Exception:\n    open({error_receipt:?}, \"w\").write(traceback.format_exc())\n    raise",
         receipt = receipt.display().to_string(),
         error_receipt = error_receipt.display().to_string(),
     )
@@ -271,7 +271,7 @@ fn roster_cell(receipt: &Path, error_receipt: &Path) -> String {
 /// The probe cell: the restarted parent's roster rows, then a send to the child.
 fn probe_cell(list_receipt: &Path, send_receipt: &Path, error_receipt: &Path) -> String {
     format!(
-        "import inspect, json, traceback\ntry:\n    roster = rlm.list_subagents()\n    if inspect.isawaitable(roster):\n        roster = await roster\n    rows = [[s.rlm_child_id, s.status, s.active_session_id] for s in roster]\n    open({list:?}, \"w\").write(json.dumps(rows))\n    receipt = await agent_message.send(\"boot-ping\", receiver_role=\"child\", receiver_name=\"kid\")\n    open({send:?}, \"w\").write(json.dumps(receipt))\n    print(rows, receipt)\nexcept Exception:\n    open({error:?}, \"w\").write(traceback.format_exc())\n    raise",
+        "import dataclasses, json, traceback\ntry:\n    roster = await agents.list()\n    rows = [[s.child_id, s.status, s.session_id] for s in roster]\n    open({list:?}, \"w\").write(json.dumps(rows))\n    kid = next(row for row in roster if row.name == \"kid\")\n    receipt = await kid.send(\"boot-ping\")\n    open({send:?}, \"w\").write(json.dumps(dataclasses.asdict(receipt)))\n    print(rows, receipt)\nexcept Exception:\n    open({error:?}, \"w\").write(traceback.format_exc())\n    raise",
         list = list_receipt.display().to_string(),
         send = send_receipt.display().to_string(),
         error = error_receipt.display().to_string(),
@@ -279,10 +279,10 @@ fn probe_cell(list_receipt: &Path, send_receipt: &Path, error_receipt: &Path) ->
 }
 
 /// The kernel cell that creates one depth-0 resident root session through
-/// the product `rlm.create_session` surface.
+/// the product `agents.spawn(top_level=True)` surface.
 fn create_session_cell(receipt: &Path, error_receipt: &Path) -> String {
     format!(
-        "import json, traceback\ntry:\n    handle = await rlm.create_session(\"root session task\", name=\"rootkid\")\n    open({receipt:?}, \"w\").write(json.dumps({{\"name\": handle.name}}))\n    print(handle.name)\nexcept Exception:\n    open({error_receipt:?}, \"w\").write(traceback.format_exc())\n    raise",
+        "import json, traceback\ntry:\n    handle = await agents.spawn(\"root session task\", name=\"rootkid\", top_level=True)\n    open({receipt:?}, \"w\").write(json.dumps({{\"name\": handle.name}}))\n    print(handle.name)\nexcept Exception:\n    open({error_receipt:?}, \"w\").write(traceback.format_exc())\n    raise",
         receipt = receipt.display().to_string(),
         error_receipt = error_receipt.display().to_string(),
     )
@@ -323,7 +323,7 @@ fn write_parent_script(dir: &Path, first_cell: &str, probe_cell: &str) -> PathBu
     script
 }
 
-/// The create's `childScript` harness seam makes every `rlm.spawn` child a
+/// The create's `childScript` harness seam makes every `agents.spawn` child a
 /// scripted worker.
 fn create_parent(
     client: &mut Client,
@@ -482,7 +482,7 @@ fn new_session_closes_the_spawned_child_and_empties_the_roster() {
     );
 }
 
-/// `rlm.create_session` root sessions are NOT parent-linked, so
+/// `agents.spawn(top_level=True)` root sessions are NOT parent-linked, so
 /// `closeChildSessions` never matches them.
 #[test]
 fn new_session_keeps_a_created_root_session_running() {
@@ -729,7 +729,7 @@ fn restart_relists_child(delay_ms: u64, display_status: &str) {
         json!([[
             child_id,
             if display_status == "completed" {
-                "completed"
+                "done"
             } else {
                 "error"
             },

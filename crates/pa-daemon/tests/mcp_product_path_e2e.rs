@@ -181,7 +181,7 @@ impl Client {
 /// disk (and print it so the tool result carries the same proof).
 fn mcp_cell(receipt_path: &Path) -> String {
     format!(
-        "from rlm import mcp\nimport json, traceback\ntry:\n    tools = await mcp.list_tools(\"fixture-echo\")\n    result = await mcp.call_tool(\"fixture-echo\", \"echo\", {{\"message\": \"hello from the daemon e2e\"}})\n    payload = {{\"tools\": tools, \"result\": result}}\n    open({receipt_path:?}, \"w\").write(json.dumps(payload))\n    print(json.dumps(payload))\nexcept Exception:\n    open({error_path:?}, \"w\").write(traceback.format_exc())\n    raise",
+        "from rlm import mcp\nimport dataclasses, json, traceback\ntry:\n    tools = await mcp.tools(\"fixture-echo\")\n    result = await mcp.call(\"fixture-echo\", \"echo\", message=\"hello from the daemon e2e\")\n    payload = {{\"tools\": [dataclasses.asdict(tool) for tool in tools], \"result\": result}}\n    open({receipt_path:?}, \"w\").write(json.dumps(payload))\n    print(json.dumps(payload))\nexcept Exception:\n    open({error_path:?}, \"w\").write(traceback.format_exc())\n    raise",
         receipt_path = receipt_path.display().to_string(),
         error_path = receipt_path.with_extension("error").display().to_string(),
     )

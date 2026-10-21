@@ -270,20 +270,20 @@ fn await_receipt(receipt: &Path) -> String {
 }
 
 /// The kernel cell of the spawn turn: spawn one RLM child through the
-/// product `rlm.spawn` surface and record its child id.
+/// product `agents.spawn` surface and record its child id.
 fn spawn_cell(receipt: &Path, error_receipt: &Path) -> String {
     format!(
-        "import json, traceback\ntry:\n    handle = await rlm.spawn(\"run the lane task\", name=\"kid\")\n    open({receipt:?}, \"w\").write(json.dumps({{\"rlm_child_id\": handle.rlm_child_id}}))\n    print(handle.rlm_child_id)\nexcept Exception:\n    open({error_receipt:?}, \"w\").write(traceback.format_exc())\n    raise",
+        "import json, traceback\ntry:\n    handle = await agents.spawn(\"run the lane task\", name=\"kid\")\n    open({receipt:?}, \"w\").write(json.dumps({{\"rlm_child_id\": handle.child_id}}))\n    print(handle.child_id)\nexcept Exception:\n    open({error_receipt:?}, \"w\").write(traceback.format_exc())\n    raise",
         receipt = receipt.display().to_string(),
         error_receipt = error_receipt.display().to_string(),
     )
 }
 
 /// The kernel cell that creates one depth-0 resident root session through
-/// the product `rlm.create_session` surface.
+/// the product `agents.spawn(top_level=True)` surface.
 fn create_session_cell(receipt: &Path, error_receipt: &Path) -> String {
     format!(
-        "import json, traceback\ntry:\n    handle = await rlm.create_session(\"root session task\", name=\"rootkid\")\n    open({receipt:?}, \"w\").write(json.dumps({{\"name\": handle.name}}))\n    print(handle.name)\nexcept Exception:\n    open({error_receipt:?}, \"w\").write(traceback.format_exc())\n    raise",
+        "import json, traceback\ntry:\n    handle = await agents.spawn(\"root session task\", name=\"rootkid\", top_level=True)\n    open({receipt:?}, \"w\").write(json.dumps({{\"name\": handle.name}}))\n    print(handle.name)\nexcept Exception:\n    open({error_receipt:?}, \"w\").write(traceback.format_exc())\n    raise",
         receipt = receipt.display().to_string(),
         error_receipt = error_receipt.display().to_string(),
     )
@@ -526,7 +526,7 @@ fn sigkill_closes_the_spawned_child_and_passivates_the_row() {
     );
 }
 
-/// `rlm.create_session` depth-0 roots are NOT parent-linked (TS `createRlmRootSession`
+/// `agents.spawn(top_level=True)` depth-0 roots are NOT parent-linked (TS `createRlmRootSession`
 /// carries no `parentActiveSessionId`, so `getChildActiveSessionStates` never matches
 /// them): a created root survives the parent's hard death.
 #[test]
@@ -615,7 +615,7 @@ fn sigkill_keeps_a_created_root_session_running() {
 /// RLM child through the product surface and record its id + session dir.
 fn semantic_spawn_cell(receipt: &Path, error_receipt: &Path) -> String {
     format!(
-        "import json, traceback\ntry:\n    handle = await rlm.spawn(\"child task text\", name=\"kid\")\n    open({receipt:?}, \"w\").write(json.dumps({{\"rlm_child_id\": handle.rlm_child_id, \"session_dir\": str(handle.session_dir)}}))\n    print(handle.rlm_child_id)\nexcept Exception:\n    open({error_receipt:?}, \"w\").write(traceback.format_exc())\n    raise",
+        "import json, traceback\ntry:\n    handle = await agents.spawn(\"child task text\", name=\"kid\")\n    open({receipt:?}, \"w\").write(json.dumps({{\"rlm_child_id\": handle.child_id, \"session_dir\": str(handle.session_dir)}}))\n    print(handle.child_id)\nexcept Exception:\n    open({error_receipt:?}, \"w\").write(traceback.format_exc())\n    raise",
         receipt = receipt.display().to_string(),
         error_receipt = error_receipt.display().to_string(),
     )
@@ -639,7 +639,7 @@ fn semantic_ledger(path: &Path) -> Vec<LedgerEvent> {
 /// records the child's return before its next request starts (TS
 /// `semanticParentSessionId`/`spawnedByRequestId` +
 /// `recordChildReturned`; the spawn runs mid-turn through the product
-/// `rlm.spawn` surface, and both engines are real over the faux
+/// `agents.spawn` surface, and both engines are real over the faux
 /// provider).
 #[test]
 fn a_spawned_child_ledger_names_its_spawning_request_and_the_parent_records_the_return() {
@@ -692,7 +692,7 @@ fn a_spawned_child_ledger_names_its_spawning_request_and_the_parent_records_the_
         .to_string();
 
     // Turn 1: the kernel cell spawns the child mid-turn through the
-    // product `rlm.spawn` surface.
+    // product `agents.spawn` surface.
     run_turn(&mut client, &parent_id, "spawn the kid", "t1");
     let spawned: Value =
         serde_json::from_str(&await_receipt(&spawn_receipt)).expect("spawn receipt json");

@@ -198,7 +198,6 @@ async fn bash_consumed_withdraws_the_undelivered_notice_and_settles() {
             pid: 4321,
             command: "another command".to_string(),
         },
-        Some(worker.engine.as_ref()),
     );
     assert!(
         worker.core.lock().unwrap().steering.len() == 1,
@@ -215,8 +214,6 @@ async fn bash_consumed_withdraws_the_undelivered_notice_and_settles() {
             pid: 4321,
             command: "sleep 12; echo RW_WAKE_DONE".to_string(),
         },
-        /*engine*/
-        None, // A retired engine must not prevent withdrawal or its checkpoint.
     );
     {
         let core = worker.core.lock().unwrap();

@@ -249,7 +249,7 @@ pub const COMMAND_SPECS: &[CommandSpec] = &[
     .description(
         "Machines are MACHINE.md templates (frontmatter plus a fenced machine-spec block) \
 resolved from the bundled library shipped inside the runtime, then from the personal \
-library under the agent dir. Run one with `await rlm.factory.run(\"<name>\")` from a session.",
+library under the agent dir. Run one with `await factory.run(\"<name>\")` from a session.",
     ),
     CommandSpec::new(
         &["factory", "list"],

@@ -815,6 +815,7 @@ stdlib = {
     "secrets", "selectors", "socket", "struct", "fcntl", "termios", "ast",
     "codecs", "contextvars", "ctypes", "linecache", "platform",
     "tempfile", "traceback", "math", "pickle", "select", "urllib",
+    "httpx", "PIL",
 }
 
 def collect(nodes, found):
@@ -839,7 +840,9 @@ def path_of(module, roots):
     return str(root / (tail.replace(".", "/") + ".py")) if tail else str(root / "__init__.py")
 
 roots = {"rlm": pathlib.Path(sys.argv[1]), "tasks": pathlib.Path(sys.argv[2])}
-seed = ["rlm", "rlm.mcp", "rlm.bash", "rlm.repl", "tasks"]
+seed = ["rlm", "rlm.agents", "rlm.harness", "rlm.heartbeat", "rlm.mcp",
+        "rlm.factory", "rlm.edit", "rlm.websearch", "rlm.attach_image",
+        "rlm.bash", "rlm.repl", "tasks"]
 # Include the tasks package's relative imports without expanding the legacy RLM seed.
 seed.extend("tasks." + ".".join(path.relative_to(roots["tasks"]).with_suffix("").parts)
             for path in roots["tasks"].rglob("*.py") if path.name != "__init__.py")
@@ -889,13 +892,24 @@ print(json.dumps({"closure": sorted(closure), "violations": violations}))
         .unwrap_or_else(|error| panic!("unparseable closure report {stdout:?}: {error}"));
     // The seed set mirrors the RUNTIME_READY_CHECK's imports; if either
     // changes, this test is the tripwire.
-    assert!(
-        report.closure.contains(&"rlm.mcp".to_string())
-            && report.closure.contains(&"rlm.bash".to_string())
-            && report.closure.contains(&"rlm.repl".to_string())
-            && report.closure.contains(&"tasks".to_string()),
-        "the frozen closure seed is wrong: {report:?}"
-    );
+    for module in [
+        "rlm.agents",
+        "rlm.harness",
+        "rlm.heartbeat",
+        "rlm.mcp",
+        "rlm.factory",
+        "rlm.edit",
+        "rlm.websearch",
+        "rlm.attach_image",
+        "rlm.bash",
+        "rlm.repl",
+        "tasks",
+    ] {
+        assert!(
+            report.closure.contains(&module.to_string()),
+            "the frozen closure seed is wrong: {report:?}"
+        );
+    }
     assert!(
         report.violations.is_empty(),
         "the probe import closure grew beyond rlm+tasks+stdlib (closure {:?}): {:?}",

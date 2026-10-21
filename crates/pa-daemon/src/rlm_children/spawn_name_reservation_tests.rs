@@ -428,6 +428,7 @@ async fn concurrent_parent_renames_keep_the_last_applied_name() {
         .expect("create reached the supervisor");
     verdict_tx.send(true).expect("admit create");
     let handle = spawned.await.expect("spawn task").expect("spawn child");
+    assert_eq!(handle.session_id, "child-file");
 
     let first =
         tokio::spawn(sessions.rename("first".to_string(), Some(handle.rlm_child_id.clone())));
@@ -462,4 +463,74 @@ async fn concurrent_parent_renames_keep_the_last_applied_name() {
     );
     let rows = sessions.list_subagents().await.expect("roster");
     assert_eq!(rows[0].session_name, "second");
+}
+
+#[tokio::test]
+async fn create_session_without_a_model_uses_the_subagent_default_setting() {
+    let agent_dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        agent_dir.path().join("models.json"),
+        json!({
+            "providers": {
+                "test-provider": {
+                    "baseUrl": "http://localhost:9",
+                    "apiKey": "test-key", "api": "openai-completions",
+                    "models": [{"id":"nested/model", "name":"Nested", "contextWindow":1000, "maxTokens":100}]
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        agent_dir.path().join("settings.json"),
+        json!({"subagentDefaultModel": "test-provider/nested/model"}).to_string(),
+    )
+    .unwrap();
+    let socket = std::env::temp_dir().join(format!(
+        "pa-rlm-create-default-{}.sock",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let (create_seen_tx, mut create_seen_rx) = mpsc::unbounded_channel();
+    let (verdict_tx, verdict_rx) = mpsc::unbounded_channel();
+    let (rename_seen_tx, _rename_seen_rx) = mpsc::unbounded_channel();
+    spawn_gated_supervisor(
+        socket.clone(),
+        create_seen_tx,
+        verdict_rx,
+        rename_seen_tx,
+        None,
+    )
+    .await;
+    let link = Arc::new(crate::supervisor_link::SupervisorLink::new(socket));
+    let sessions = SupervisorChildSessions::new(
+        link,
+        agent_dir.path().to_path_buf(),
+        "parent-live".to_string(),
+        std::sync::Arc::new(crate::model_allowlist::ModelRefusalTelemetry::new(
+            agent_dir.path().to_path_buf(),
+            /*telemetry_disabled*/ true,
+        )),
+    );
+    sessions.set_identity(ParentIdentity {
+        model: Some("mock/mock-1".to_string()),
+        cwd: Some(agent_dir.path().to_string_lossy().to_string()),
+        ..ParentIdentity::with_default_depth()
+    });
+    let spawned = tokio::spawn(sessions.create_session(RlmCreateSessionRequest {
+        prompt: "root session task".to_string(),
+        name: Some("rootkid".to_string()),
+        model: None,
+        thinking: None,
+        cwd: None,
+    }));
+    create_seen_rx
+        .recv()
+        .await
+        .expect("create reached the supervisor");
+    verdict_tx.send(true).expect("admit create");
+    let handle = spawned.await.expect("create task").expect("create session");
+    // Without the subagentDefaultModel resolution, the top-level session
+    // inherited the parent's model.
+    assert_eq!(handle.model, "test-provider/nested/model");
 }

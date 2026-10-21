@@ -25,10 +25,10 @@ fn run_quiet(command: &str, args: &[&str]) -> bool {
     matches!(child.status(), Ok(status) if status.success())
 }
 
-/// The runtime-ready assertion from the TS product: a current
-/// prime-agent-runtime with the callable RLM surface, bash handles,
-/// tasks reporting, and protocol version 3.
-const RUNTIME_READY_CHECK: &str = "import inspect; import rlm; from rlm import McpIntegration; import rlm.mcp as mcp; _mcp_discovery_methods = ['list_plugins', 'search_plugins', 'list_connections', 'search_tools', 'describe_tool']; assert callable(mcp.list_tools); assert callable(mcp.call_tool); assert all(callable(getattr(mcp, _m, None)) for _m in _mcp_discovery_methods), \"rlm.mcp is missing MCP discovery methods (list_plugins, search_plugins, list_connections, search_tools, describe_tool); the kernel venv needs a current prime-agent-runtime\"; assert callable(rlm.spawn); assert hasattr(rlm, 'rlm'); assert callable(rlm.rlm.spawn); assert inspect.signature(rlm.spawn).parameters['name'].default is inspect.Parameter.empty; assert not hasattr(rlm, 'run'); assert not hasattr(rlm.rlm, 'run'); assert callable(rlm.host_request); assert callable(rlm.find_models); assert callable(rlm.rlm.find_models); assert callable(rlm.create_session); assert callable(rlm.rlm.create_session); assert callable(rlm.progress_note); assert callable(rlm.rlm.progress_note); assert callable(rlm.rename); assert callable(rlm.rlm.rename); assert not hasattr(rlm, 'background'); assert not hasattr(rlm.rlm, 'background'); from rlm.bash import BashHandle, BashResult; assert callable(rlm.bash); assert all(callable(getattr(BashHandle, _m, None)) for _m in ('tail', 'output', 'poll', 'kill')); assert {'exit_code', 'output', 'duration'} <= set(BashResult.__dataclass_fields__); import rlm.repl as _repl; assert callable(_repl.main); assert callable(_repl.emit); assert callable(_repl.host_request); assert callable(_repl.is_active); assert _repl.PROTOCOL_VERSION == 3; assert callable(rlm.emit); assert not hasattr(rlm, 'HOST_COMM_TARGET'); assert not hasattr(mcp, 'install_shutdown_hook'); import tasks; assert all(callable(getattr(tasks, _m, None)) for _m in ('list', 'get', 'create')), \"tasks reporting is missing; the kernel venv needs a current prime-agent-runtime\"; assert not any(hasattr(tasks, _m) for _m in ('configure', 'configuration', 'context', 'upsert', 'update', 'archive', 'restore', 'retry', 'assign', 'associate', 'assign_messages', 'spawn', 'start_agent', 'sync_agents', 'Client', 'REPORTER_ENV')), \"the slim tasks API must not expose removed helpers\"; assert all(callable(getattr(tasks.Task, _m, None)) for _m in ('update', 'archive', 'restore', 'subtask', 'link')), \"tasks handle methods are missing\"; assert 'archived' in tasks.Task.__dataclass_fields__ and 'question' in tasks.Task.__dataclass_fields__ and 'summary' not in tasks.Task.__dataclass_fields__ and 'description' not in tasks.Task.__dataclass_fields__, \"the slim tasks model is wrong\"; assert 'status' in inspect.signature(tasks.list).parameters and 'archived' in inspect.signature(tasks.list).parameters and 'parent_id' not in inspect.signature(tasks.list).parameters, \"tasks list filtering is missing\"";
+/// The runtime-ready assertion: a current prime-agent-runtime with the
+/// `agents`/`harness`/`heartbeat`/`mcp`/`factory`/`bash`/`edit`/`websearch`/
+/// `attach_image` surface, the slim tasks API, and protocol version 3.
+const RUNTIME_READY_CHECK: &str = "import inspect; from rlm import agents, harness, heartbeat, bash; from rlm.factory import factory; from rlm.edit import edit; from rlm.websearch import websearch; from rlm.attach_image import attach_image; import rlm.mcp as mcp; from rlm import McpIntegration; assert all(callable(getattr(agents, _m, None)) for _m in ('spawn', 'list', 'parent', 'siblings', 'broadcast', 'note', 'rename')), \"rlm.agents is missing the agents surface; the kernel venv needs a current prime-agent-runtime\"; assert all(callable(getattr(harness, _m, None)) for _m in ('context', 'compact', 'models')), \"rlm.harness is missing the harness surface; the kernel venv needs a current prime-agent-runtime\"; assert all(callable(getattr(harness.goal, _m, None)) for _m in ('create', 'get', 'complete')), \"rlm.harness is missing the goal surface; the kernel venv needs a current prime-agent-runtime\"; assert all(callable(getattr(heartbeat, _m, None)) for _m in ('create', 'list')), \"rlm.heartbeat is missing the heartbeat surface; the kernel venv needs a current prime-agent-runtime\"; assert all(callable(getattr(factory, _m, None)) for _m in ('run', 'status', 'stop', 'resume', 'graph', 'watch', 'help')), \"rlm.factory is missing the factory surface; the kernel venv needs a current prime-agent-runtime\"; assert callable(bash); assert callable(edit); assert callable(websearch); assert callable(attach_image); assert callable(mcp.connections); assert callable(mcp.tools); assert callable(mcp.call); from rlm.bash import BashHandle, BashResult; assert all(callable(getattr(BashHandle, _m, None)) for _m in ('tail', 'output', 'poll', 'kill')); assert {'exit_code', 'output', 'duration'} <= set(BashResult.__dataclass_fields__); import rlm.repl as _repl; assert callable(_repl.main); assert callable(_repl.emit); assert callable(_repl.host_request); assert callable(_repl.is_active); assert _repl.PROTOCOL_VERSION == 3; import rlm; assert callable(rlm.emit); assert not hasattr(rlm, 'HOST_COMM_TARGET'); assert not hasattr(mcp, 'install_shutdown_hook'); import tasks; assert all(callable(getattr(tasks, _m, None)) for _m in ('list', 'get', 'create')), \"tasks reporting is missing; the kernel venv needs a current prime-agent-runtime\"; assert not any(hasattr(tasks, _m) for _m in ('configure', 'configuration', 'context', 'upsert', 'update', 'archive', 'restore', 'retry', 'assign', 'associate', 'assign_messages', 'spawn', 'start_agent', 'sync_agents', 'Client', 'REPORTER_ENV')), \"the slim tasks API must not expose removed helpers\"; assert all(callable(getattr(tasks.Task, _m, None)) for _m in ('update', 'archive', 'restore', 'subtask', 'link')), \"tasks handle methods are missing\"; assert 'archived' in tasks.Task.__dataclass_fields__ and 'question' in tasks.Task.__dataclass_fields__ and 'summary' not in tasks.Task.__dataclass_fields__ and 'description' not in tasks.Task.__dataclass_fields__, \"the slim tasks model is wrong\"; assert 'status' in inspect.signature(tasks.list).parameters and 'archived' in inspect.signature(tasks.list).parameters and 'parent_id' not in inspect.signature(tasks.list).parameters, \"tasks list filtering is missing\"";
 
 pub(crate) fn has_prime_agent_runtime(python: &str) -> bool {
     run_quiet(python, &["-c", RUNTIME_READY_CHECK])
@@ -238,5 +238,37 @@ mod tests {
         std::fs::remove_dir_all(&tasks)?;
         assert_eq!(absent, installed_runtime_identity(&python, &venv));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod ready_check_tests {
+    use super::RUNTIME_READY_CHECK;
+
+    /// The ready check must pass against the shipped runtime sources: a probe
+    /// drifted off the runtime (or a runtime that lost the surface) fails here.
+    #[test]
+    fn runtime_ready_check_passes_against_the_runtime_sources() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .expect("workspace root")
+            .join("prime-agent-runtime")
+            .join("src");
+        if !src.is_dir() {
+            eprintln!("runtime sources not found; skipping the ready-check test");
+            return;
+        }
+        let output = std::process::Command::new("python3")
+            .arg("-c")
+            .arg(RUNTIME_READY_CHECK)
+            .env("PYTHONPATH", &src)
+            .output()
+            .expect("python3 must start");
+        assert!(
+            output.status.success(),
+            "RUNTIME_READY_CHECK failed against prime-agent-runtime/src: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

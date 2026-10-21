@@ -264,6 +264,16 @@ pub(super) fn summaries_from_roster(
                 attached_clients,
                 queued_count: queued,
                 is_session_active,
+                note: session
+                    .get("progressNote")
+                    .and_then(Value::as_str)
+                    .filter(|note| !note.is_empty())
+                    .map(str::to_string),
+                note_at: session
+                    .get("noteAt")
+                    .and_then(Value::as_str)
+                    .filter(|at| !at.is_empty())
+                    .map(str::to_string),
             })
         })
         .collect()

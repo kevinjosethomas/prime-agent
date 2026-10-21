@@ -1,7 +1,7 @@
 //! End-to-end RLM child machinery against the real `pa-daemon` supervisor: child sessions
 //! spawn through the supervisor link, run in their own worker processes, appear in the
-//! supervisor roster, settle with an answer, and die on delete (`rlm.spawn`/
-//! `list_subagents`/`collect`/`delete_subagent`/`create_session`).
+//! supervisor roster, settle with an answer, and die on delete (`agents.spawn`/
+//! `list`/`wait`/`stop`/`top_level` spawns).
 // Stack-resident futures by design; boxing for a lint tick is a perf regression.
 #![allow(clippy::large_futures)]
 // 64-bit-only targets; narrowing casts sit at bounded OS/protocol boundaries.
@@ -611,7 +611,7 @@ async fn rlm_recursion_bound_is_enforced() {
         .expect_err("create_session from depth 2");
     assert_eq!(
         error.to_string(),
-        "rlm.create_session is available only from a depth-0 session"
+        "top-level sessions can only be created from a depth-0 session"
     );
 }
 
@@ -630,7 +630,7 @@ async fn parallel_same_name_subagent_creates_admit_exactly_one() {
     let parent_file = agent_dir.join("parent.jsonl");
     let parent_file = parent_file.to_string_lossy().to_string();
 
-    // The raw create a worker's `rlm.spawn` routes: a scripted subagent with the reserved name.
+    // The raw create a worker's `agents.spawn` routes: a scripted subagent with the reserved name.
     let subagent_create = |child_id: &str| {
         let session_dir = agent_dir
             .join("session-artifacts")

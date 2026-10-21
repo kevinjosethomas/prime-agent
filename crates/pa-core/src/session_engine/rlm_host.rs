@@ -37,6 +37,7 @@ const RLM_COLLECT_MAX_TIMEOUT_MS: u64 = 2_147_483_647;
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RlmSpawnHandle {
     pub rlm_child_id: String,
+    pub session_id: String,
     pub name: String,
     pub session_dir: String,
     pub model: String,
@@ -436,14 +437,6 @@ impl RlmProgressNotes {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .latest
             .clone()
-    }
-
-    /// Drops the stored note at a run boundary; the throttle clock stays.
-    pub fn clear(&self) {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .latest = None;
     }
 }
 
@@ -914,6 +907,7 @@ mod tests {
                 requests.lock().await.push(request);
                 Ok(RlmSpawnHandle {
                     rlm_child_id: "sub-1".into(),
+                    session_id: "session-1".into(),
                     name: "worker".into(),
                     session_dir: "/tmp/sub-1".into(),
                     model: "p/m".into(),
@@ -1203,8 +1197,6 @@ mod tests {
         assert_eq!(accepted, json!({ "accepted": true }));
         let (latest, _) = wiring.rlm.notes.latest_note().unwrap();
         assert_eq!(latest, "making progress");
-        wiring.rlm.notes.clear();
-        assert!(wiring.rlm.notes.latest_note().is_none());
         let still_throttled = call(
             &wiring,
             "rlm.progress.note",

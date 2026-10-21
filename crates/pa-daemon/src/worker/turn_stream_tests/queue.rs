@@ -777,12 +777,8 @@ struct NoteWitnessEngine {
 }
 
 impl SessionEngine for NoteWitnessEngine {
-    fn progress_note(&self) -> Option<String> {
-        self.note.lock().unwrap().clone()
-    }
-
-    fn clear_progress_note(&self) {
-        *self.note.lock().unwrap() = None;
+    fn progress_note(&self) -> Option<(String, u64)> {
+        self.note.lock().unwrap().clone().map(|note| (note, 0))
     }
 
     fn run_prompt(
@@ -795,7 +791,7 @@ impl SessionEngine for NoteWitnessEngine {
         emit(EngineEvent::AgentStart);
         if self.turns.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
             // Turn one: the mid-run note acceptance (the model's
-            // `rlm.progress_note`).
+            // `agents.note`).
             *self.note.lock().unwrap() = Some("halfway through the review".to_string());
         } else {
             *self.note_at_notice_turn.lock().unwrap() = self.note.lock().unwrap().clone();
@@ -888,15 +884,16 @@ async fn the_async_completion_notice_delivery_keeps_the_live_note() {
         Some("halfway through the review"),
         "the notice's turn must still see the live note"
     );
-    assert!(
-        engine.note.lock().unwrap().is_none(),
-        "the lanes-empty run end cleared the note"
+    assert_eq!(
+        engine.note.lock().unwrap().as_deref(),
+        Some("halfway through the review"),
+        "the lanes-empty run end keeps the note on the session row"
     );
 }
 
-/// An ordinary queued follow-up retains the note until its own final end, like steering.
+/// An ordinary queued follow-up keeps the note through its own final end.
 #[tokio::test]
-async fn queued_follow_up_keeps_the_note_until_its_final_end() {
+async fn queued_follow_up_keeps_the_note_through_its_final_end() {
     let engine = Arc::new(NoteWitnessEngine::default());
     let runner = burst_runner(engine.clone());
     runner
@@ -915,7 +912,7 @@ async fn queued_follow_up_keeps_the_note_until_its_final_end() {
         )
         .await;
     assert_eq!(
-        engine.progress_note().as_deref(),
+        engine.progress_note().map(|(note, _)| note).as_deref(),
         Some("halfway through the review")
     );
     let follow_up = runner.core.lock().unwrap().follow_up.pop_front().unwrap();
@@ -924,13 +921,16 @@ async fn queued_follow_up_keeps_the_note_until_its_final_end() {
         engine.note_at_notice_turn.lock().unwrap().as_deref(),
         Some("halfway through the review")
     );
-    assert_eq!(engine.progress_note(), None);
+    assert_eq!(
+        engine.progress_note().map(|(note, _)| note).as_deref(),
+        Some("halfway through the review")
+    );
 }
 
-/// `AgentEnd`'s queued-work decision must be reconsidered if the queue is withdrawn
-/// before the final idle snapshot.
+/// The session row keeps its note even when the queue is withdrawn before
+/// the final idle snapshot.
 #[tokio::test]
-async fn withdrawing_follow_up_after_agent_end_clears_the_note_at_settle() {
+async fn withdrawing_follow_up_after_agent_end_keeps_the_note_at_settle() {
     let engine = Arc::new(NoteWitnessEngine::default());
     let runner = burst_runner(engine.clone());
     runner
@@ -948,16 +948,16 @@ async fn withdrawing_follow_up_after_agent_end_clears_the_note_at_settle() {
         .await;
     assert!(!runner.core.lock().unwrap().busy);
     assert_eq!(
-        engine.progress_note(),
-        None,
-        "idle must not retain the canceled work's note"
+        engine.progress_note().map(|(note, _)| note).as_deref(),
+        Some("halfway through the review"),
+        "idle keeps the run's last accepted note"
     );
 }
 
-/// Clearing queued work while a run is active preserves its note, but clearing the
-/// last queued work after the run settled ends the retained note's lifetime.
+/// Clearing queued work never drops the retained note, before or after the run
+/// settled: the row keeps its last accepted note until a new one replaces it.
 #[tokio::test]
-async fn clearing_an_idle_queue_drops_the_retained_note() {
+async fn clearing_a_queue_keeps_the_retained_note() {
     let dir = tempfile::tempdir().unwrap();
     let engine = Arc::new(NoteWitnessEngine::default());
     let mut worker = Worker::new(
@@ -985,7 +985,7 @@ async fn clearing_an_idle_queue_drops_the_retained_note() {
     }
     assert!(worker.dispatch("clear_queue", &json!({})).await.success);
     assert_eq!(
-        engine.progress_note().as_deref(),
+        engine.progress_note().map(|(note, _)| note).as_deref(),
         Some("checking deployment")
     );
     {
@@ -997,9 +997,9 @@ async fn clearing_an_idle_queue_drops_the_retained_note() {
     }
     assert!(worker.dispatch("clear_queue", &json!({})).await.success);
     assert_eq!(
-        engine.progress_note(),
-        None,
-        "no remaining work can replace the stale note"
+        engine.progress_note().map(|(note, _)| note).as_deref(),
+        Some("checking deployment"),
+        "the idle row keeps the run's last accepted note"
     );
 }
 
@@ -1009,29 +1009,11 @@ async fn clearing_an_idle_queue_drops_the_retained_note() {
 #[derive(Default)]
 struct AbortSwallowedEngine {
     note: Mutex<Option<String>>,
-    clear_gate: Option<Arc<NoteClearGate>>,
-}
-
-struct NoteClearGate {
-    entered: Notify,
-    release: Mutex<std::sync::mpsc::Receiver<()>>,
 }
 
 impl SessionEngine for AbortSwallowedEngine {
-    fn progress_note(&self) -> Option<String> {
-        self.note.lock().unwrap().clone()
-    }
-
-    fn clear_progress_note(&self) {
-        if let Some(gate) = &self.clear_gate {
-            gate.entered.notify_one();
-            gate.release
-                .lock()
-                .unwrap()
-                .recv_timeout(std::time::Duration::from_secs(10))
-                .expect("the test releases the note clear");
-        }
-        *self.note.lock().unwrap() = None;
+    fn progress_note(&self) -> Option<(String, u64)> {
+        self.note.lock().unwrap().clone().map(|note| (note, 0))
     }
 
     fn run_prompt(
@@ -1042,7 +1024,7 @@ impl SessionEngine for AbortSwallowedEngine {
         emit: &mut dyn FnMut(EngineEvent) -> bool,
     ) {
         emit(EngineEvent::AgentStart);
-        // The mid-run note acceptance (the model's `rlm.progress_note`).
+        // The mid-run note acceptance (the model's `agents.note`).
         *self.note.lock().unwrap() = Some("halfway through the review".to_string());
         // Park until the user's stop lands mid-flight.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
@@ -1101,9 +1083,9 @@ impl SessionEngine for AbortSwallowedEngine {
 
 /// The abort gate swallows the stopped run's `agent_end`, but the pane
 /// still settles idle at the same settle: the note — the roster
-/// summary's `progressNote` source — must not survive that idle settle.
+/// summary's `progressNote` source — stays on the row through it.
 #[tokio::test]
-async fn an_aborted_run_clears_the_note_at_its_idle_settle() {
+async fn an_aborted_run_keeps_the_note_at_its_idle_settle() {
     let engine = Arc::new(AbortSwallowedEngine::default());
     let runner = burst_runner(engine.clone());
     let core = std::sync::Arc::clone(&runner.core);
@@ -1127,62 +1109,11 @@ async fn an_aborted_run_clears_the_note_at_its_idle_settle() {
     }
     core.lock().unwrap().abort_requested = true;
     let _ = turn.await;
-    assert!(
-        engine.note.lock().unwrap().is_none(),
-        "the aborted run's idle settle must clear the note"
+    assert_eq!(
+        engine.note.lock().unwrap().as_deref(),
+        Some("halfway through the review"),
+        "the aborted run's idle settle keeps the note on the session row"
     );
-}
-
-/// Pause the note clear so a roster reader can attempt the same
-/// core-then-note snapshot as `SummaryInputs`. Idle must never become
-/// observable with the stopped run's note still present.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_aborted_run_never_exposes_an_idle_summary_with_its_old_note() {
-    let (release, receiver) = std::sync::mpsc::channel();
-    let gate = Arc::new(NoteClearGate {
-        entered: Notify::new(),
-        release: Mutex::new(receiver),
-    });
-    let engine = Arc::new(AbortSwallowedEngine {
-        note: Mutex::new(None),
-        clear_gate: Some(Arc::clone(&gate)),
-    });
-    let runner = burst_runner(engine.clone());
-    let core = Arc::clone(&runner.core);
-    core.lock().unwrap().busy = true;
-    let engine_for_turn = Arc::clone(&engine);
-    let turn = tokio::spawn(async move {
-        runner
-            .run_turn(
-                engine_for_turn,
-                vec![queued_prompt("review the gate", TurnPolicy::Queued)],
-            )
-            .await;
-    });
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        while engine.progress_note().is_none() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("the run publishes a progress note");
-    core.lock().unwrap().abort_requested = true;
-    tokio::time::timeout(std::time::Duration::from_secs(10), gate.entered.notified())
-        .await
-        .expect("the aborted run reaches its note clear");
-    let exposed_stale_idle = match core.try_lock() {
-        Ok(core) => !core.busy && engine.progress_note().is_some(),
-        Err(std::sync::TryLockError::WouldBlock) => false,
-        Err(error) => panic!("the summary lock is poisoned: {error}"),
-    };
-    release.send(()).unwrap();
-    turn.await.unwrap();
-    assert!(
-        !exposed_stale_idle,
-        "an idle roster snapshot could retain the aborted run's progress note"
-    );
-    assert!(!core.lock().unwrap().busy);
-    assert!(engine.progress_note().is_none());
 }
 
 mod withdrawal;

@@ -20,10 +20,14 @@ fn observe_rows_carry_the_typed_status_and_activity() {
         attached_clients: 1,
         queued_count: 0,
         is_session_active: true,
+        note: Some("halfway through the review".to_string()),
+        note_at: Some("2026-10-20T22:00:00.000Z".to_string()),
     };
     let value = row.to_value();
     assert_eq!(value["status"], "running");
     assert_eq!(value["activity"], "tool");
+    assert_eq!(value["note"], "halfway through the review");
+    assert_eq!(value["noteAt"], "2026-10-20T22:00:00.000Z");
 
     row.status = AgentFamilyStatus::Idle;
     row.activity = Some(AgentObserveActivity::User);
@@ -379,7 +383,7 @@ async fn message_host_handler_round_trip() {
     let list_agents = handlers.get("agent_message.list_agents").unwrap().clone();
     let removed = send_request(&list_agents, json!({})).unwrap_err();
     assert!(removed.to_string().starts_with(
-        "agent_message.list_agents was removed; the family roster now lives in agent_observe.list_agents()"
+        "agent_message.list_agents was removed; the family roster now lives in agents.list()/agents.parent()/agents.siblings()"
     ));
 }
 

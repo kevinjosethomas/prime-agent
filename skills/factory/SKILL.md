@@ -1,6 +1,6 @@
 ---
 name: factory
-description: Run state-machine workflows of spawned child agents: author machines in the library (MACHINE.md files, validated by `prime-agent factory import`) and run, watch, stop, and resume them through factory. For the full authoring reference and API guide, call factory.help() in the kernel.
+description: "Run state-machine workflows of spawned child agents: author machines in the library (MACHINE.md files, validated by `prime-agent factory import`) and run, watch, stop, and resume them through factory. For the full authoring reference and API guide, call factory.help() in the kernel."
 ---
 
 # Factory

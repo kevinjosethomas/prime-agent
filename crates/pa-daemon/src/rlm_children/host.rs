@@ -3,8 +3,8 @@
 //! `collect`, `rename`) over the supervisor's child-sessions registry,
 //! with the spawn-admission helpers only this surface uses.
 use super::{
-    assert_thinking_supported, bail, create_default_rlm_subagent_session_name, json, now_ms,
-    resolve_child_model, rlm_child_label, rlm_depth_limit_error, spawn_name_unavailable_error, Arc,
+    anyhow, assert_thinking_supported, bail, create_default_rlm_subagent_session_name, json,
+    now_ms, rlm_child_label, rlm_depth_limit_error, spawn_name_unavailable_error, Arc,
     ChildCloseReason, ChildRecord, Context, DaemonCommand, Duration, Instant, Mutex, Path, PathBuf,
     Result, RlmChildResult, RlmCreateSessionHandle, RlmCreateSessionRequest,
     RlmDeleteSubagentResult, RlmHostFuture, RlmSpawnHandle, RlmSpawnRequest, RlmSubagentEntry,
@@ -28,25 +28,16 @@ async fn resolve_child_model_allowlisted(
     let target = target.to_string();
     let resolved = tokio::task::spawn_blocking(move || {
         let allowlist = crate::model_allowlist::load(Path::new(&load_cwd), &agent_dir);
-        if surface == "spawn" {
-            crate::rlm_child_model::resolve_spawn_model_unchecked(
-                &agent_dir,
-                reference.as_deref(),
-                identity.model.as_deref(),
-            )
-            .and_then(|model| {
-                crate::model_allowlist::assert_allowed(&allowlist, &model)?;
-                Ok(model)
-            })
-        } else {
-            resolve_child_model(
-                &agent_dir,
-                reference.as_deref(),
-                identity.model.as_deref(),
-                &target,
-                &allowlist,
-            )
-        }
+        crate::rlm_child_model::resolve_spawn_model_unchecked(
+            &agent_dir,
+            reference.as_deref(),
+            identity.model.as_deref(),
+            &target,
+        )
+        .and_then(|model| {
+            crate::model_allowlist::assert_allowed(&allowlist, &model)?;
+            Ok(model)
+        })
     })
     .await
     .context("the child model resolution task join failed")?;
@@ -307,8 +298,12 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 }
                 watcher_this.watch_child_settle(&watcher_record).await;
             });
+            let session_id = created.session_id.clone().ok_or_else(|| {
+                anyhow!("supervisor returned a session summary without a session id")
+            })?;
             Ok(RlmSpawnHandle {
                 rlm_child_id: child_id,
+                session_id,
                 name,
                 session_dir: created.session_dir,
                 model,
@@ -324,7 +319,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
         Box::pin(async move {
             let identity = this.identity.lock().expect("identity lock").clone();
             if identity.rlm_depth != 0 {
-                bail!("rlm.create_session is available only from a depth-0 session");
+                bail!("top-level sessions can only be created from a depth-0 session");
             }
             let model = resolve_child_model_allowlisted(
                 &this,

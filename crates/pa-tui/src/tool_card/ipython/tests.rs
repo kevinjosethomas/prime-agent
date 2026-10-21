@@ -132,7 +132,7 @@ fn sent_agent_messages_render_below_the_code() {
         }],
     });
     let card = cell_card(
-        "await agent_message.send(\"Ping.\", receiver_role=\"parent\")",
+        "await (await agents.parent()).send(\"Ping.\")",
         details,
         false,
         false,

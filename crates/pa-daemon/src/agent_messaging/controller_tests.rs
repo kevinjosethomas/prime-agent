@@ -528,6 +528,7 @@ fn summaries_label_the_nuclear_family_by_durable_edges() {
             "activeSessionId": "sib222", "sessionId": "sess-sib",
             "sessionName": "sibling", "runtimeKind": "subagent", "activity": "working",
             "parentActiveSessionId": "ppp000", "parentSessionId": "sess-p",
+            "progressNote": "finishing the audit", "noteAt": "2026-10-20T22:30:00.000Z",
         }),
         json!({
             "activeSessionId": "own333", "sessionId": "sess-own",
@@ -564,6 +565,16 @@ fn summaries_label_the_nuclear_family_by_durable_edges() {
         .find(|s| s.active_session_id.as_deref() == Some("own333"))
         .unwrap();
     assert_eq!(child.relationship, Some(AgentFamilyRelationship::Child));
+    // The roster row's note and its timestamp carry onto the observe row.
+    let note_row = summaries
+        .iter()
+        .find(|s| s.active_session_id.as_deref() == Some("sib222"))
+        .unwrap();
+    assert_eq!(note_row.note.as_deref(), Some("finishing the audit"));
+    assert_eq!(
+        note_row.note_at.as_deref(),
+        Some("2026-10-20T22:30:00.000Z")
+    );
     assert!(!summaries
         .iter()
         .any(|s| s.active_session_id.as_deref() == Some("foreign444")));

@@ -625,6 +625,7 @@ impl RlmSubagentHost for InlineHost {
                         &agent_dir,
                         reference.as_deref(),
                         parent_model.as_deref(),
+                        "subagent",
                     )
                 })
                 .await
@@ -769,6 +770,7 @@ impl RlmSubagentHost for InlineHost {
             *child.driver.lock().await = Some(driver);
             Ok(RlmSpawnHandle {
                 rlm_child_id: child_id,
+                session_id: child_node.session_id.clone(),
                 name,
                 session_dir: child_node.session_dir.clone(),
                 model: selector,

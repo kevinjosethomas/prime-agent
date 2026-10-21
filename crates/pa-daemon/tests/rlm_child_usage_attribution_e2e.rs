@@ -191,10 +191,10 @@ fn await_receipt(receipt: &Path) -> String {
 }
 
 /// The kernel cell of the spawn turn: spawn one RLM child through the
-/// product `rlm.spawn` surface and record its child id + session dir.
+/// product `agents.spawn` surface and record its child id + session dir.
 fn spawn_cell(receipt: &Path, error_receipt: &Path) -> String {
     format!(
-        "import json, traceback\ntry:\n    handle = await rlm.spawn(\"run the lane task\", name=\"kid\")\n    open({receipt:?}, \"w\").write(json.dumps({{\"rlm_child_id\": handle.rlm_child_id, \"session_dir\": str(handle.session_dir)}}))\n    print(handle.rlm_child_id)\nexcept Exception:\n    open({error_receipt:?}, \"w\").write(traceback.format_exc())\n    raise",
+        "import json, traceback\ntry:\n    handle = await agents.spawn(\"run the lane task\", name=\"kid\")\n    open({receipt:?}, \"w\").write(json.dumps({{\"rlm_child_id\": handle.child_id, \"session_dir\": str(handle.session_dir)}}))\n    print(handle.child_id)\nexcept Exception:\n    open({error_receipt:?}, \"w\").write(traceback.format_exc())\n    raise",
         receipt = receipt.display().to_string(),
         error_receipt = error_receipt.display().to_string(),
     )
@@ -368,7 +368,7 @@ fn child_usage_attributed_row_reaches_the_parent_transcript() {
         .to_string();
 
     // Turn 1: the kernel cell spawns the child mid-turn through the
-    // product `rlm.spawn` surface.
+    // product `agents.spawn` surface.
     run_turn(&mut client, &parent_id, "spawn the kid", "t1");
     let spawned: Value =
         serde_json::from_str(&await_receipt(&spawn_receipt)).expect("spawn receipt json");
