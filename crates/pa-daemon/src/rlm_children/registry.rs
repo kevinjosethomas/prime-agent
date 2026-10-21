@@ -31,6 +31,7 @@ impl SupervisorChildSessionsInner {
             session_name: record.session_name.clone(),
             session_dir: record.session_dir.clone(),
             started_at_ms: record.started_at_ms,
+            top_level: record.top_level,
             status: record.roster_status(),
             answer_preview: record.answer_preview.clone(),
             error: record
@@ -103,6 +104,11 @@ impl SupervisorChildSessionsInner {
         }
         let children = self.children.lock().await.clone();
         for record in &children {
+            // A top-level session is a normal session; its delete is the
+            // session surface's, never the inactive-child teardown.
+            if record.lock().await.top_level {
+                continue;
+            }
             let matched = record.lock().await.rlm_child_id == child_id;
             if !matched {
                 continue;
@@ -188,6 +194,10 @@ impl SupervisorChildSessionsInner {
         let mut close_error = (!usage_persisted)
             .then(|| anyhow::anyhow!("RLM child usage remains owed after retirement; retry close"));
         for record in &children {
+            // A top-level session outlives its starter: never a close candidate.
+            if record.lock().await.top_level {
+                continue;
+            }
             let rename_lock = record.lock().await.rename_lock.clone();
             let _guard = rename_lock.lock().await;
             if !self
@@ -474,6 +484,7 @@ fn ledger_child_records(
             session_name: edge.name,
             active_session_id: session_id.clone().unwrap_or_default(),
             session_id,
+            top_level: edge.top_level,
             session_dir: child
                 .parent()
                 .map(|dir| dir.to_string_lossy().into_owned())

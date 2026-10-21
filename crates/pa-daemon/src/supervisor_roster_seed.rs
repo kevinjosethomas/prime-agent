@@ -261,6 +261,11 @@ impl Supervisor {
         let candidates: Vec<&RlmLedgerEdge> = edges
             .iter()
             .filter(|edge| {
+                // A started top-level session is an ordinary roster root,
+                // never a seeded child row.
+                if edge.top_level {
+                    return false;
+                }
                 let parent = canonical_session_path(Path::new(&edge.parent));
                 family_descends_from(&parent_by_child, &parent, &roots)
                     // The edge snapshot predates this pass: a child deleted in
@@ -496,6 +501,7 @@ pub(crate) mod tests {
             child: child.to_string(),
             depth,
             name: name.to_string(),
+            top_level: false,
             deleted: None,
             deleted_usage: None,
         }
@@ -669,6 +675,7 @@ pub(crate) mod tests {
                 child: child.to_string_lossy().to_string(),
                 depth: 1,
                 name: "lane".to_string(),
+                top_level: false,
             })
             .expect("append spawn");
     }
@@ -970,6 +977,7 @@ pub(crate) mod tests {
                     parent: root_file.to_string_lossy().to_string(),
                     child: child_file.to_string_lossy().to_string(),
                     depth: 1,
+                    top_level: false,
                     name: "w9".to_string(),
                     deleted: None,
                     deleted_usage: None,

@@ -93,6 +93,9 @@ pub struct RlmLedgerEdge {
     pub child: String,
     pub depth: u32,
     pub name: String,
+    /// A depth-0 resident session a starter tracks like a child (it
+    /// outlives the starter and never joins the parent-death cascade).
+    pub top_level: bool,
     pub deleted: Option<RlmLedgerDeleteReason>,
     /// The child's captured own usage at deletion, so a tombstoned child's
     /// spend stays billable; `None` on legacy tombstones and live edges.
@@ -107,6 +110,7 @@ pub struct RlmSpawnInput {
     pub child: String,
     pub depth: u32,
     pub name: String,
+    pub top_level: bool,
 }
 
 /// The per-sessions-dir spawn ledger. Reads are guarded by a file stat snapshot; a missing ledger
@@ -169,6 +173,7 @@ fn fold_records(records: Vec<LedgerRecord>, keep: impl Fn(&str) -> bool) -> Repl
                 child,
                 depth,
                 name,
+                top_level,
             } if keep(&child_id) => {
                 let key = edge_key(&child_id, &child);
                 if let Some(at) = state.index.get(&key).copied() {
@@ -178,6 +183,7 @@ fn fold_records(records: Vec<LedgerRecord>, keep: impl Fn(&str) -> bool) -> Repl
                         child,
                         depth,
                         name,
+                        top_level,
                         deleted: None,
                         deleted_usage: None,
                     };
@@ -189,6 +195,7 @@ fn fold_records(records: Vec<LedgerRecord>, keep: impl Fn(&str) -> bool) -> Repl
                         child,
                         depth,
                         name,
+                        top_level,
                         deleted: None,
                         deleted_usage: None,
                     });
@@ -274,7 +281,7 @@ impl RlmSpawnLedger {
         if input.child_id.is_empty()
             || input.parent.is_empty()
             || input.child.is_empty()
-            || input.depth < 1
+            || (input.depth < 1 && !input.top_level)
         {
             bail!(
                 "RLM ledger: invalid spawn for {} (depth {})",
@@ -299,7 +306,7 @@ impl RlmSpawnLedger {
                 );
             }
         }
-        self.append_record(&json!({
+        let mut record = json!({
             "v": 1,
             "op": "spawn",
             "at": now_iso(),
@@ -308,7 +315,11 @@ impl RlmSpawnLedger {
             "child": child_path_text,
             "depth": input.depth,
             "name": input.name,
-        }))
+        });
+        if input.top_level {
+            record["topLevel"] = json!(true);
+        }
+        self.append_record(&record)
     }
 
     /// Record a rename for a known child edge.

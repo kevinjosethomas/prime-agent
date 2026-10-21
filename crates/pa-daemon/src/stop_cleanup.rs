@@ -577,6 +577,7 @@ mod tests {
                 child: child_file.to_string_lossy().to_string(),
                 depth: 1,
                 name: "lane".to_string(),
+                top_level: false,
             })
             .unwrap();
 
@@ -641,6 +642,7 @@ mod tests {
                 child: child_file.to_string_lossy().to_string(),
                 depth: 1,
                 name: "lane".to_string(),
+                top_level: false,
             })
             .unwrap();
         // The tombstone lands before the kill (the revival window); the
@@ -728,6 +730,7 @@ mod tests {
                 child: child_file.to_string_lossy().to_string(),
                 depth: 1,
                 name: "lane".to_string(),
+                top_level: false,
             })
             .unwrap();
         ledger
@@ -803,6 +806,7 @@ mod tests {
                 child: child_file.to_string_lossy().to_string(),
                 depth: 1,
                 name: "lane".to_string(),
+                top_level: false,
             })
             .unwrap();
         // Still live: no capture (kill-failure retryability — the child
@@ -835,6 +839,7 @@ mod tests {
                     child: child_file.to_string_lossy().to_string(),
                     depth: 1,
                     name: "lane".to_string(),
+                    top_level: false,
                 })
                 .unwrap();
             ledger

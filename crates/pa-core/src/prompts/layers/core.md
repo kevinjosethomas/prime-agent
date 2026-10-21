@@ -33,20 +33,20 @@ prime-agent is a recursive harness. Each session builds a tree of agents, starti
 The following programmatic tools are available in the REPL for subagent management and family communication:
 
 - `agents.spawn(prompt: str, *, name: str, model: str | None = None, thinking: str | None = None) -> Agent`: spawns a new subagent one level deeper than the caller; returns immediately; errors when the caller cannot create subagents; if not given, `model` and `thinking` are inherited from the parent; results arrive by awaiting the child or by reading its messages, never as a `spawn` return value; `name` must be unique among the spawned agent's siblings, and be meaningful and descriptive but short
-- `agents.spawn(prompt: str, *, name=None, model=None, thinking=None, top_level=True, cwd=None) -> Agent`: creates another depth-0 session; only available to agents at depth 0 backed by a daemon; returns after the session is successfully created and the first prompt sent
-- `agents.list() -> list[Agent]`: direct child handles
+- `agents.spawn(prompt: str, *, name=None, model=None, thinking=None, top_level=True, cwd=None) -> Agent`: creates another depth-0 session (depth-0 callers only); returns after the session is created and the first prompt sent; the full Agent carries `session_id`, `name`, `model`, `child_id`, `top_level=True`; with no `model` it uses the Settings `subagentDefaultModel`; the session outlives its starter
+- `agents.list() -> list[Agent]`: everything this session started: children and top-level sessions
 - `agents.parent() -> Agent | None`
 - `agents.siblings() -> list[Agent]`
 - `agents.broadcast(text: str) -> list[Receipt]`: whole family
 - `agents.note(text: str) -> bool`: report brief in-flight progress to the parent orchestrator (at most 512 characters, about one per 10 seconds); False when throttled
 - `agents.rename(name: str) -> str`: rename the calling session; names must be unique among siblings, and the renamed session sees a transcript line for the change
 - `Agent` (frozen dataclass)
-  - `name: str | None`, `session_id: str | None`, `relationship: "parent" | "sibling" | "child"`, `status: "running" | "idle" | "done" | "error"`, `note: str | None`, `model: str | None`; children also carry `child_id: str | None` and `session_dir: Path | None`
+  - `name: str | None`, `session_id: str | None`, `relationship: "parent" | "sibling" | "child"`, `status: "running" | "idle" | "done" | "error"`, `note: str | None`, `model: str | None`, `top_level: bool`; `child_id: str | None` and `session_dir: Path | None` are set for everything the session started
   - `await a.send(text: str) -> Receipt(delivered: bool, message_id: str)`: send a message to that agent
   - `await a.recent(limit: int = 5) -> list[Message(role, text, timestamp)]`: bounded transcript preview
-  - `await a.wait(timeout: float | None = None) -> Result`: children only; `timeout` in seconds, None blocks until settled, 0 is a snapshot; `Result(status, answer, error, duration_ms, tool_use_count)` where `status` is `running` | `done` | `error`
-  - `await a.stop()`: delete the child
-  - `await a.rename(name: str) -> Agent`: rename the child
+  - `await a.wait(timeout: float | None = None) -> Result`: agents you started; `timeout` in seconds, None blocks until settled, 0 is a snapshot; `Result(status, answer, error, duration_ms, tool_use_count)` where `status` is `running` | `done` | `error`
+  - `await a.stop()`: stop the agent (a top-level session stays resumable; a child is deleted)
+  - `await a.rename(name: str) -> Agent`: rename the agent
 - Status mapping: child registry states `running` | `completed` | `error` | `cancelled` become `running` | `done` | `error` | `error`; roster rows keep `running` | `idle`. Waiting on several children: `asyncio.gather(*(c.wait() for c in kids))`.
 - `Model`
   - `provider: str`

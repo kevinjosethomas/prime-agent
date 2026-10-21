@@ -149,7 +149,7 @@ async def spawn(
         return Agent(
             name=payload["name"],
             session_id=payload["session_id"],
-            relationship="sibling",
+            relationship="child",
             status="running",
             model=payload["model"],
             child_id=child_id,
@@ -180,7 +180,7 @@ async def list() -> list[Agent]:
         Agent(
             name=row.session_name,
             session_id=row.session_id,
-            relationship="sibling" if row.top_level else "child",
+            relationship="child",
             status=_REGISTRY_STATUS[row.status],
             note=row.note,
             model=None,

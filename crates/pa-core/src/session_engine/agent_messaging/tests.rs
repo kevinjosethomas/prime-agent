@@ -12,6 +12,7 @@ fn observe_rows_carry_the_typed_status_and_activity() {
         session_name: Some("worker".to_string()),
         relationship: Some(AgentFamilyRelationship::Child),
         runtime_kind: Some("subagent".to_string()),
+        top_level: false,
         status: AgentFamilyStatus::Running,
         activity: Some(AgentObserveActivity::Tool),
         is_current: false,

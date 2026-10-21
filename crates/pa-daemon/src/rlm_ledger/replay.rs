@@ -18,6 +18,7 @@ pub(super) enum LedgerRecord {
         child: String,
         depth: u32,
         name: String,
+        top_level: bool,
     },
     Rename {
         child_id: String,
@@ -100,7 +101,11 @@ pub(super) fn parse_ledger_line(line: &str, index: usize) -> Result<Option<Ledge
             let Some(depth) = record.get("depth").and_then(Value::as_u64) else {
                 bail!("malformed RLM ledger line {line_no}: invalid spawn record");
             };
-            if depth < 1 || depth > u64::from(u32::MAX) {
+            let top_level = record
+                .get("topLevel")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if depth > u64::from(u32::MAX) || (depth < 1 && !top_level) {
                 bail!("malformed RLM ledger line {line_no}: invalid spawn record");
             }
             Ok(Some(LedgerRecord::Spawn {
@@ -109,6 +114,7 @@ pub(super) fn parse_ledger_line(line: &str, index: usize) -> Result<Option<Ledge
                 child,
                 depth: depth as u32,
                 name,
+                top_level,
             }))
         }
         "rename" => {

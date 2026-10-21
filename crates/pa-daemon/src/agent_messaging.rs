@@ -26,6 +26,10 @@ pub(crate) struct FamilyIdentity {
     pub parent_active_session_id: Option<String>,
     pub parent_session_id: Option<String>,
     pub parent_session_path: Option<String>,
+    /// The starter link of a depth-0 `rlm.create_session` session: a
+    /// parent edge for the family view that never nests the session.
+    pub starter_active_session_id: Option<String>,
+    pub starter_session_id: Option<String>,
     /// This session's RLM depth (roots at 0): a child sits exactly one
     /// level down, a sibling at the same depth (TS `selectAgentFamily`).
     pub rlm_depth: u64,
@@ -50,6 +54,8 @@ impl FamilyIdentity {
             parent_active_session_id: non_empty(summary_ref, "parentActiveSessionId"),
             parent_session_id: non_empty(summary_ref, "parentSessionId"),
             parent_session_path: summary_ref.and_then(parent_binding).map(str::to_string),
+            starter_active_session_id: non_empty(summary_ref, "starterActiveSessionId"),
+            starter_session_id: non_empty(summary_ref, "starterSessionId"),
             rlm_depth: summary_ref.map_or(0, row_depth),
         }
     }
@@ -112,6 +118,17 @@ fn row_is_parent(row: &Value, identity: &FamilyIdentity) -> bool {
     }
     if let Some(parent_active) = identity.parent_active_session_id.as_deref() {
         if row_str(row, "activeSessionId").or_else(|| row_str(row, "id")) == Some(parent_active) {
+            return true;
+        }
+    }
+    // A started top-level session sees its starter as the parent too.
+    if let Some(starter_id) = identity.starter_session_id.as_deref() {
+        if row_str(row, "sessionId") == Some(starter_id) {
+            return true;
+        }
+    }
+    if let Some(starter_active) = identity.starter_active_session_id.as_deref() {
+        if row_str(row, "activeSessionId").or_else(|| row_str(row, "id")) == Some(starter_active) {
             return true;
         }
     }

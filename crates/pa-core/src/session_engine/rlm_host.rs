@@ -43,9 +43,11 @@ pub struct RlmSpawnHandle {
     pub model: String,
 }
 
-/// `rlm.create_session` handle: one resident depth-0 daemon session.
+/// `rlm.create_session` handle: one resident depth-0 daemon session,
+/// registered in the starter's child registry under `rlm_child_id`.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RlmCreateSessionHandle {
+    pub rlm_child_id: String,
     pub active_session_id: String,
     pub session_id: String,
     pub name: String,
@@ -61,6 +63,8 @@ pub struct RlmSubagentEntry {
     pub session_id: Option<String>,
     pub session_name: String,
     pub session_dir: String,
+    /// A depth-0 session this starter created (`rlm.create_session`).
+    pub top_level: bool,
     /// `running` | `completed` | `error` | `cancelled` (a cancelled run
     /// keeps its status verbatim in the registry row).
     pub status: &'static str,
@@ -922,6 +926,7 @@ mod tests {
             Box::pin(async move {
                 requests.lock().await.push(request);
                 Ok(RlmCreateSessionHandle {
+                    rlm_child_id: "sub-toplevel".into(),
                     active_session_id: "live-2".into(),
                     session_id: "s-2".into(),
                     name: "root-2".into(),
@@ -938,6 +943,7 @@ mod tests {
                     session_id: Some("s-2".into()),
                     session_name: "worker".into(),
                     session_dir: "/tmp/sub-1".into(),
+                    top_level: false,
                     status: "running",
                     activity: Some(RlmSubagentActivity {
                         kind: "executing",
@@ -965,6 +971,7 @@ mod tests {
                         session_id: None,
                         session_name: "worker".into(),
                         session_dir: "/tmp/sub-1".into(),
+                        top_level: false,
                         status: "completed",
                         activity: None,
                         tool_use_count: None,

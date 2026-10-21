@@ -370,6 +370,7 @@ fn can_passivate_worker_mirrors_the_release_gates_and_adds_the_registry_rule() {
                 active_session_id: "child-session".to_string(),
                 session_id: None,
                 session_name: "worker-1".to_string(),
+                top_level: false,
             })
             .await;
         children.settle_test_child("child-session").await;

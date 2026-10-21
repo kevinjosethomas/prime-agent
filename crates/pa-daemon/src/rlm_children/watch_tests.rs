@@ -332,6 +332,7 @@ async fn roster_snapshot_does_not_wait_for_a_slow_child_worker() {
             active_session_id: "child-live".to_string(),
             session_id: Some("child-file".to_string()),
             session_name: "slow-child".to_string(),
+            top_level: false,
         })
         .await;
     let roster = tokio::time::timeout(Duration::from_millis(10), sessions.list_subagents())
@@ -854,6 +855,38 @@ async fn close_children_stops_the_child_and_clears_the_roster() {
     assert!(extra.is_err(), "a closed child must not deliver a notice");
 }
 
+/// A started top-level session outlives its starter: `close_children`
+/// never stops it and the registry keeps its row.
+#[tokio::test]
+async fn close_children_skips_a_top_level_session() {
+    let (follow_up_tx, _follow_up_rx) = mpsc::unbounded_channel();
+    let (sessions, mut kill_rx) =
+        sessions_with_fake_supervisor(follow_up_tx, 10_000, FakeKill::Success, FakeChild::Healthy)
+            .await;
+    sessions
+        .push_test_child(RlmChildIdentity {
+            rlm_child_id: "child-tl".to_string(),
+            active_session_id: "peer-live".to_string(),
+            session_id: Some("peer-file".to_string()),
+            session_name: "peer".to_string(),
+            top_level: true,
+        })
+        .await;
+
+    sessions
+        .close_children(ChildCloseReason::Killed)
+        .await
+        .expect("close children");
+
+    let entries = sessions.list_subagents().await.expect("child roster");
+    assert_eq!(entries.len(), 1, "the top-level session stays listed");
+    assert!(entries[0].top_level);
+    assert!(
+        kill_rx.try_recv().is_err(),
+        "a top-level session is never stopped by the starter's close"
+    );
+}
+
 #[tokio::test]
 async fn close_children_treats_an_already_gone_child_as_a_no_op() {
     let (follow_up_tx, _follow_up_rx) = mpsc::unbounded_channel();
@@ -1243,6 +1276,7 @@ fn an_already_settled_child_never_re_scores_as_an_unreachable_error() {
         active_session_id: "child-live".to_string(),
         session_id: Some("child-file".to_string()),
         session_dir: "/tmp".to_string(),
+        top_level: false,
         model: String::new(),
         label: "task".to_string(),
         started_at_ms: 0,
@@ -1311,6 +1345,7 @@ async fn the_unreachable_give_up_skips_the_exit_capture_when_a_capture_stands() 
         active_session_id: "child-live".to_string(),
         session_id: Some("child-file".to_string()),
         session_dir: "/tmp".to_string(),
+        top_level: false,
         model: String::new(),
         label: "task".to_string(),
         started_at_ms: 0,

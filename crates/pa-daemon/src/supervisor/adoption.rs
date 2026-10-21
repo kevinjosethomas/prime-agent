@@ -725,7 +725,8 @@ impl Supervisor {
         let Some(metadata) = runtime_metadata else {
             return Ok(());
         };
-        if metadata.get("kind").and_then(Value::as_str) != Some("subagent") {
+        let kind = metadata.get("kind").and_then(Value::as_str);
+        if !matches!(kind, Some("subagent") | Some("top-level")) {
             return Ok(());
         }
         let child_id = metadata
@@ -733,14 +734,23 @@ impl Supervisor {
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow!("RLM child admission is missing rlmChildId"))?
             .to_string();
-        let depth = metadata
-            .get("rlmDepth")
-            .and_then(Value::as_u64)
-            .unwrap_or(1) as u32;
-        let parent = metadata
-            .get("parentSessionFile")
-            .and_then(Value::as_str)
-            .ok_or_else(|| anyhow!("RLM child admission is missing parentSessionFile"))?;
+        let (depth, parent, top_level) = if kind == Some("top-level") {
+            let parent = metadata
+                .get("starterSessionFile")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("top-level admission is missing starterSessionFile"))?;
+            (0, parent, true)
+        } else {
+            let depth = metadata
+                .get("rlmDepth")
+                .and_then(Value::as_u64)
+                .unwrap_or(1) as u32;
+            let parent = metadata
+                .get("parentSessionFile")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("RLM child admission is missing parentSessionFile"))?;
+            (depth, parent, false)
+        };
         let child = summary
             .get("sessionFile")
             .and_then(Value::as_str)
@@ -772,10 +782,15 @@ impl Supervisor {
                 child: child.to_string(),
                 depth,
                 name: session_name.clone(),
+                top_level,
             })
             .inspect_err(|error| {
                 self.log_line(&format!("failed to append RLM ledger spawn: {error:#}"));
             })?;
+        if top_level {
+            // No display entry: the session is an ordinary roster row.
+            return Ok(());
+        }
         let display = crate::rlm_ledger::RlmSubagentDisplayEntry {
             type_tag: "rlm_subagent".to_string(),
             child_id,
