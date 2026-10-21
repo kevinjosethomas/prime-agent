@@ -406,6 +406,8 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 // The prompt was admitted inside `launch_child`.
                 prompt_admitted: true,
                 error: None,
+                progress_note: None,
+                note_at: None,
                 closed_by_parent: false,
                 retirement_finished: false,
                 retirement_notified: false,
