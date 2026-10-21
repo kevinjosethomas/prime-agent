@@ -741,8 +741,8 @@ fn print_mode_json_streams_the_threshold_compaction_pair() {
             "compaction": { "enabled": true, "reserveTokens": 1, "keepRecentTokens": 10 }
         }),
     );
-    // A small context window: the ~8.1k seed turn stays below the 15_808
-    // ceiling (24k - 4_096 output - 4_096 headroom), and the ~12k-token
+    // A small context window: the ~3.7k seed turn stays below the 15_808
+    // ceiling (24k - 4_096 output - 4_096 headroom), and the ~15k-token
     // crossing turn pushes past it.
     let script = serde_json::json!({
         "contextWindow": 24000,
@@ -753,7 +753,7 @@ fn print_mode_json_streams_the_threshold_compaction_pair() {
         ]
     });
     let first = "seed turn".to_string();
-    let second = format!("crossing turn {}", "x".repeat(48_000));
+    let second = format!("crossing turn {}", "x".repeat(60_000));
     let (stdout, stderr, code) = run_in_home(
         home.path(),
         &["--mode", "json", "-p", &first, &second],
