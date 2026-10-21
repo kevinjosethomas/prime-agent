@@ -21,6 +21,7 @@ import threading
 import time
 
 from review_agent_bounce_parity import Client
+from review_draft_disconnect_parity import kernel_env_for
 from review_goal_fixture_lifecycle import OwnedProcesses, TAG, finish
 
 
@@ -139,9 +140,11 @@ def run_case(binary, label, scenario, base_dir, observation):
                                                     "defaultModel": "goal-fixture"}))
     # An explicit environment prevents inherited tokens, proxies, or a user's
     # package/session paths from reaching either binary or a spawned kernel.
-    env = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "TZ", "PYTHONPATH",
-                                             "PRIME_AGENT_KERNEL_PYTHON", "PA_E2E_KERNEL_PYTHON")
+    env = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "TZ", "PYTHONPATH")
            if key in os.environ}
+    kernel_python = kernel_env_for(label)
+    env["PRIME_AGENT_KERNEL_PYTHON"] = kernel_python
+    env["PA_E2E_KERNEL_PYTHON"] = kernel_python
     env.update({"HOME": str(home), "XDG_CONFIG_HOME": str(home / "config"),
                 "XDG_CACHE_HOME": str(home / "cache"), "XDG_DATA_HOME": str(home / "data"),
                 "TMPDIR": str(home / "tmp"), "DO_NOT_TRACK": "1", "PI_OFFLINE": "1",

@@ -19,7 +19,7 @@ import tempfile
 import threading
 
 from review_restore_notice_parity import texts, Server, sha256, TS_ARCHIVE_SHA256
-from review_draft_disconnect_parity import stop
+from review_draft_disconnect_parity import kernel_env_for, stop
 from review_agent_bounce_parity import Client as BounceClient
 
 MARKER = 'KERNEL_ENV_PARITY='
@@ -298,8 +298,10 @@ def run_case(binary, label, name, case, root, observation):
     for directory in ('home', 'tmp', 'work', 'agent', 'sessions'):
         (root / directory).mkdir(parents=True)
     agent, cwd = root / 'agent', root / 'work'
-    env = {key: os.environ[key] for key in ('PATH', 'LANG', 'LC_ALL', 'TZ',
-        'PRIME_AGENT_KERNEL_PYTHON', 'PA_E2E_KERNEL_PYTHON') if key in os.environ}
+    env = {key: os.environ[key] for key in ('PATH', 'LANG', 'LC_ALL', 'TZ') if key in os.environ}
+    kernel_python = kernel_env_for(label)
+    env['PRIME_AGENT_KERNEL_PYTHON'] = kernel_python
+    env['PA_E2E_KERNEL_PYTHON'] = kernel_python
     library = Path(os.environ['PI_PACKAGE_DIR'])
     if label == 'ts':
         env['PI_PACKAGE_DIR'] = str(library)

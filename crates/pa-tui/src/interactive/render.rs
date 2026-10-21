@@ -217,7 +217,12 @@ impl Renderer {
                 }
                 let steps = plan.steps;
                 tokio::spawn(async move {
-                    for step in steps {
+                    let step_events = std::env::var("PA_TUI_DEBUG_EVENTS").is_ok();
+                    let started = std::time::Instant::now();
+                    for (index, step) in steps.into_iter().enumerate() {
+                        if step_events {
+                            eprintln!("[tui-step] {index} {step:?} at {:?}", started.elapsed());
+                        }
                         match step {
                             HeadlessStep::Submit(text) => {
                                 if ui_tx.send(UiInput::Submit(text)).is_err() {
@@ -437,6 +442,14 @@ impl Renderer {
             Renderer::Headless { frames, .. } => Some(frames),
             Renderer::Terminal { .. } => None,
         }
+    }
+
+    /// The current frame text (headless), for the settle-timeout error.
+    pub(super) fn settle_frame_text(&self, view: &mut AgentView) -> Option<String> {
+        let Renderer::Headless { width, height, .. } = self else {
+            return None;
+        };
+        Some(crate::app::render_frame_text(view, *width, *height).join("\n"))
     }
 
     /// Capture one frame as plain text (headless assertions).
