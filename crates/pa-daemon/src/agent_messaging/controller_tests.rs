@@ -239,7 +239,6 @@ async fn family_lists_a_started_top_level_session_as_a_child() {
 /// created row carries `topLevel: true`.
 #[tokio::test]
 async fn a_started_top_level_session_sees_its_starter_as_parent() {
-    let dir = tempfile::TempDir::new().unwrap();
     let roster = vec![
         json!({ "activeSessionId": "ttt777", "sessionId": "sess-t", "sessionName": "peer",
                 "runtimeKind": "top-level" }),
