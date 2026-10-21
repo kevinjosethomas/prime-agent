@@ -365,7 +365,8 @@ fn top_level_sessions_are_first_class_agents() {
     let Some(kernel_python) = kernel_python() else {
         return;
     };
-    let dir = tempfile::TempDir::new().expect("temp dir").keep();
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let dir = dir.path().to_path_buf();
     let agent_dir = &dir.join("agent");
     std::fs::create_dir_all(&agent_dir).expect("agent dir");
     let socket = &dir.join("supervisor.sock");
