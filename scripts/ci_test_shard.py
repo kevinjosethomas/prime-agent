@@ -159,6 +159,12 @@ def run_unit(unit: dict) -> dict:
         and unit["name"] == "provider_failover_e2e"
     ):
         env = {**os.environ, "RUST_BACKTRACE": "1"}
+    elif (
+        unit["package"] == "pa-cli"
+        and unit["kind"] == "test"
+        and unit["name"] == "clipboard_auth_commands_e2e"
+    ):
+        env = {**os.environ, "PA_TUI_DEBUG_EVENTS": "1"}
     # Streaming (not capture-then-print) so a hung binary is attributable from
     # the live log: the unit header is printed before the invocation starts.
     proc = subprocess.Popen(
