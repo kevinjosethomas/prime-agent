@@ -1401,6 +1401,7 @@ mod tests {
         assert_eq!(
             response,
             json!({
+                "rlm_child_id": "sub-toplevel",
                 "active_session_id": "live-2",
                 "session_id": "s-2",
                 "name": "root-2",
@@ -1480,6 +1481,7 @@ mod tests {
                 "session_id": "s-2",
                 "session_name": "worker",
                 "session_dir": "/tmp/sub-1",
+                "top_level": false,
                 "status": "running",
                 "activity": { "kind": "executing", "tool_name": "bash" },
                 "tool_use_count": 3,
