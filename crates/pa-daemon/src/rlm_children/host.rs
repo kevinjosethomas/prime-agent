@@ -9,7 +9,7 @@ use super::{
     Result, RlmChildResult, RlmCreateSessionHandle, RlmCreateSessionRequest,
     RlmDeleteSubagentResult, RlmHostFuture, RlmSpawnHandle, RlmSpawnRequest, RlmSubagentEntry,
     RlmSubagentHost, SpawnNameReservationGuard, SupervisorChildSessions,
-    SupervisorChildSessionsInner, Value, KILL_TIMEOUT_MS, RENAME_TIMEOUT_MS,
+    SupervisorChildSessionsInner, Value, KICKOFF_POLL_MS, KILL_TIMEOUT_MS, RENAME_TIMEOUT_MS,
 };
 
 /// Resolve the child model with the daemon `allowedModels` allowlist enforced, refusing loudly with
@@ -253,7 +253,6 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 if watcher_record.lock().await.closed_by_parent {
                     return;
                 }
-                watcher_record.lock().await.prompt_admitted = true;
                 if let Err(error) = watcher_this
                     .prompt_child(
                         &child_active_session_id,
@@ -298,6 +297,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                         return;
                     }
                 }
+                watcher_record.lock().await.prompt_admitted = true;
                 watcher_this.watch_child_settle(&watcher_record).await;
             });
             let session_id = created.session_id.clone().ok_or_else(|| {
@@ -548,9 +548,17 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 };
                 records.push(record);
             }
+            // A blocking collect holds the parent's turn open, so it counts as
+            // the turn boundary the parked task prompts wait for.
+            if timeout_ms > 0 {
+                this.turn_done.send_modify(|generation| *generation += 1);
+            }
             let deadline = Instant::now() + Duration::from_millis(timeout_ms);
             let mut results = Vec::with_capacity(records.len());
             for record in &records {
+                while record.lock().await.kickoff_pending() && Instant::now() < deadline {
+                    tokio::time::sleep(Duration::from_millis(KICKOFF_POLL_MS)).await;
+                }
                 this.refresh_record(record).await;
                 // A settled child that is busy again runs a follow-up turn:
                 // re-arm usage observation (the task-run watcher retired at

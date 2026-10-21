@@ -400,6 +400,38 @@ async fn the_roster_row_carries_the_child_note() {
     );
 }
 
+/// A spawn and a blocking collect in one cell: the collect stands in for the
+/// parent's turn boundary, so the task prompt lands without the boundary wait.
+#[tokio::test]
+async fn a_blocking_collect_releases_the_parked_task_prompt() {
+    let (follow_up_tx, _follow_up_rx) = mpsc::unbounded_channel();
+    let (sessions, _kill_rx) =
+        sessions_with_fake_supervisor(follow_up_tx, 0, FakeKill::Success, FakeChild::Healthy).await;
+    let handle = spawn_child(&sessions).await;
+    let snapshot = sessions
+        .collect(vec![handle.rlm_child_id.clone()], 0)
+        .await
+        .expect("snapshot collect");
+    assert_eq!(snapshot[0].status, "running");
+    assert_eq!(
+        *sessions.inner.turn_done.borrow(),
+        0,
+        "a snapshot collect releases nothing"
+    );
+    let results = tokio::time::timeout(
+        Duration::from_secs(10),
+        sessions.collect(vec![handle.rlm_child_id.clone()], 30_000),
+    )
+    .await
+    .expect("the collect must not wait out the turn boundary")
+    .expect("blocking collect");
+    assert_eq!(results[0].status, "done");
+    assert_eq!(
+        results[0].answer_text.as_deref(),
+        Some("the child final answer")
+    );
+}
+
 /// The settle grace re-marks only a BUSY child as running: a worker that
 /// leaves inside the grace (the idle passivation's stop, a crash) keeps
 /// the settled verdict, and the settle tail (notice, funnel) still runs.
@@ -644,8 +676,7 @@ async fn a_verdict_landing_inside_the_unreachable_give_up_still_runs_the_settle_
 }
 
 /// The review's C1 interleaving: a `collect` that lands inside the
-/// prompt-failure window (after the detached task flips
-/// `prompt_admitted`, before the retry verdict) reads the alive-but-idle
+/// prompt-failure window (before the retry verdict) reads the alive-but-idle
 /// worker as `done` — `refresh_record`'s admission-window misread, not a
 /// settle verdict. The prompt arm's failure claim must ignore it: the
 /// failure row still lands, the roster reports `error`, the hook fires,
@@ -662,11 +693,8 @@ async fn a_collect_inside_the_prompt_failure_window_does_not_swallow_the_failure
         let _ = hook_tx.send(());
     }));
     let handle = spawn_child(&sessions).await;
-    // The window's entry condition, set deterministically: the detached
-    // prompt task flips `prompt_admitted` BEFORE its first
-    // `prompt_child` (host.rs), and the collect below races that task in
-    // production. With the flag set and the worker alive-but-idle, the
-    // real collect path scores the misread.
+    // The window's entry condition, set by hand: with the flag set and the
+    // worker alive-but-idle, the real collect path scores the misread.
     sessions.inner.children.lock().await[0]
         .lock()
         .await

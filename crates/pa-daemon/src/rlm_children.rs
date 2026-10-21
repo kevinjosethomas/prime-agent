@@ -61,6 +61,8 @@ impl ChildCloseReason {
 /// How long a detached child prompt waits for its spawning parent turn
 /// before prompting anyway; a stuck turn must not orphan the child's task.
 const TURN_DONE_WAIT_SECS: u64 = 60;
+/// Poll interval of a blocking collect waiting for a released task prompt to land.
+const KICKOFF_POLL_MS: u64 = 20;
 
 /// Grace between the first idle observation and the settle decision.
 const WATCH_SETTLE_GRACE_MS: u64 = 250;
@@ -159,7 +161,7 @@ struct ChildRecord {
     /// The terminal notice was claimed: exactly one of the settle watcher,
     /// the delete path, or a late natural settle delivers it.
     notice_delivered: bool,
-    /// The task prompt was admitted; never settle a pre-prompt child (it
+    /// The task prompt landed on the child; never settle a pre-prompt child (it
     /// is idle with an empty queue by construction).
     prompt_admitted: bool,
     /// Terminal error text: the cancel reason for a cancelled run, the
@@ -206,6 +208,11 @@ impl ChildRecord {
     /// Raw run status: `running` | `done` | `error` | `cancelled`.
     fn status(&self) -> &'static str {
         self.settled_status.unwrap_or("running")
+    }
+
+    /// The released task prompt is still on its way to the child.
+    fn kickoff_pending(&self) -> bool {
+        !self.prompt_admitted && self.settled_status.is_none() && !self.closed_by_parent
     }
 
     fn snapshot_value(&self) -> Value {
