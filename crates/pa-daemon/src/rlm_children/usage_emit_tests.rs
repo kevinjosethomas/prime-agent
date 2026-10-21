@@ -60,6 +60,8 @@ fn record_with_file(child_id: &str, session_file: &Path) -> Arc<Mutex<ChildRecor
         notice_delivered: false,
         prompt_admitted: true,
         error: None,
+        progress_note: None,
+        note_at: None,
         closed_by_parent: false,
         retirement_finished: false,
         retirement_notified: false,

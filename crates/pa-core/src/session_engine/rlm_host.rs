@@ -77,6 +77,8 @@ pub struct RlmSubagentEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub progress_note: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub note_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_activity_at: Option<u64>,
@@ -948,6 +950,7 @@ mod tests {
                     answer_preview: None,
                     replied_since_task: Some(false),
                     progress_note: Some("halfway".into()),
+                    note_at: Some("2026-10-20T23:45:00.000Z".into()),
                     label: Some("child agent".into()),
                     last_activity_at: Some(1_000),
                     activity_stale_ms: None,
@@ -972,6 +975,7 @@ mod tests {
                         answer_preview: None,
                         replied_since_task: None,
                         progress_note: None,
+                        note_at: None,
                         label: None,
                         last_activity_at: None,
                         activity_stale_ms: None,

@@ -171,6 +171,8 @@ async fn spawn_fake_supervisor(
                                 "isStreaming": false,
                                 "hasRunningSubagents": child_subagents.running.load(Ordering::SeqCst),
                                 "sessionActions": { "queuedCount": 0 },
+                                "progressNote": "finishing the audit",
+                                "noteAt": "2026-10-20T23:45:00.000Z",
                             })),
                         ),
                         "get_last_assistant_text" => {
@@ -374,6 +376,28 @@ async fn a_settled_child_without_a_reply_delivers_the_terminal_notice() {
     let extra =
         tokio::time::timeout(std::time::Duration::from_millis(300), follow_up_rx.recv()).await;
     assert!(extra.is_err(), "no second notice may arrive");
+}
+
+#[tokio::test]
+async fn the_roster_row_carries_the_child_note() {
+    let (follow_up_tx, _follow_up_rx) = mpsc::unbounded_channel();
+    let (sessions, _kill_rx) =
+        sessions_with_fake_supervisor(follow_up_tx, 0, FakeKill::Success, FakeChild::Healthy).await;
+    let settled = sessions.settle_notified();
+    spawn_child(&sessions).await;
+    sessions.notify_turn_done();
+    tokio::time::timeout(Duration::from_secs(10), settled)
+        .await
+        .expect("the child settles");
+    let roster = sessions.list_subagents().await.expect("child roster");
+    assert_eq!(
+        roster[0].progress_note.as_deref(),
+        Some("finishing the audit")
+    );
+    assert_eq!(
+        roster[0].note_at.as_deref(),
+        Some("2026-10-20T23:45:00.000Z")
+    );
 }
 
 /// The settle grace re-marks only a BUSY child as running: a worker that
@@ -1255,6 +1279,8 @@ fn an_already_settled_child_never_re_scores_as_an_unreachable_error() {
         notice_delivered: false,
         prompt_admitted: true,
         error: None,
+        progress_note: None,
+        note_at: None,
         closed_by_parent: false,
         retirement_finished: false,
         retirement_notified: false,
@@ -1323,6 +1349,8 @@ async fn the_unreachable_give_up_skips_the_exit_capture_when_a_capture_stands() 
         notice_delivered: false,
         prompt_admitted: true,
         error: None,
+        progress_note: None,
+        note_at: None,
         closed_by_parent: false,
         retirement_finished: false,
         retirement_notified: false,

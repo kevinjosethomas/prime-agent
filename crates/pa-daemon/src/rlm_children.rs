@@ -165,6 +165,9 @@ struct ChildRecord {
     /// Terminal error text: the cancel reason for a cancelled run, the
     /// failure text for a failed one.
     error: Option<String>,
+    /// The child's latest accepted note and its timestamp, off its session summary.
+    progress_note: Option<String>,
+    note_at: Option<String>,
     /// The parent session closed while this child ran: the settle watcher
     /// exits without a notice — none is owed to a session being torn down.
     closed_by_parent: bool,
@@ -695,6 +698,8 @@ impl SupervisorChildSessions {
                 notice_delivered: false,
                 prompt_admitted: true,
                 error: None,
+                progress_note: None,
+                note_at: None,
                 closed_by_parent: false,
                 retirement_finished: false,
                 retirement_notified: false,
@@ -770,7 +775,8 @@ impl SupervisorChildSessions {
             duration_ms: Some(now_ms().saturating_sub(record.started_at_ms)),
             answer_preview: record.answer_preview.clone(),
             replied_since_task: None,
-            progress_note: None,
+            progress_note: record.progress_note.clone(),
+            note_at: record.note_at.clone(),
             label: (!record.label.is_empty()).then(|| record.label.clone()),
             last_activity_at: Some(record.started_at_ms),
             activity_stale_ms: None,

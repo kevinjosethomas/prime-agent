@@ -1101,6 +1101,7 @@ fn roster_entry(
         answer_preview: state.answer_text.as_deref().map(compact_rlm_text),
         replied_since_task: Some(state.replied_since_task),
         progress_note: None,
+        note_at: None,
         label: None,
         last_activity_at: Some(state.started_at_ms),
         activity_stale_ms: None,
