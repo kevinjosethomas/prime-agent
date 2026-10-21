@@ -81,7 +81,9 @@ In prime-agent, agents can create heartbeats to wake themselves up after a given
 - `heartbeat.list(include_inactive: bool = False) -> list[Heartbeat]`
 - `Heartbeat(id, instruction, every, label, status, delivery_mode, next_run_at)`
 - `await hb.update(instruction=None, every=None, label=None, delivery_mode=None) -> Heartbeat`
-- `await hb.pause() -> Heartbeat` / `await hb.resume() -> Heartbeat` / `await hb.delete()`
+- `await hb.pause() -> Heartbeat`
+- `await hb.resume() -> Heartbeat`
+- `await hb.delete()`
 
 ## MCP
 

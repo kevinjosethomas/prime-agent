@@ -11,9 +11,11 @@ use std::time::Duration;
 
 use pa_core::session_engine::agent_messaging::{
     create_agent_session_message_id, create_agent_session_message_prompt,
-    create_agent_session_message_row, AgentFamilyMember, AgentFamilyRelationship,
-    AgentMessageController, AgentMessageDeliveryStatus, AgentMessagePromptPayload,
-    AgentMessageReceipt, AgentMessageSendInput, AgentSessionMessageRowPayload,
+    create_agent_session_message_row, register_agent_observe_host_handlers,
+    AgentFamilyMember, AgentFamilyRelationship, AgentFamilyStatus, AgentMessageController,
+    AgentMessageDeliveryStatus, AgentMessagePromptPayload, AgentMessageReceipt,
+    AgentMessageSendInput, AgentObserveController, AgentObserveMessagePreview,
+    AgentObserveSummary, AgentSessionMessageRowPayload,
 };
 use pa_core::session_engine::engine::SessionEngine;
 use pa_core::session_engine::goal_boundary::custom_message_to_loop_row;
@@ -231,7 +233,126 @@ pub(crate) fn inline_subagent_wiring(
         std::sync::Arc::new(InlineMessages(Arc::clone(node))),
         &mut handlers,
     );
+    register_agent_observe_host_handlers(
+        std::sync::Arc::new(InlineObserver(Arc::clone(node))),
+        &mut handlers,
+    );
     (Arc::new(InlineHost(Arc::clone(node))), handlers)
+}
+
+// The observe controller (the `agent_observe.*` kernel surface)
+
+/// The family roster observer over one node's tree position: the same
+/// parent/sibling/children edges the messaging controller resolves, one
+/// row per member.
+struct InlineObserver(Arc<InlineSessionNode>);
+
+/// Whether a node still runs: a live engine with a streaming turn or
+/// queued rows; a disposed node (an exited child) never runs.
+async fn node_is_running(node: &Arc<InlineSessionNode>) -> bool {
+    if node.is_disposed() {
+        return false;
+    }
+    let Some(engine) = node.engine.get().and_then(Weak::upgrade) else {
+        return false;
+    };
+    let agent = engine.session.agent();
+    agent.has_queued_messages() || agent.state().await.is_streaming
+}
+
+impl InlineObserver {
+    fn row(
+        node: &Arc<InlineSessionNode>,
+        relationship: Option<AgentFamilyRelationship>,
+        is_current: bool,
+        running: bool,
+    ) -> AgentObserveSummary {
+        AgentObserveSummary {
+            active_session_id: Some(node.session_id.clone()),
+            session_id: node.session_id.clone(),
+            session_name: node.session_name().filter(|name| !name.is_empty()),
+            relationship,
+            runtime_kind: Some(
+                if node.depth > 0 {
+                    "subagent"
+                } else {
+                    "top-level"
+                }
+                .to_string(),
+            ),
+            status: if running {
+                AgentFamilyStatus::Running
+            } else {
+                AgentFamilyStatus::Idle
+            },
+            activity: None,
+            is_current,
+            is_streaming: running,
+            is_compacting: false,
+            attached_clients: 0,
+            queued_count: 0,
+            is_session_active: false,
+            note: None,
+            note_at: None,
+        }
+    }
+}
+
+impl AgentObserveController for InlineObserver {
+    async fn list_agents(&self) -> anyhow::Result<Vec<AgentObserveSummary>> {
+        let node = &self.0;
+        let mut rows = Vec::new();
+        rows.push(Self::row(node, None, true, node_is_running(node).await));
+        if let Some(parent) = node.parent_node() {
+            rows.push(Self::row(
+                &parent,
+                Some(AgentFamilyRelationship::Parent),
+                false,
+                node_is_running(&parent).await,
+            ));
+            for sibling in parent.children.lock().await.iter() {
+                if Arc::ptr_eq(&sibling.node, node) {
+                    continue;
+                }
+                rows.push(Self::row(
+                    &sibling.node,
+                    Some(AgentFamilyRelationship::Sibling),
+                    false,
+                    child_is_unsettled(sibling).await,
+                ));
+            }
+        }
+        for child in node.children.lock().await.iter() {
+            rows.push(Self::row(
+                &child.node,
+                Some(AgentFamilyRelationship::Child),
+                false,
+                child_is_unsettled(child).await,
+            ));
+        }
+        Ok(rows)
+    }
+
+    async fn get_agent(
+        &self,
+        target: &str,
+    ) -> anyhow::Result<Option<AgentObserveSummary>> {
+        let rows = self.list_agents().await?;
+        Ok(rows.into_iter().find(|row| {
+            row.active_session_id.as_deref() == Some(target)
+                || row.session_id == target
+                || row.session_name.as_deref() == Some(target)
+        }))
+    }
+
+    async fn recent_messages(
+        &self,
+        _target: &str,
+        _limit: usize,
+        _max_chars: usize,
+    ) -> anyhow::Result<Vec<AgentObserveMessagePreview>> {
+        anyhow::bail!("agent_observe recent messages are not available in this session")
+    }
 }
 
 // The quiescence drive
