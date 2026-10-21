@@ -376,6 +376,10 @@ struct SupervisorChildSessionsInner {
     /// Bumped once per completed parent turn: mid-turn prompt tasks wait for the next bump (the
     /// continuation is in flight before the child's first model turn).
     turn_done: tokio::sync::watch::Sender<u64>,
+    /// Bumped on every subagent-host request from the parent: a poll
+    /// mid-turn releases the parked task prompts instead of waiting out
+    /// the boundary.
+    parent_activity: tokio::sync::watch::Sender<u64>,
     /// The parent engine's child-settle hook (goal continuation resume).
     settle_hook: std::sync::Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     /// Whether any tracked child run is unsettled (the `any_running`
@@ -436,6 +440,7 @@ impl SupervisorChildSessions {
                 pending_spawn_names: std::sync::Mutex::new(std::collections::HashSet::new()),
                 deleted_children: std::sync::Mutex::new(std::collections::HashMap::new()),
                 turn_done: tokio::sync::watch::Sender::new(0),
+                parent_activity: tokio::sync::watch::Sender::new(0),
                 settle_hook: std::sync::Mutex::new(None),
                 running: tokio::sync::watch::Sender::new(false),
                 settle_notify: tokio::sync::Notify::new(),
@@ -899,15 +904,27 @@ impl SupervisorChildSessionsInner {
         sink(row);
     }
 
+    /// The parent came back to the subagent host mid-turn: parked task
+    /// prompts release instead of waiting out the turn boundary.
+    pub fn note_parent_activity(&self) {
+        self.parent_activity.send_modify(|value| *value += 1);
+    }
+
     /// Wait for the parent turn that spawned a task to complete (generation
-    /// strictly greater than the one captured at spawn admission). Bounded:
-    /// a turn that never settles releases the child anyway.
-    pub async fn wait_turn_done(&self, generation: u64) {
-        let mut receiver = self.turn_done.subscribe();
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(TURN_DONE_WAIT_SECS),
-            receiver.wait_for(|value| *value > generation),
-        )
+    /// strictly greater than the one captured at spawn admission) or the
+    /// parent's next subagent-host request, whichever comes first. Bounded:
+    /// a turn that never settles releases the child anyway. `wait_for` (not
+    /// `changed`) reads the current value first, so a bump that landed
+    /// before the task first polls still releases.
+    pub async fn wait_prompt_release(&self, turn_generation: u64, activity_generation: u64) {
+        let mut turn_receiver = self.turn_done.subscribe();
+        let mut activity_receiver = self.parent_activity.subscribe();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(TURN_DONE_WAIT_SECS), async {
+            tokio::select! {
+                _ = turn_receiver.wait_for(|value| *value > turn_generation) => {}
+                _ = activity_receiver.wait_for(|value| *value > activity_generation) => {}
+            }
+        })
         .await;
     }
 
