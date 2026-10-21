@@ -193,9 +193,13 @@ impl SupervisorChildSessionsInner {
         let children = self.children.lock().await.clone();
         let mut close_error = (!usage_persisted)
             .then(|| anyhow::anyhow!("RLM child usage remains owed after retirement; retry close"));
+        let mut top_level_records: Vec<Arc<Mutex<ChildRecord>>> = Vec::new();
         for record in &children {
-            // A top-level session outlives its starter: never a close candidate.
+            // A top-level session outlives its starter: stop tracking it
+            // (the registry dies with the starter's session identity) but
+            // never stop the session itself.
             if record.lock().await.top_level {
+                top_level_records.push(Arc::clone(record));
                 continue;
             }
             let rename_lock = record.lock().await.rename_lock.clone();
@@ -234,6 +238,18 @@ impl SupervisorChildSessionsInner {
                 close_error.get_or_insert_with(|| {
                     anyhow::anyhow!("RLM child usage remains owed after retirement; retry close")
                 });
+            }
+        }
+        // The unregistered top-level records: the watcher stops (no
+        // notice is owed to a closing starter) and the registry drops
+        // them; the sessions themselves keep running.
+        if !top_level_records.is_empty() {
+            self.children
+                .lock()
+                .await
+                .retain(|held| !top_level_records.iter().any(|record| Arc::ptr_eq(held, record)));
+            for record in &top_level_records {
+                record.lock().await.closed_by_parent = true;
             }
         }
         // The walk changed the registry: wake a parked barrier (a closed

@@ -879,8 +879,10 @@ async fn close_children_skips_a_top_level_session() {
         .expect("close children");
 
     let entries = sessions.list_subagents().await.expect("child roster");
-    assert_eq!(entries.len(), 1, "the top-level session stays listed");
-    assert!(entries[0].top_level);
+    assert!(
+        entries.is_empty(),
+        "the starter's close unregisters the record: {entries:?}"
+    );
     assert!(
         kill_rx.try_recv().is_err(),
         "a top-level session is never stopped by the starter's close"

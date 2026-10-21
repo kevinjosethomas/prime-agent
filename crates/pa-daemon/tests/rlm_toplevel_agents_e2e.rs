@@ -41,7 +41,9 @@ fn spawn_supervisor(socket: &Path, agent_dir: &Path, kernel_python: &Path) -> Da
         .env("PRIME_AGENT_CODING_AGENT_DIR", agent_dir)
         .env_remove("PRIME_API_KEY")
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::from(std::fs::File::create(std::env::temp_dir().join(
+            format!("pa-toplevel-e2e-supervisor-{}.log", std::process::id()),
+        )).expect("supervisor log")))
         .env(
             pa_daemon::worker::WORKER_SUPERVISOR_LOST_EXIT_MS_ENV,
             "15000",
@@ -362,18 +364,18 @@ fn top_level_sessions_are_first_class_agents() {
     let Some(kernel_python) = kernel_python() else {
         return;
     };
-    let dir = tempfile::TempDir::new().expect("temp dir");
-    let agent_dir = dir.path().join("agent");
+    let dir = tempfile::TempDir::new().expect("temp dir").into_path();
+    let agent_dir = &dir.join("agent");
     std::fs::create_dir_all(&agent_dir).expect("agent dir");
-    let socket = dir.path().join("supervisor.sock");
-    let receipts = dir.path().join("receipts");
+    let socket = &dir.join("supervisor.sock");
+    let receipts = &dir.join("receipts");
     std::fs::create_dir_all(&receipts).expect("receipts dir");
     let receipt = |name: &str| receipts.join(name);
     let error = |name: &str| receipts.join(format!("{name}.error"));
 
     let parent_seen = receipt("worker-parent.json");
     let worker_script = write_worker_script(
-        dir.path(),
+        &dir,
         &worker_parent_cell(&parent_seen, &error("worker-parent")),
     );
     let cells = [
@@ -385,14 +387,14 @@ fn top_level_sessions_are_first_class_agents() {
         create_cell(&receipt("create2.json"), &error("create2"), "w2"),
         list_cell(&receipt("list2.json"), &error("list2")),
     ];
-    let parent_script = write_parent_script(dir.path(), &cells);
+    let parent_script = write_parent_script(&dir, &cells);
     let mut daemon = spawn_supervisor(&socket, &agent_dir, &kernel_python);
     wait_socket_ready(&socket);
     let (mut client, hello) = Client::connect(&socket);
     assert_eq!(hello["type"], "daemon_hello");
     let parent = create_parent(
         &mut client,
-        dir.path(),
+        &dir,
         &parent_script,
         &worker_script,
         None,
@@ -466,7 +468,6 @@ fn top_level_sessions_are_first_class_agents() {
     assert_no_error(&error("stop"));
     assert_eq!(stopped, "0", "the registry empties after the delete");
     let worker_file = dir
-        .path()
         .join("sessions")
         .join(format!("{worker_session_id}.jsonl"));
     assert!(
@@ -521,10 +522,10 @@ fn top_level_sessions_are_first_class_agents() {
         list_cell(&receipt("list3.json"), &error("list3")),
         stop_cell(&receipt("stop3.json"), &error("stop3"), "w2"),
     ];
-    let parent_script3 = write_parent_script(dir.path(), &third_cells);
+    let parent_script3 = write_parent_script(&dir, &third_cells);
     let parent = create_parent(
         &mut client,
-        dir.path(),
+        &dir,
         &parent_script3,
         &worker_script,
         Some(Path::new(&parent_file)),
@@ -550,7 +551,6 @@ fn top_level_sessions_are_first_class_agents() {
     assert_no_error(&error("stop3"));
     assert_eq!(stopped, "0", "the registry empties after the delete");
     let worker2_file = dir
-        .path()
         .join("sessions")
         .join(format!("{worker2_session_id}.jsonl"));
     assert!(
