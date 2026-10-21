@@ -57,7 +57,7 @@ class AgentsSpawnTest(unittest.TestCase):
             ),
         )
 
-    def test_spawn_top_level_creates_a_sibling(self) -> None:
+    def test_spawn_top_level_creates_a_child_agent(self) -> None:
         host_request = AsyncMock(return_value=CREATE_SESSION_PAYLOAD)
 
         with patch.object(rlm_module, "host_request", host_request):
@@ -78,7 +78,7 @@ class AgentsSpawnTest(unittest.TestCase):
                 "kwargs": {"name": "researcher", "thinking": "off", "cwd": "/tmp/project"},
             },
         )
-        self.assertEqual(agent.relationship, "sibling")
+        self.assertEqual(agent.relationship, "child")
         self.assertTrue(agent.top_level)
         self.assertEqual(agent.status, "running")
         self.assertEqual(agent.session_id, "session-root")
@@ -144,7 +144,7 @@ class AgentsListTest(unittest.TestCase):
         self.assertEqual(agents[0].child_id, "sub-a1b2c3d4")
         self.assertEqual(agents[0].session_dir, Path("/tmp/parent/sub-a1b2c3d4"))
         self.assertFalse(agents[0].top_level)
-        self.assertEqual(agents[2].relationship, "sibling")
+        self.assertEqual(agents[2].relationship, "child")
         self.assertTrue(agents[2].top_level)
         self.assertEqual(agents[2].session_id, "session-top")
 
