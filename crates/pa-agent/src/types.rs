@@ -223,6 +223,21 @@ pub enum UserPart {
     Image(ImageContent),
 }
 
+/// Per-response timing on the final assistant message; absent field = not measured, never estimated.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssistantMessageTiming {
+    /// Request sent -> first nonempty streamed text/thinking delta.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<f64>,
+    /// First token -> terminal event (the generation interval TPS measures).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation_ms: Option<f64>,
+    /// Request sent -> terminal event (the whole model response).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm_time_ms: Option<f64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssistantMessage {
     pub content: Vec<AssistantContent>,
@@ -264,6 +279,8 @@ pub struct AssistantMessage {
         skip_serializing_if = "Option::is_none"
     )]
     pub error_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timing: Option<AssistantMessageTiming>,
     #[serde(default)]
     pub timestamp: i64,
 }

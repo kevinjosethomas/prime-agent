@@ -40,6 +40,7 @@ fn test_error_turn(
     timestamp: i64,
 ) -> pa_agent::types::AssistantMessage {
     pa_agent::types::AssistantMessage {
+        timing: None,
         content: Vec::new(),
         api: String::new(),
         provider: "test".to_string(),
@@ -66,6 +67,7 @@ fn test_error_turn(
 /// A turn that settled without output and without a provider failure.
 fn test_empty_turn(timestamp: i64) -> pa_agent::types::AssistantMessage {
     pa_agent::types::AssistantMessage {
+        timing: None,
         content: Vec::new(),
         api: String::new(),
         provider: "test".to_string(),
@@ -83,6 +85,7 @@ fn test_empty_turn(timestamp: i64) -> pa_agent::types::AssistantMessage {
 
 fn test_progress_turn(timestamp: i64) -> pa_agent::types::AssistantMessage {
     pa_agent::types::AssistantMessage {
+        timing: None,
         content: vec![pa_agent::types::AssistantContent::Text(
             pa_agent::types::TextContent {
                 text: "made progress".to_string(),

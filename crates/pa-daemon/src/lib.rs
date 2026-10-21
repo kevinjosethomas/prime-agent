@@ -96,7 +96,12 @@ pub mod session_input_pause;
 pub mod session_navigation;
 pub(crate) mod session_scan;
 pub mod session_stats;
+mod session_timing;
+
 pub mod session_store;
+#[cfg(test)]
+#[path = "session_timing_tests.rs"]
+mod session_timing_tests;
 pub mod session_tree;
 pub mod session_usage;
 pub(crate) mod setting_switches;

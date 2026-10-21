@@ -311,6 +311,7 @@ mod tests {
             "retryAfterMs": retry_after_ms,
         });
         AssistantMessage {
+            timing: None,
             content: vec![AssistantContent::Text(TextContent {
                 text: String::new(),
                 text_signature: None,

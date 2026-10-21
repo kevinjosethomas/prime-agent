@@ -26,6 +26,7 @@ pub mod provider_failover;
 pub mod provider_park;
 pub mod provider_retry;
 pub mod request_timing;
+pub mod response_timing;
 pub mod rlm_host;
 pub mod rlm_notices;
 pub mod rlm_usage;

@@ -16,7 +16,7 @@ test('the production fixed path loads the platform artifact (before any mock wor
     process.platform === 'darwin' ? 'aarch64-apple-darwin' : 'x86_64-unknown-linux-gnu';
   assert.equal(metadata.targetTriple, expectedTriple);
   assert.match(metadata.harnessCommit, /^[0-9a-f]{40}$/);
-  assert.equal(metadata.schemaId, 'protocol-7-schema-31-5b2e0e3f07aa');
+  assert.equal(metadata.schemaId, 'protocol-7-schema-32-0add452274ed');
 });
 
 test('a tampered test artifact is refused by the sha256 gate', () => {

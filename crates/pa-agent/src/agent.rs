@@ -452,6 +452,7 @@ impl AgentInner {
                 },
                 error_message: Some(format!("{error:#}")),
                 stop_reason_raw: None,
+                timing: None,
                 timestamp: crate::now_ms(),
             }
         };
@@ -1365,6 +1366,7 @@ mod tests {
                         stop_reason: crate::types::StopReason::Stop,
                         error_message: None,
                         stop_reason_raw: None,
+                        timing: None,
                         timestamp: 0,
                     };
                     Box::pin(async move {

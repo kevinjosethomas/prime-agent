@@ -17,6 +17,7 @@ fn error_message(
         "retryAfterMs": retry_after_ms,
     });
     AssistantMessage {
+        timing: None,
         content: vec![AssistantContent::Text(TextContent {
             text: String::new(),
             text_signature: None,
@@ -42,6 +43,7 @@ fn error_message(
 
 fn ok_message() -> AssistantMessage {
     AssistantMessage {
+        timing: None,
         content: vec![AssistantContent::Text(TextContent {
             text: "done".to_string(),
             text_signature: None,
@@ -345,6 +347,7 @@ fn stream_drop_message() -> AssistantMessage {
         "providerErrorType": "stream_drop",
     });
     AssistantMessage {
+timing: None,
         content: vec![AssistantContent::Text(TextContent {
             text: String::new(),
             text_signature: None,

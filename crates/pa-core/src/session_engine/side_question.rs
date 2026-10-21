@@ -136,6 +136,7 @@ pub async fn run_side_question(
         )));
         messages.push(pa_agent::types::AgentMessage::Standard(Message::Assistant(
             AssistantMessage {
+                timing: None,
                 content: vec![AssistantContent::Text(TextContent {
                     text: turn.answer.clone(),
                     text_signature: None,
@@ -503,6 +504,7 @@ mod tests {
                 messages: Some(vec![
                     pa_agent::types::AgentMessage::user("main thread context"),
                     pa_agent::types::AgentMessage::Standard(Message::Assistant(AssistantMessage {
+                        timing: None,
                         content: vec![AssistantContent::Text(TextContent {
                             text: "main thread reply".to_string(),
                             text_signature: None,

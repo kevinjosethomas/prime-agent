@@ -551,6 +551,16 @@ pub(crate) fn session_summary(core: &SessionCore, inputs: SummaryInputs) -> Sess
             }
         })
         .map(|usage| json!(usage));
+    // responseTiming rides the same single scan read as usage; pathless stores fold in-memory entries.
+    let response_timing = store
+        .and_then(|store| {
+            if store.path.as_os_str().is_empty() {
+                crate::session_timing::response_timing_summary_of(store.entries())
+            } else {
+                info.as_ref().and_then(|info| info.response_timing.clone())
+            }
+        })
+        .map(|timing| json!(timing));
     let last_user_prompt_at = info
         .as_ref()
         .and_then(|info| info.last_user_prompt_ms)
@@ -621,6 +631,7 @@ pub(crate) fn session_summary(core: &SessionCore, inputs: SummaryInputs) -> Sess
         parent_session_id: core.parent_session_id.clone(),
         rlm_child_id: core.rlm_child_id.clone(),
         usage,
+        response_timing,
         worker_state: Some("ready".to_string()),
         worker_pid: Some(std::process::id()),
         // Set by the caller when the snapshot backs a roster push; authoritative

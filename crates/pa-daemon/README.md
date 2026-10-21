@@ -34,7 +34,15 @@ The optional `lastUserPromptAt` summary/catalog field is derived by the existing
 resumable session-info fold from persisted user-role message timestamps. It is not
 activity or mtime. See [the metadata contract](../../docs/last-user-prompt-metadata.md).
 The same canonical scalar serves active, saved and passive-child rows; sidecar
-version 3 rebuilds old prefixes once before resuming cached metadata.
+version 4 rebuilds old prefixes once before resuming cached metadata (the timing
+fold below joined the same accumulator).
+
+The optional `responseTiming` summary field is the measured per-response timing
+block (TTFT, tokens-per-second, LLM/tool time) folded cumulatively by the same
+whole-file resumable scan from the persisted assistant `timing` blocks and
+toolResult `details.durationMs` rows — assistant responses only, summarizer
+and user-aborted rows excluded. The `response_timing` server capability
+advertises it; see [the protocol doc](../../docs/response-timing.md).
 
 The control-plane `set_prompt_guidelines` command stages appended prompt sources
 for the next compaction and persists them in the worker's create descriptor.
