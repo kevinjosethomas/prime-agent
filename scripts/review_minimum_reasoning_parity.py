@@ -185,10 +185,13 @@ def run_case(binary, label, scenario, root, observation):
                     'maxTokens': 8192,
                     'thinkingLevelMap': {'off': None, 'minimal': None, 'low': 'low',
                                          'medium': None, 'high': 'high', 'xhigh': None, 'max': 'max'}}]}}}))
-    (agent / 'settings.json').write_text(json.dumps({
+    settings = {
         'defaultProvider': 'fixture', 'defaultModel': 'mandatory-fixture',
         'prewarmPythonKernel': False, 'compaction': {'enabled': False, 'keepRecentTokens': 100,
-                                                   'reserveTokens': 1024}}))
+                                                   'reserveTokens': 1024}}
+    if label == 'ts':
+        settings['autoRefine'] = {'enabled': False}
+    (agent / 'settings.json').write_text(json.dumps(settings))
     command = [str(binary), '--mode', 'json', '--provider', 'fixture', '--model',
                'mandatory-fixture', '--thinking', 'low', '--session-dir', str(sessions),
                'Seed the fixture.', 'Schedule the requested auxiliary operation.']
