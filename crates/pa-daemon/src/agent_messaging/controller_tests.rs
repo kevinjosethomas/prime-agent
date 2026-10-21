@@ -273,7 +273,7 @@ async fn a_started_top_level_session_sees_its_starter_as_parent() {
         "the starter is the parent and other roots stay siblings: {labeled:?}"
     );
     // The starter's own observe view: the registry join carries topLevel.
-    let starter = FamilyIdentity {
+    let starter_view = FamilyIdentity {
         active_session_id: "aaa111".to_string(),
         session_id: Some("sess-a".to_string()),
         session_file: None,
@@ -285,7 +285,7 @@ async fn a_started_top_level_session_sees_its_starter_as_parent() {
         rlm_depth: 0,
     };
     let registry = vec![("ttt777".to_string(), true)];
-    let summaries = summaries_from_roster(roster, &starter, &registry);
+    let summaries = summaries_from_roster(roster, &starter_view, &registry);
     let peer = summaries
         .iter()
         .find(|summary| summary.active_session_id.as_deref() == Some("ttt777"))

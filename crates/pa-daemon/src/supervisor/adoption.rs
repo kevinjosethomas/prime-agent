@@ -726,7 +726,7 @@ impl Supervisor {
             return Ok(());
         };
         let kind = metadata.get("kind").and_then(Value::as_str);
-        if !matches!(kind, Some("subagent") | Some("top-level")) {
+        if !matches!(kind, Some("subagent" | "top-level")) {
             return Ok(());
         }
         let child_id = metadata

@@ -113,10 +113,11 @@ impl SupervisorChildSessionsInner {
     /// Drop registration only after the final report persisted; return whether it is cleared.
     /// A failed bounded replay leaves both the report and its registration owed.
     pub(super) async fn forget_child_usage(&self, record: &Arc<Mutex<ChildRecord>>) -> bool {
-        if {
+        let skip = {
             let record = record.lock().await;
             record.usage_registration_forgotten || record.top_level
-        } {
+        };
+        if skip {
             return true;
         }
         let sink = self.usage_sink.lock().expect("usage sink lock").clone();
