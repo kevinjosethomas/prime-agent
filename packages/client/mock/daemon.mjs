@@ -16,12 +16,26 @@
  *           floodTrigger (answered normally, then the flood starts): the
  *           readiness barrier for parked-pull overflow tests.
  *  die    — hello; close the socket after reading one command envelope.
+ *  recycle — hello; answer commands; destroy the socket ~250ms after the
+ *           first answered command (the managed session's driver reconnects
+ *           and restores registered attachments).
+ *  replay — hello; on a command envelope carrying replayTrigger, answer it
+ *           and then push session_event seq 1, a DUPLICATE seq 1, and seq 2
+ *           (the managed dedupe contract's witness).
  */
 import net from 'node:net';
 import fs from 'node:fs';
 
 const [socketPath, mode = 'echo', arg = ''] = process.argv.slice(2);
 fs.rmSync(socketPath, { force: true });
+
+// Orphan watchdog: if the owning test process dies without stop() (a
+// failing assertion skipped it), exit — an inherited stdio pipe from a
+// leaked mock would otherwise hold the test runner open forever.
+const ownerPid = process.ppid;
+setInterval(() => {
+  if (process.ppid !== ownerPid) process.exit(0);
+}, 500).unref();
 
 const server = net.createServer((socket) => {
   socket.setEncoding('utf8');
@@ -92,6 +106,9 @@ const server = net.createServer((socket) => {
   };
   socket.on('end', reportDisconnect);
   socket.on('close', reportDisconnect);
+  // recycle: per-connection state — the socket dies once, ~250ms after
+  // the first answered command.
+  let recycled = false;
   socket.on('data', (chunk) => {
     buffer += chunk;
     let newline;
@@ -138,7 +155,7 @@ const server = net.createServer((socket) => {
         }, 50);
         continue;
       }
-      if (mode === 'echo' || mode === 'events') {
+      if (mode === 'echo' || mode === 'events' || mode === 'replay' || mode === 'recycle') {
         socket.write(
           JSON.stringify({
             type: 'response',
@@ -148,6 +165,36 @@ const server = net.createServer((socket) => {
             data: { echoed: frame.command },
           }) + '\n',
         );
+      }
+      if (mode === 'recycle' && !recycled) {
+        recycled = true;
+        setTimeout(() => socket.destroy(), 250);
+      }
+      if (mode === 'replay' && frame.command.replayTrigger) {
+        const frames = [
+          {
+            type: 'session_event',
+            activeSessionId: 'active-1',
+            event: { type: 'tick' },
+            meta: { sequence: 1 },
+          },
+          {
+            type: 'session_event',
+            activeSessionId: 'active-1',
+            event: { type: 'tick' },
+            meta: { sequence: 1 },
+          },
+          {
+            type: 'session_event',
+            activeSessionId: 'active-1',
+            event: { type: 'tick' },
+            meta: { sequence: 2 },
+          },
+        ];
+        for (const replay of frames) {
+          socket.write(JSON.stringify(replay) + '\n');
+        }
+        continue;
       }
       if (mode === 'flood' && arg === 'respond') {
         socket.write(

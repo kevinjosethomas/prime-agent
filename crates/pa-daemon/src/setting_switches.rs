@@ -363,6 +363,40 @@ impl Worker {
         response_success(None, "set_prompt_guidelines", None)
     }
 
+    /// `set_task_reporter { config }` (supervisor-internal forward): store the
+    /// accepted tasks-reporter configuration so every kernel (re)start this
+    /// worker performs carries it in its env — an existing worker picks the
+    /// configuration up without a worker restart; already-running kernels
+    /// only see it after their own restart.
+    pub(crate) fn handle_set_task_reporter(payload: &Value) -> DaemonResponse {
+        let Some(config) = payload.get("config").and_then(Value::as_str) else {
+            return response_failure(
+                None,
+                "set_task_reporter",
+                "set_task_reporter requires a config string",
+                None,
+            );
+        };
+        // Shape check only (the supervisor canonicalized the payload): a
+        // malformed forward is refused loudly instead of poisoning kernels.
+        let shape_ok = serde_json::from_str::<Value>(config).is_ok_and(|value| {
+            value
+                .get("command")
+                .and_then(Value::as_array)
+                .is_some_and(|command| !command.is_empty() && command.iter().all(Value::is_string))
+        });
+        if !shape_ok {
+            return response_failure(
+                None,
+                "set_task_reporter",
+                "set_task_reporter requires a canonical reporter config",
+                None,
+            );
+        }
+        pa_core::kernel::tasks_reporter::store_forwarded(config);
+        response_success(None, "set_task_reporter", None)
+    }
+
     /// `cycle_thinking_level`: reasoning models cycle their supported levels (the same flow as
     /// `set_thinking_level`); models without reasoning answer success with `null` data.
     pub(crate) async fn handle_cycle_thinking_level(&self) -> DaemonResponse {

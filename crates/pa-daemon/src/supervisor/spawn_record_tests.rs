@@ -198,6 +198,7 @@ async fn a_relaunch_spawn_record_serves_the_durable_persist() {
         &supervisor.options.socket_path.to_string_lossy(),
         "replacement-nonce",
         &replacement,
+        None,
     );
     assert_eq!(
         launch_env.get(pa_core::kernel::orphan_journal::ORPHAN_PROCESS_JOURNAL_ENV),

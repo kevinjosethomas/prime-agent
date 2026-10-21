@@ -48,6 +48,22 @@ class ComparatorTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 verifier.validate_rename_trigger('rust', changed, 'session')
 
+    def test_enqueue_accept_deviation_rejects_unexpected_data(self):
+        verifier.validate_enqueue_accept('ts', None)
+        with self.assertRaises(AssertionError):
+            verifier.validate_enqueue_accept('ts', {'accepted': True, 'inputId': 'qi_1'})
+        verifier.validate_enqueue_accept('rust', {'accepted': True, 'inputId': 'qi_0e4ff11e'})
+        for changed in (
+            None,
+            {'accepted': True},
+            {'accepted': True, 'inputId': ''},
+            {'accepted': True, 'inputId': 'qi_0e4ff11e', 'clientInputId': 'extra'},
+            {'accepted': 1, 'inputId': 'qi_0e4ff11e'},
+            {'accepted': False, 'inputId': 'qi_0e4ff11e'},
+        ):
+            with self.assertRaises(AssertionError):
+                verifier.validate_enqueue_accept('rust', changed)
+
     def test_nonowner_probe_does_not_hide_other_errors(self):
         response = {'command': 'release_session_input_pause', 'success': False,
                     'error': 'Session input pause is owned by another client: lease'}

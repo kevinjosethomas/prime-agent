@@ -119,6 +119,7 @@
 {"schemaRoot":"daemon-command","sample":{"type":"set_session_entry_label","activeSessionId":"wire","entryId":"wire"}}
 {"schemaRoot":"daemon-command","sample":{"type":"mark_anthropic_warning_shown","activeSessionId":"wire"}}
 {"schemaRoot":"daemon-command","sample":{"type":"set_prompt_guidelines","activeSessionId":"wire","appendSystemPrompt":["wire"]}}
+{"schemaRoot":"daemon-command","sample":{"type":"set_task_reporter","command":["wire"]}}
 {"schemaRoot":"daemon-command","sample":{"type":"ack_result","commandId":"wire"}}
 {"schemaRoot":"daemon-command","sample":{"type":"prepare_update_restart"}}
 {"schemaRoot":"daemon-command","sample":{"type":"commit_update_restart"}}

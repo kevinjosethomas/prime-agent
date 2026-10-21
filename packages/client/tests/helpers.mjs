@@ -1,11 +1,22 @@
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+// Unix socket paths are capped at sun_path: 104 bytes on macOS (108 on
+// Linux). os.tmpdir() on the macOS CI runner is ~70 bytes, and the longest
+// test name reached exactly 104 — over the cap the core's non-Linux
+// address check bails WITHOUT an io::Error, so no structural errorCode
+// exists (observed: darwin-diag at 7aa19bd56). A short /tmp base keeps
+// every fixture path well under the cap on both platforms.
+const SUN_PATH_BUDGET = 100;
+
 export function tmpSocket(name) {
-  const dir = mkdtempSync(join(tmpdir(), 'pa-client-node-'));
-  return join(dir, `${name}.sock`);
+  const dir = mkdtempSync('/tmp/pac-');
+  const socketPath = join(dir, `${name}.sock`);
+  if (Buffer.byteLength(socketPath) > SUN_PATH_BUDGET) {
+    throw new Error(`fixture socket path exceeds the sun_path budget: ${socketPath}`);
+  }
+  return socketPath;
 }
 
 export async function startMock(socketPath, mode = 'echo', arg = '') {

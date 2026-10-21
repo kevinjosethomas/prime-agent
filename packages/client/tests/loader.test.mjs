@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { copyFileSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadAddon, platformArtifact } from '../dist/loader.js';
@@ -30,16 +31,17 @@ test('a tampered test artifact is refused by the sha256 gate', () => {
 });
 
 test('a manifest mismatch fails closed even for the right artifact', () => {
+  // A tampered COPY of the manifest: the real provenance.json is shared
+  // with every parallel test process and must never be mutated.
   const artifact = platformArtifact();
-  const manifestPath = join(root, 'provenance.json');
-  const original = readFileSync(manifestPath, 'utf8');
-  const manifest = JSON.parse(original);
+  const manifest = JSON.parse(readFileSync(join(root, 'provenance.json'), 'utf8'));
   manifest.artifacts[artifact].sha256 = 'deadbeef';
-  writeFileSync(manifestPath, JSON.stringify(manifest));
+  const tamperedPath = join(tmpdir(), `pa-client-tampered-manifest-${process.pid}.json`);
+  writeFileSync(tamperedPath, JSON.stringify(manifest));
   try {
-    assert.throws(() => loadAddon(), /sha256/);
+    assert.throws(() => loadAddon({ testManifestPath: tamperedPath }), /sha256/);
   } finally {
-    writeFileSync(manifestPath, original);
+    rmSync(tamperedPath, { force: true });
   }
 });
 

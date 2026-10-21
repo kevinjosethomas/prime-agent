@@ -1432,6 +1432,16 @@
 {"schemaRoot":"daemon-command","case":"nested-wrong-type-activeSessionId","sample":{"type":"set_prompt_guidelines","activeSessionId":"wrong-type","appendSystemPrompt":["wire"]},"rustAccepts":true}
 {"schemaRoot":"daemon-command","case":"nested-drop-appendSystemPrompt","sample":{"type":"set_prompt_guidelines","activeSessionId":"wire"},"rustAccepts":false}
 {"schemaRoot":"daemon-command","case":"nested-wrong-type-appendSystemPrompt","sample":{"type":"set_prompt_guidelines","activeSessionId":"wire","appendSystemPrompt":"wrong-type"},"rustAccepts":false}
+{"schemaRoot":"daemon-command","case":"unknown-kind","sample":{"type":"__contract_unknown_kind__","command":["wire"]},"rustAccepts":false}
+{"schemaRoot":"daemon-command","case":"missing-tag","sample":{"command":["wire"]},"rustAccepts":false}
+{"schemaRoot":"daemon-command","case":"drop-type","sample":{"command":["wire"]},"rustAccepts":false}
+{"schemaRoot":"daemon-command","case":"wrong-type-type","sample":{"type":"wrong-type","command":["wire"]},"rustAccepts":false}
+{"schemaRoot":"daemon-command","case":"null-type","sample":{"type":null,"command":["wire"]},"rustAccepts":false}
+{"schemaRoot":"daemon-command","case":"drop-command","sample":{"type":"set_task_reporter"},"rustAccepts":false}
+{"schemaRoot":"daemon-command","case":"wrong-type-command","sample":{"type":"set_task_reporter","command":"wrong-type"},"rustAccepts":false}
+{"schemaRoot":"daemon-command","case":"null-command","sample":{"type":"set_task_reporter","command":null},"rustAccepts":false}
+{"schemaRoot":"daemon-command","case":"nested-drop-command","sample":{"type":"set_task_reporter"},"rustAccepts":false}
+{"schemaRoot":"daemon-command","case":"nested-wrong-type-command","sample":{"type":"set_task_reporter","command":"wrong-type"},"rustAccepts":false}
 {"schemaRoot":"daemon-command","case":"unknown-kind","sample":{"type":"__contract_unknown_kind__","commandId":"wire"},"rustAccepts":false}
 {"schemaRoot":"daemon-command","case":"missing-tag","sample":{"commandId":"wire"},"rustAccepts":false}
 {"schemaRoot":"daemon-command","case":"drop-type","sample":{"commandId":"wire"},"rustAccepts":false}

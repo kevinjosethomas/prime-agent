@@ -1009,6 +1009,25 @@ export type DaemonCommand =
       [k: string]: unknown;
     }
   | {
+      type: "set_task_reporter";
+      id?: string | null;
+      /**
+       * Nonempty argv for the reporter process; never a shell string.
+       */
+      command: string[];
+      /**
+       * Optional extra reporter env; string values only.
+       */
+      env?: {
+        [k: string]: string;
+      } | null;
+      /**
+       * Optional reporter timeout in seconds (default 15, capped by the supervisor).
+       */
+      timeout?: number | null;
+      [k: string]: unknown;
+    }
+  | {
       type: "ack_result";
       id?: string | null;
       commandId: string;

@@ -14,6 +14,7 @@ pub mod provisioner;
 pub mod rlm_runtime;
 pub mod shared;
 pub mod state_snapshot;
+pub mod tasks_reporter;
 
 pub use bootstrap::{
     build_rlm_bootstrap_code, ensure_kernel_python, kernel_venv_dir, EnsureKernelPythonOptions,

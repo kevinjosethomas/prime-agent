@@ -15,6 +15,9 @@ use super::{
 /// keeps running after its owner's last connection closes.
 const OWNED_WORKER_DISCONNECT_GRACE: Duration = Duration::from_secs(30);
 
+/// Per-worker budget for the `set_task_reporter` fan-out (misses ride the respawn stamp).
+const TASKS_REPORTER_FORWARD_BUDGET_MS: u64 = 2_000;
+
 async fn write_line<W: AsyncWriteExt + Unpin>(writer: &mut W, value: &Value) -> Result<usize> {
     let mut line = serde_json::to_string(value)?;
     line.push('\n');
@@ -680,6 +683,96 @@ impl Supervisor {
                     ),
                 };
                 (vec![response_line(&response)], false)
+            }
+            DaemonCommand::SetTaskReporter {
+                command,
+                env,
+                timeout,
+                rest,
+                ..
+            } => {
+                let canonical = match (!rest.is_empty(), {
+                    crate::tasks_reporter::canonicalize(command, env.as_ref(), *timeout)
+                }) {
+                    (false, Ok(canonical)) => canonical,
+                    (false, Err(error)) => {
+                        return (
+                            vec![response_line(&response_failure(
+                                Some(&command_id),
+                                &type_name,
+                                &format!("{error:#}"),
+                                None,
+                            ))],
+                            false,
+                        );
+                    }
+                    (true, _) => {
+                        return (
+                            vec![response_line(&response_failure(
+                                Some(&command_id),
+                                &type_name,
+                                "set_task_reporter accepts no extra fields",
+                                None,
+                            ))],
+                            false,
+                        );
+                    }
+                };
+                // Store first: every spawn from now on stamps the config.
+                *self
+                    .tasks_reporter
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(canonical.clone());
+                self.note_daemon_event("task_reporter_set", None);
+                // Forward concurrently to live workers (a kernel restart in
+                // an existing worker then picks it up); misses ride the stamp.
+                let config = canonical.as_str();
+                let forwards =
+                    futures::future::join_all(self.registry.list().await.into_iter().map(
+                        |resident| async move {
+                            let worker_id = resident.worker_id.clone();
+                            let outcome = self
+                                .route_command_typed(
+                                    &resident,
+                                    "set_task_reporter",
+                                    json!({ "config": config }),
+                                    TASKS_REPORTER_FORWARD_BUDGET_MS,
+                                    RouteAdmission::SupervisorInternal,
+                                )
+                                .await;
+                            (worker_id, outcome)
+                        },
+                    ))
+                    .await;
+                let mut forwarded = 0usize;
+                let mut failed: Vec<String> = Vec::new();
+                for (worker_id, outcome) in forwards {
+                    match outcome {
+                        Ok(response) if response.success => forwarded += 1,
+                        Ok(_) | Err(_) => failed.push(worker_id),
+                    }
+                }
+                if failed.is_empty() {
+                    self.log_line(&format!(
+                        "set_task_reporter forwarded to {forwarded} live workers"
+                    ));
+                } else {
+                    self.log_line(&format!(
+                        "set_task_reporter forwarded to {forwarded} live workers; not confirmed for: {} (their next spawn replays the configuration)",
+                        failed.join(", ")
+                    ));
+                }
+                (
+                    vec![response_line(&response_success(
+                        Some(&command_id),
+                        &type_name,
+                        Some(json!({
+                            "forwarded": forwarded,
+                            "unconfirmed": failed.len(),
+                        })),
+                    ))],
+                    false,
+                )
             }
             DaemonCommand::GetSubagentModelDefault { rest, .. }
             | DaemonCommand::SetSubagentModelDefault { rest, .. } => {
