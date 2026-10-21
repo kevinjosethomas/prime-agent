@@ -5,7 +5,7 @@ import { clientMetadata } from '../dist/index.js';
 test('clientMetadata reports the derived build metadata', () => {
   const meta = clientMetadata();
   assert.equal(meta.schemaId, 'protocol-7-schema-32-0add452274ed');
-  assert.equal(meta.schemaRevision, 31);
+  assert.equal(meta.schemaRevision, 32);
   assert.equal(meta.protocolName, 'prime-agent.daemon');
   assert.equal(meta.protocolVersion, 7);
   assert.equal(meta.version, '0.10.0');
