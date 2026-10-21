@@ -543,11 +543,11 @@ async fn rlm_create_session_spawns_a_prompted_depth_zero_session() {
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0]["rlmDepth"], 0);
     assert_eq!(sessions[0]["runtimeKind"], "top-level");
+    // The created session is tracked like a child, flagged top-level.
     let roster = children.list_subagents().await.expect("roster");
-    assert!(
-        roster.is_empty(),
-        "create_session children are not subagents"
-    );
+    assert_eq!(roster.len(), 1, "the started session is registered: {roster:?}");
+    assert!(roster[0].top_level);
+    assert_eq!(roster[0].status, "running");
 
     // The session was prompted: its worker answered.
     let active_id = handle.active_session_id.clone();

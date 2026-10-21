@@ -41,9 +41,7 @@ fn spawn_supervisor(socket: &Path, agent_dir: &Path, kernel_python: &Path) -> Da
         .env("PRIME_AGENT_CODING_AGENT_DIR", agent_dir)
         .env_remove("PRIME_API_KEY")
         .stdout(Stdio::null())
-        .stderr(Stdio::from(std::fs::File::create(std::env::temp_dir().join(
-            format!("pa-toplevel-e2e-supervisor-{}.log", std::process::id()),
-        )).expect("supervisor log")))
+        .stderr(Stdio::null())
         .env(
             pa_daemon::worker::WORKER_SUPERVISOR_LOST_EXIT_MS_ENV,
             "15000",
@@ -292,12 +290,15 @@ fn write_worker_script(dir: &Path, parent_cell: &str) -> PathBuf {
     let script = dir.join("worker.json");
     std::fs::write(
         &script,
-        json!({ "responses": [
-            { "content": [
-                { "type": "toolCall", "name": "python_repl", "arguments": { "code": parent_cell } },
-            ] },
-            { "text": "the top-level worker answer" },
-        ] })
+        json!({
+            "engine": "faux",
+            "responses": [
+                { "content": [
+                    { "type": "toolCall", "name": "python_repl", "arguments": { "code": parent_cell } },
+                ] },
+                { "text": "the top-level worker answer" },
+            ]
+        })
         .to_string(),
     )
     .expect("write worker script");

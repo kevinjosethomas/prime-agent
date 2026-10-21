@@ -588,7 +588,8 @@ fn sigkill_keeps_a_created_root_session_running() {
     // close touches parent-linked children only.
     let pid = parent_worker_pid(&agent_dir, &socket, &parent_id);
     sigkill(pid);
-    // The respawn (and with it the death close) settles before the registry reads empty.
+    // The respawn settles, then the ledger reseed recovers the created
+    // root's registry row (the death close never touches it).
     wait_until(&mut client, Duration::from_mins(1), |client| {
         client.send_command(
             "g1",
@@ -598,7 +599,9 @@ fn sigkill_keeps_a_created_root_session_running() {
         (response["success"] == true
             && response["data"]["children"]
                 .as_array()
-                .is_some_and(std::vec::Vec::is_empty))
+                .is_some_and(|rows| {
+                    rows.len() == 1 && rows[0]["sessionName"] == json!("rootkid")
+                }))
         .then_some(())
     });
 
