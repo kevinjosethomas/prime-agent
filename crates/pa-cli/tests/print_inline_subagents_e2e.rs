@@ -510,11 +510,11 @@ fn print_inline_subagents_wait_for_a_retasked_child() {
     // settled child's stale first answer.
     let parent_text = serde_json::to_string(&parent_entries).unwrap();
     assert!(
-        parent_text.contains("FIRST-TASK done True kid finished the first task"),
+        parent_text.contains("FIRST-TASK done kid finished the first task"),
         "the collect before the follow-up read the first task's settled answer: {parent_text}"
     );
     assert!(
-        parent_text.contains("SECOND-TASK done True kid finished the second task"),
+        parent_text.contains("SECOND-TASK done kid finished the second task"),
         "the collect after the follow-up returned the second task's answer: {parent_text}"
     );
 }

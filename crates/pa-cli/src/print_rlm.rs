@@ -345,13 +345,15 @@ impl AgentObserveController for InlineObserver {
         }))
     }
 
-    async fn recent_messages(
+    fn recent_messages(
         &self,
         _target: &str,
         _limit: usize,
         _max_chars: usize,
-    ) -> anyhow::Result<Vec<AgentObserveMessagePreview>> {
-        anyhow::bail!("agent_observe recent messages are not available in this session")
+    ) -> impl Future<Output = anyhow::Result<Vec<AgentObserveMessagePreview>>> + Send {
+        std::future::ready(Err(anyhow::anyhow!(
+            "agent_observe recent messages are not available in this session"
+        )))
     }
 }
 

@@ -171,6 +171,7 @@ fn prompt_tokens_for_host_request(request: &str) -> Vec<String> {
         "agent_message.send" => vec!["a.send"],
         "agent_observe.list" => vec!["agents.parent", "agents.siblings"],
         "agent_observe.recent" => vec!["a.recent"],
+        "rlm.find_models" => vec!["harness.models"],
         "compact.run" => vec!["harness.compact"],
         "compact.status" => vec!["harness.context"],
         "goal.create" => vec!["harness.goal.create"],
