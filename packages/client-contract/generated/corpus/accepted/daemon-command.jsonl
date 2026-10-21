@@ -93,7 +93,6 @@
 {"schemaRoot":"daemon-command","sample":{"type":"set_auto_compaction","activeSessionId":"wire","enabled":false}}
 {"schemaRoot":"daemon-command","sample":{"type":"set_auto_retry","activeSessionId":"wire","enabled":false}}
 {"schemaRoot":"daemon-command","sample":{"type":"compact","activeSessionId":"wire"}}
-{"schemaRoot":"daemon-command","sample":{"type":"refine","activeSessionId":"wire"}}
 {"schemaRoot":"daemon-command","sample":{"type":"abort_compaction","activeSessionId":"wire"}}
 {"schemaRoot":"daemon-command","sample":{"type":"abort_branch_summary","activeSessionId":"wire"}}
 {"schemaRoot":"daemon-command","sample":{"type":"abort_retry","activeSessionId":"wire"}}

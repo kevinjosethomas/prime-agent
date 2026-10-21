@@ -1122,16 +1122,6 @@
 {"schemaRoot":"daemon-command","case":"drop-type","sample":{"activeSessionId":"wire"},"rustAccepts":false}
 {"schemaRoot":"daemon-command","case":"wrong-type-type","sample":{"type":"wrong-type","activeSessionId":"wire"},"rustAccepts":false}
 {"schemaRoot":"daemon-command","case":"null-type","sample":{"type":null,"activeSessionId":"wire"},"rustAccepts":false}
-{"schemaRoot":"daemon-command","case":"drop-activeSessionId","sample":{"type":"refine"},"rustAccepts":false}
-{"schemaRoot":"daemon-command","case":"wrong-type-activeSessionId","sample":{"type":"refine","activeSessionId":"wrong-type"},"rustAccepts":true}
-{"schemaRoot":"daemon-command","case":"null-activeSessionId","sample":{"type":"refine","activeSessionId":null},"rustAccepts":false}
-{"schemaRoot":"daemon-command","case":"nested-drop-activeSessionId","sample":{"type":"refine"},"rustAccepts":false}
-{"schemaRoot":"daemon-command","case":"nested-wrong-type-activeSessionId","sample":{"type":"refine","activeSessionId":"wrong-type"},"rustAccepts":true}
-{"schemaRoot":"daemon-command","case":"unknown-kind","sample":{"type":"__contract_unknown_kind__","activeSessionId":"wire"},"rustAccepts":false}
-{"schemaRoot":"daemon-command","case":"missing-tag","sample":{"activeSessionId":"wire"},"rustAccepts":false}
-{"schemaRoot":"daemon-command","case":"drop-type","sample":{"activeSessionId":"wire"},"rustAccepts":false}
-{"schemaRoot":"daemon-command","case":"wrong-type-type","sample":{"type":"wrong-type","activeSessionId":"wire"},"rustAccepts":false}
-{"schemaRoot":"daemon-command","case":"null-type","sample":{"type":null,"activeSessionId":"wire"},"rustAccepts":false}
 {"schemaRoot":"daemon-command","case":"drop-activeSessionId","sample":{"type":"abort_compaction"},"rustAccepts":false}
 {"schemaRoot":"daemon-command","case":"wrong-type-activeSessionId","sample":{"type":"abort_compaction","activeSessionId":"wrong-type"},"rustAccepts":true}
 {"schemaRoot":"daemon-command","case":"null-activeSessionId","sample":{"type":"abort_compaction","activeSessionId":null},"rustAccepts":false}
