@@ -268,22 +268,16 @@ pub fn kernel_provisioner(
     ))
 }
 
-/// TS `_addWebsearchKeyEnv` (agent-session.ts:11137-11158): the serper key
-/// rides the kernel env only when a websearch skill is loaded, the ambient
-/// env does not already carry one, and the stored `serper` credential is an
-/// api key that resolves non-empty. The websearch skill's own `!command`
-/// key refs cannot resolve in-kernel, so the host resolves them here; the
-/// caller reads the credential and runs this off the async runtime, because
-/// a `!command` key can block.
+/// The serper key rides the kernel env when the ambient env does not already
+/// carry one and the stored `serper` credential is an api key that resolves
+/// non-empty. `!command` key refs cannot resolve in-kernel, so the host
+/// resolves them here; the caller reads the credential and runs this off the
+/// async runtime, because a `!command` key can block.
 #[must_use]
 pub(crate) fn websearch_api_key(
-    skills: &[Skill],
     credential: Option<crate::auth::AuthCredential>,
 ) -> Option<String> {
     if std::env::var("SERPER_API_KEY").is_ok_and(|value| !value.trim().is_empty()) {
-        return None;
-    }
-    if !skills.iter().any(|skill| skill.name == "websearch") {
         return None;
     }
     match credential {

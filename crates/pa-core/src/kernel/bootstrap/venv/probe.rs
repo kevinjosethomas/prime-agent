@@ -247,6 +247,8 @@ mod ready_check_tests {
 
     /// The ready check must pass against the shipped runtime sources: a probe
     /// drifted off the runtime (or a runtime that lost the surface) fails here.
+    /// `rlm.websearch` guards on httpx at import time; a bare python3 gets a
+    /// stub on the path so only that dependency is faked, never the runtime.
     #[test]
     fn runtime_ready_check_passes_against_the_runtime_sources() {
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -259,10 +261,17 @@ mod ready_check_tests {
             eprintln!("runtime sources not found; skipping the ready-check test");
             return;
         }
+        let stubs = tempfile::tempdir().expect("stub dir");
+        std::fs::write(stubs.path().join("httpx.py"), "").expect("httpx stub");
+        let pythonpath = format!(
+            "{}:{}",
+            stubs.path().display(),
+            src.display()
+        );
         let output = std::process::Command::new("python3")
             .arg("-c")
             .arg(RUNTIME_READY_CHECK)
-            .env("PYTHONPATH", &src)
+            .env("PYTHONPATH", pythonpath)
             .output()
             .expect("python3 must start");
         assert!(

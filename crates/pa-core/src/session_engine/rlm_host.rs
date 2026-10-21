@@ -1305,6 +1305,7 @@ mod tests {
             response,
             json!({
                 "rlm_child_id": "sub-1",
+                "session_id": "session-1",
                 "name": "worker",
                 "session_dir": "/tmp/sub-1",
                 "model": "p/m",
