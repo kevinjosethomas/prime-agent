@@ -545,7 +545,11 @@ async fn rlm_create_session_spawns_a_prompted_depth_zero_session() {
     assert_eq!(sessions[0]["runtimeKind"], "top-level");
     // The created session is tracked like a child, flagged top-level.
     let roster = children.list_subagents().await.expect("roster");
-    assert_eq!(roster.len(), 1, "the started session is registered: {roster:?}");
+    assert_eq!(
+        roster.len(),
+        1,
+        "the started session is registered: {roster:?}"
+    );
     assert!(roster[0].top_level);
     assert_eq!(roster[0].status, "running");
 

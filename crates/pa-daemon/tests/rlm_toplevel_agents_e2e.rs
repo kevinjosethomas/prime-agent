@@ -365,7 +365,7 @@ fn top_level_sessions_are_first_class_agents() {
     let Some(kernel_python) = kernel_python() else {
         return;
     };
-    let dir = tempfile::TempDir::new().expect("temp dir").into_path();
+    let dir = tempfile::TempDir::new().expect("temp dir").keep();
     let agent_dir = &dir.join("agent");
     std::fs::create_dir_all(&agent_dir).expect("agent dir");
     let socket = &dir.join("supervisor.sock");
@@ -464,10 +464,10 @@ fn top_level_sessions_are_first_class_agents() {
 
     // (6) delete stops the worker; the session file stays resumable.
     run_turn(&mut client, &parent_id, "delete the worker", "t5");
-    let stopped: String =
+    let stopped: usize =
         serde_json::from_str(&await_receipt(&receipt("stop.json"))).expect("stop receipt");
     assert_no_error(&error("stop"));
-    assert_eq!(stopped, "0", "the registry empties after the delete");
+    assert_eq!(stopped, 0, "the registry empties after the delete");
     let worker_file = dir
         .join("sessions")
         .join(format!("{worker_session_id}.jsonl"));
@@ -547,10 +547,10 @@ fn top_level_sessions_are_first_class_agents() {
         "the restarted starter relists its started session from the ledger: {listed3}"
     );
     run_turn(&mut client, &parent_id, "delete the survivor", "t9");
-    let stopped: String =
+    let stopped: usize =
         serde_json::from_str(&await_receipt(&receipt("stop3.json"))).expect("stop3 receipt");
     assert_no_error(&error("stop3"));
-    assert_eq!(stopped, "0", "the registry empties after the delete");
+    assert_eq!(stopped, 0, "the registry empties after the delete");
     let worker2_file = dir
         .join("sessions")
         .join(format!("{worker2_session_id}.jsonl"));

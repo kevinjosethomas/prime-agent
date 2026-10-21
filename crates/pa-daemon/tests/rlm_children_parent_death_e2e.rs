@@ -599,9 +599,7 @@ fn sigkill_keeps_a_created_root_session_running() {
         (response["success"] == true
             && response["data"]["children"]
                 .as_array()
-                .is_some_and(|rows| {
-                    rows.len() == 1 && rows[0]["sessionName"] == json!("rootkid")
-                }))
+                .is_some_and(|rows| rows.len() == 1 && rows[0]["sessionName"] == json!("rootkid")))
         .then_some(())
     });
 

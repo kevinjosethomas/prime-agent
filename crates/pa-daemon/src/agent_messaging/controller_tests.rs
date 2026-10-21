@@ -261,6 +261,7 @@ async fn a_started_top_level_session_sees_its_starter_as_parent() {
     assert_eq!(
         labeled,
         vec![
+            (Some("ttt777".to_string()), None),
             (
                 Some("aaa111".to_string()),
                 Some(AgentFamilyRelationship::Parent)

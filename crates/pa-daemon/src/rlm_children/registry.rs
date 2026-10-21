@@ -244,10 +244,11 @@ impl SupervisorChildSessionsInner {
         // notice is owed to a closing starter) and the registry drops
         // them; the sessions themselves keep running.
         if !top_level_records.is_empty() {
-            self.children
-                .lock()
-                .await
-                .retain(|held| !top_level_records.iter().any(|record| Arc::ptr_eq(held, record)));
+            self.children.lock().await.retain(|held| {
+                !top_level_records
+                    .iter()
+                    .any(|record| Arc::ptr_eq(held, record))
+            });
             for record in &top_level_records {
                 record.lock().await.closed_by_parent = true;
             }
