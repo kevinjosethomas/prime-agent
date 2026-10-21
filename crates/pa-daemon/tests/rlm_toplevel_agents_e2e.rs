@@ -390,7 +390,7 @@ fn top_level_sessions_are_first_class_agents() {
         list_cell(&receipt("list2.json"), &error("list2")),
     ];
     let parent_script = write_parent_script(&dir, &cells);
-    let mut daemon = spawn_supervisor(socket, agent_dir, kernel_python);
+    let mut daemon = spawn_supervisor(socket, agent_dir, &kernel_python);
     wait_socket_ready(socket);
     let (mut client, hello) = Client::connect(socket);
     assert_eq!(hello["type"], "daemon_hello");
@@ -517,7 +517,7 @@ fn top_level_sessions_are_first_class_agents() {
 
     // (8) registry recovery after a daemon restart: the resumed starter
     // relists its started session from the ledger, then deletes it.
-    restart_daemon(&mut daemon, socket, agent_dir, kernel_python);
+    restart_daemon(&mut daemon, socket, agent_dir, &kernel_python);
     let (mut client, hello) = Client::connect(socket);
     assert_eq!(hello["type"], "daemon_hello");
     let third_cells = [
