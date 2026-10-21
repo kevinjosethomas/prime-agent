@@ -1484,6 +1484,7 @@ mod tests {
                 "duration_ms": 1500,
                 "replied_since_task": false,
                 "progress_note": "halfway",
+                "note_at": "2026-10-20T23:45:00.000Z",
                 "label": "child agent",
                 "last_activity_at": 1000,
             })

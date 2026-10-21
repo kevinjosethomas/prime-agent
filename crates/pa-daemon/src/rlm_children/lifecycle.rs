@@ -853,6 +853,19 @@ pub(super) fn last_assistant_text_from_file(session_file: &str) -> Option<String
     None
 }
 
+/// The child streams, runs subagents of its own, or holds queued rows.
+fn summary_is_busy(state: &Value) -> bool {
+    let flag = |name: &str| state.get(name).and_then(Value::as_bool).unwrap_or(false);
+    flag("isStreaming")
+        || flag("hasRunningSubagents")
+        || state
+            .get("sessionActions")
+            .and_then(|actions| actions.get("queuedCount"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            > 0
+}
+
 #[cfg(test)]
 mod exit_capture_tests {
     use super::*;
@@ -924,17 +937,4 @@ mod exit_capture_tests {
         let _ = std::fs::remove_file(&file);
         let _ = std::fs::remove_file(&bare);
     }
-}
-
-/// The child streams, runs subagents of its own, or holds queued rows.
-fn summary_is_busy(state: &Value) -> bool {
-    let flag = |name: &str| state.get(name).and_then(Value::as_bool).unwrap_or(false);
-    flag("isStreaming")
-        || flag("hasRunningSubagents")
-        || state
-            .get("sessionActions")
-            .and_then(|actions| actions.get("queuedCount"))
-            .and_then(Value::as_u64)
-            .unwrap_or(0)
-            > 0
 }
