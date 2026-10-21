@@ -16,7 +16,7 @@ pub const DAEMON_PROTOCOL_VERSION: u64 = 7;
 /// Revision 32 adds the `response_timing` server capability and the
 /// `responseTiming` summary block on `get_state`.
 pub const DAEMON_SCHEMA_REVISION: u64 = 32;
-pub const DAEMON_SCHEMA_ID: &str = "protocol-7-schema-32-8c0215bdb10b";
+pub const DAEMON_SCHEMA_ID: &str = "protocol-7-schema-32-0add452274ed";
 
 pub type DaemonClientId = String;
 pub type DaemonCommandId = String;
@@ -184,7 +184,7 @@ mod tests {
         assert_eq!(DAEMON_PROTOCOL_NAME, "prime-agent.daemon");
         assert_eq!(DAEMON_PROTOCOL_VERSION, 7);
         assert_eq!(DAEMON_SCHEMA_REVISION, 32);
-        assert_eq!(DAEMON_SCHEMA_ID, "protocol-7-schema-32-8c0215bdb10b");
+        assert_eq!(DAEMON_SCHEMA_ID, "protocol-7-schema-32-0add452274ed");
         assert_eq!(DAEMON_UPDATE_RESTART_FORMAT_VERSION, 1);
     }
 }

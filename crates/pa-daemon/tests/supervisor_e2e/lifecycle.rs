@@ -27,7 +27,7 @@ fn supervisor_end_to_end_scripted_session_lifecycle() {
         hello["schemaId"]
             .as_str()
             .map(std::string::ToString::to_string),
-        Some("protocol-7-schema-32-8c0215bdb10b".to_string())
+        Some("protocol-7-schema-32-0add452274ed".to_string())
     );
     assert!(hello["supervisorOwnerToken"].is_string());
     assert!(hello["supervisorProcessStartId"]
