@@ -515,6 +515,8 @@ async fn create_session_without_a_model_uses_the_subagent_default_setting() {
     sessions.set_identity(ParentIdentity {
         model: Some("mock/mock-1".to_string()),
         cwd: Some(agent_dir.path().to_string_lossy().to_string()),
+        session_id: Some("parent-file".to_string()),
+        session_file: Some("parent-file.jsonl".to_string()),
         ..ParentIdentity::with_default_depth()
     });
     let spawned = tokio::spawn(sessions.create_session(RlmCreateSessionRequest {

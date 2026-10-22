@@ -6,7 +6,7 @@ import base64
 import io
 from pathlib import Path
 
-# Keep in sync with ATTACHMENT_DISPLAY_MIME in src/core/kernel/index.ts.
+# Keep in sync with ATTACHMENT_DISPLAY_MIME in crates/pa-core/src/kernel/shared.rs.
 _ATTACHMENT_DISPLAY_MIME = "application/vnd.prime-agent.attachment+json"
 
 # Keep emitted attachments small enough that daemon clients can render and replay

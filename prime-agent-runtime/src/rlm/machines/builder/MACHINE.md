@@ -20,9 +20,9 @@ the simplest multi-child shape the factory runs.
 
 ## How to run it
 
-    result = await rlm.factory.run("builder")
+    result = await factory.run("builder")
 
-Then watch progress with `await rlm.factory.status(result["run_id"])`. The
+Then watch progress with `await factory.status(result["run_id"])`. The
 collector's `merged` text is the latest settle answer of the `collect`
 state.
 

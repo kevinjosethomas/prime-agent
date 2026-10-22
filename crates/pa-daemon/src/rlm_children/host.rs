@@ -86,8 +86,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
     fn spawn(&self, request: RlmSpawnRequest) -> RlmHostFuture<RlmSpawnHandle> {
         let this = Arc::clone(&self.inner);
         Box::pin(async move {
-            this.note_parent_activity();
-            let activity_generation = *this.parent_activity.subscribe().borrow();
+            let activity_generation = this.note_parent_activity();
             let identity = this.identity.lock().expect("identity lock").clone();
             if identity.rlm_depth >= identity.rlm_max_depth {
                 bail!(rlm_depth_limit_error(
@@ -331,8 +330,16 @@ impl RlmSubagentHost for SupervisorChildSessions {
             if identity.rlm_depth != 0 {
                 bail!("top-level sessions can only be created from a depth-0 session");
             }
+            // The admission metadata below hard-fails without the file;
+            // refuse before the worker launch instead.
+            anyhow::ensure!(
+                identity.session_file.is_some(),
+                "top-level admission is missing starterSessionFile"
+            );
             // The registry key the starter tracks the created session by.
             let child_id = format!("sub-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+            // No explicit model resolves through the subagent default, like
+            // a child spawn (the settings contract for started sessions).
             let model = resolve_child_model_allowlisted(
                 &this,
                 request.model.as_deref(),
@@ -380,8 +387,8 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     &sessions_dir,
                     Some(runtime_metadata),
                     &identity,
-                    // The TS minimal map for a depth-0 root (the
-                    // env-key heuristic is stated in the PR).
+                    // The TS minimal map for a depth-0 root: PATH, the
+                    // provider's API-key env var and PRIME_TEAM_ID only.
                     Some(create_session_launch_env(&model)),
                 )
                 .await?;
@@ -474,7 +481,8 @@ impl RlmSubagentHost for SupervisorChildSessions {
     fn delete_subagent(&self, target: String) -> RlmHostFuture<RlmDeleteSubagentResult> {
         let this = Arc::clone(&self.inner);
         Box::pin(async move {
-            this.note_parent_activity();
+            // A delete never releases parked prompts: the child being
+            // removed owes no kickoff, and a peer's is not this call's.
             if !this.replay_retired_usage(Some(&target)).await {
                 bail!("RLM child usage remains owed after retirement; retry deletion");
             }
@@ -641,11 +649,6 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     }
                 };
                 records.push(record);
-            }
-            // A blocking collect holds the parent's turn open, so it counts as
-            // the turn boundary the parked task prompts wait for.
-            if timeout_ms > 0 {
-                this.turn_done.send_modify(|generation| *generation += 1);
             }
             let deadline = Instant::now() + Duration::from_millis(timeout_ms);
             let mut results = Vec::with_capacity(records.len());

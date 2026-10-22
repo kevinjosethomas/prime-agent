@@ -77,7 +77,13 @@ class Agent:
         else:
             timeout_ms = min(int(timeout * 1000), _COLLECT_MAX_TIMEOUT_MS)
         while True:
-            row = (await _collect_children([child_id], timeout_ms))[0]
+            rows = await _collect_children([child_id], timeout_ms)
+            row = next(iter(rows), None)
+            if row is None:
+                raise RuntimeError(
+                    f"agents.wait(): the daemon lost track of {child_id};"
+                    " it may have been deleted"
+                )
             if row.settled or timeout is not None:
                 return _result_from_row(row)
 
@@ -158,10 +164,10 @@ async def spawn(
     if name is None:
         raise TypeError("a child needs a name: agents.spawn(prompt, name='worker')")
     payload = await host_request("rlm.run", {"prompt": prompt, "kwargs": kwargs})
-    _require_fields(payload, ("rlm_child_id", "name", "session_dir", "model"), "rlm.spawn")
+    _require_fields(payload, ("rlm_child_id", "name", "session_dir", "model"), "agents.spawn()")
     session_id = payload.get("session_id")
     if session_id is not None and not isinstance(session_id, str):
-        raise RuntimeError("rlm.spawn returned an invalid session_id")
+        raise RuntimeError("agents.spawn() returned an invalid session_id")
     return Agent(
         name=payload["name"],
         session_id=session_id,
@@ -311,10 +317,10 @@ async def _spawn_child(
     if thinking is not None:
         kwargs["thinking"] = thinking
     payload = await host_request("rlm.run", {"prompt": prompt, "kwargs": kwargs})
-    _require_fields(payload, ("rlm_child_id", "name", "session_dir", "model"), "rlm.spawn")
+    _require_fields(payload, ("rlm_child_id", "name", "session_dir", "model"), "agents.spawn()")
     session_id = payload.get("session_id")
     if session_id is not None and not isinstance(session_id, str):
-        raise RuntimeError("rlm.spawn returned an invalid session_id")
+        raise RuntimeError("agents.spawn() returned an invalid session_id")
     return _SpawnRow(
         rlm_child_id=payload["rlm_child_id"],
         name=payload["name"],

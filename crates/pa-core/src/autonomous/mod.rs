@@ -455,7 +455,7 @@ pub fn create_autonomous_subagent_keep_alive_text(state: &AutonomousRuntimeState
     let minutes = (state.subagent_keep_alive_ms / 60_000).max(1);
     let plural = if minutes == 1 { "" } else { "s" };
     format!(
-        "[autonomous-continuation: subagent-keep-alive]\n\nSubagents have been running for at least {minutes} minute{plural} without a reply or exit being delivered. Check their status (for example agent_observe, rlm.list_subagents, or process inspection) and cancel or unblock any that are hung; then continue working."
+        "[autonomous-continuation: subagent-keep-alive]\n\nSubagents have been running for at least {minutes} minute{plural} without a reply or exit being delivered. Check their status (for example agents.list(), or process inspection) and cancel or unblock any that are hung; then continue working."
     )
 }
 

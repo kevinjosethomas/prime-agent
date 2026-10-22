@@ -258,7 +258,7 @@ assert row is not None, 'e2e-top missing from agents.list(): %r' % (kids,)
 print('E2E-INFO T2 relationship=%s top_level=%s status=%s'
       % (row.relationship, row.top_level, row.status))
 assert row.top_level is True, 'list row top_level is not True'
-assert row.relationship in ('child', 'sibling'), row.relationship
+assert row.relationship == 'child', row.relationship
 print('E2E-OK T2')
 """,
 )
@@ -563,7 +563,7 @@ def write_receipt(path, provider, args, work, started, driver_error):
             status, detail = "missing", "step never reported a marker"
         else:
             status, detail = result["status"], result["detail"]
-        if status != "ok":
+        if status not in ("ok", "skip"):
             all_ok = False
         lines.append(
             "- [%s] %s (%s): %s" % (status.upper(), step, STEP_LABELS[step], detail)

@@ -236,7 +236,7 @@ fn create_cell(receipt: &Path, error_receipt: &Path, name: &str) -> String {
 
 fn list_cell(receipt: &Path, error_receipt: &Path) -> String {
     format!(
-        "import json, traceback\ntry:\n    from rlm import agents\n    rows = await agents.list()\n    open({receipt:?}, \"w\").write(json.dumps([[r.name, r.relationship, r.top_level, r.child_id is not None] for r in rows]))\nexcept Exception:\n    open({error:?}, \"w\").write(traceback.format_exc())\n    raise",
+        "import json, traceback\ntry:\n    from rlm import agents\n    rows = await agents.list()\n    open({receipt:?}, \"w\").write(json.dumps([[r.name, r.relationship, r.top_level, r.child_id is not None, r.status] for r in rows]))\nexcept Exception:\n    open({error:?}, \"w\").write(traceback.format_exc())\n    raise",
         receipt = receipt.display().to_string(),
         error = error_receipt.display().to_string(),
     )
@@ -435,7 +435,7 @@ fn top_level_sessions_are_first_class_agents() {
     assert_no_error(&error("list"));
     assert_eq!(
         listed,
-        json!([["w1", "child", true, true]]),
+        json!([["w1", "child", true, true, "running"]]),
         "the started session lists as a top-level child: {listed}"
     );
 
@@ -496,7 +496,7 @@ fn top_level_sessions_are_first_class_agents() {
         serde_json::from_str(&await_receipt(&receipt("list2.json"))).expect("list2 receipt");
     assert_eq!(
         listed2,
-        json!([["w2", "child", true, true]]),
+        json!([["w2", "child", true, true, "running"]]),
         "the second started session lists the same way: {listed2}"
     );
     client.send_command(
@@ -544,8 +544,8 @@ fn top_level_sessions_are_first_class_agents() {
     assert_no_error(&error("list3"));
     assert_eq!(
         listed3,
-        json!([["w2", "child", true, true]]),
-        "the restarted starter relists its started session from the ledger: {listed3}"
+        json!([["w2", "child", true, true, "running"]]),
+        "the restarted starter relists its live session as running: {listed3}"
     );
     run_turn(&mut client, &parent_id, "delete the survivor", "t9");
     let stopped: usize =

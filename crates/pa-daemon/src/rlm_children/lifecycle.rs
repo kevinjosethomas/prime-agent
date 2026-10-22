@@ -420,6 +420,8 @@ impl SupervisorChildSessionsInner {
         let Ok(state) = self.child_state(&active_session_id).await else {
             return;
         };
+        // A summary without a note keeps the last accepted one: the note
+        // lives until the run's boundary clears it (TS parity).
         if let Some(note) = state.get("progressNote").and_then(Value::as_str) {
             let mut record = record.lock().await;
             record.progress_note = Some(note.to_string());

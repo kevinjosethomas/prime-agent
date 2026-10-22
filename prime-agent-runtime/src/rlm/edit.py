@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-# Keep in sync with DIFF_DISPLAY_MIME in src/core/kernel/index.ts.
+# Keep in sync with DIFF_DISPLAY_MIME in crates/pa-core/src/kernel/shared.rs.
 _DIFF_DISPLAY_MIME = "application/vnd.prime-agent.diff+json"
 
 

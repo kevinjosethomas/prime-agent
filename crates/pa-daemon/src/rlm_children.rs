@@ -905,9 +905,15 @@ impl SupervisorChildSessionsInner {
     }
 
     /// The parent came back to the subagent host mid-turn: parked task
-    /// prompts release instead of waiting out the turn boundary.
-    pub fn note_parent_activity(&self) {
-        self.parent_activity.send_modify(|value| *value += 1);
+    /// prompts release instead of waiting out the turn boundary. Answers
+    /// the generation this bump wrote, so the caller's capture is atomic.
+    pub fn note_parent_activity(&self) -> u64 {
+        let mut generation = 0;
+        self.parent_activity.send_modify(|value| {
+            *value += 1;
+            generation = *value;
+        });
+        generation
     }
 
     /// Wait for the parent turn that spawned a task to complete (generation

@@ -118,7 +118,6 @@ async fn spawn_fake_supervisor(
                             // test's collect has scored its misread; the
                             // retry passes through.
                             if prompt_parks.fetch_add(1, Ordering::SeqCst) == 0 {
-                                PROMPT_FAIL_POLL.notify_one();
                                 PROMPT_FAIL_LANDED.notified().await;
                             }
                             response_failure(
@@ -428,23 +427,14 @@ async fn the_roster_row_carries_the_child_note() {
 }
 
 /// A spawn and a blocking collect in one cell: the collect's parent-activity
-/// bump releases the task prompt, so the boundary wait never applies.
+/// bump releases the task prompt, so the boundary wait never applies. The
+/// snapshot path is covered by the roster-read test.
 #[tokio::test]
 async fn a_blocking_collect_releases_the_parked_task_prompt() {
     let (follow_up_tx, _follow_up_rx) = mpsc::unbounded_channel();
     let (sessions, _kill_rx) =
         sessions_with_fake_supervisor(follow_up_tx, 0, FakeKill::Success, FakeChild::Healthy).await;
     let handle = spawn_child(&sessions).await;
-    let snapshot = sessions
-        .collect(vec![handle.rlm_child_id.clone()], 0)
-        .await
-        .expect("snapshot collect");
-    assert_eq!(snapshot[0].status, "running");
-    assert_eq!(
-        *sessions.inner.turn_done.borrow(),
-        0,
-        "the snapshot collect keeps the turn boundary untouched"
-    );
     let results = tokio::time::timeout(
         Duration::from_secs(10),
         sessions.collect(vec![handle.rlm_child_id.clone()], 30_000),
@@ -457,6 +447,69 @@ async fn a_blocking_collect_releases_the_parked_task_prompt() {
         results[0].answer_text.as_deref(),
         Some("the child final answer")
     );
+    assert_eq!(
+        *sessions.inner.turn_done.borrow(),
+        0,
+        "the blocking collect keeps the turn boundary untouched"
+    );
+}
+
+/// A fan-out cell spawns several children: every spawn after the first is
+/// parent activity, so the earlier children's parked prompts release
+/// mid-cell instead of waiting for the turn boundary.
+#[tokio::test]
+async fn a_later_spawn_releases_the_earlier_parked_task_prompt() {
+    let (follow_up_tx, _follow_up_rx) = mpsc::unbounded_channel();
+    let (sessions, _kill_rx) =
+        sessions_with_fake_supervisor(follow_up_tx, 0, FakeKill::Success, FakeChild::Healthy).await;
+    let settled = sessions.settle_notified();
+    let first = spawn_child(&sessions).await;
+    let second = sessions
+        .spawn(RlmSpawnRequest {
+            prompt: "f20 second task".to_string(),
+            name: Some("f20-second".to_string()),
+            model: None,
+            thinking: None,
+            spawned_by_request_id: None,
+        })
+        .await
+        .expect("second spawn");
+    tokio::time::timeout(Duration::from_secs(10), settled)
+        .await
+        .expect("the second spawn releases the first prompt without the boundary");
+    let roster = sessions.list_subagents().await.expect("child roster");
+    assert_eq!(roster.len(), 2);
+    assert_eq!(roster[0].rlm_child_id, first.rlm_child_id);
+    assert_eq!(roster[1].rlm_child_id, second.rlm_child_id);
+}
+
+/// A spawn and a delete in one cell: the delete never releases the parked
+/// prompt (the removed child owes no kickoff), so the release skips the
+/// closed record and the delete's own cancelled notice is the only row.
+#[tokio::test]
+async fn a_same_cell_delete_does_not_release_the_parked_task_prompt() {
+    let (follow_up_tx, mut follow_up_rx) = mpsc::unbounded_channel();
+    let (sessions, _kill_rx) =
+        sessions_with_fake_supervisor(follow_up_tx, 0, FakeKill::Success, FakeChild::Healthy).await;
+    let handle = spawn_child(&sessions).await;
+    sessions
+        .delete_subagent(handle.rlm_child_id.clone())
+        .await
+        .expect("delete");
+    let follow_up = tokio::time::timeout(Duration::from_secs(10), follow_up_rx.recv())
+        .await
+        .expect("the delete delivers its cancelled notice")
+        .expect("follow_up channel open");
+    let custom = &follow_up["customMessage"];
+    assert_eq!(custom["customType"], "rlm_child_terminal_notice");
+    assert_eq!(custom["details"]["kind"], "cancelled");
+    assert_eq!(
+        custom["details"]["childId"],
+        json!(handle.rlm_child_id)
+    );
+    sessions.notify_turn_done();
+    let extra = tokio::time::timeout(Duration::from_millis(300), follow_up_rx.recv()).await;
+    assert!(extra.is_err(), "the released prompt never fires: no second notice");
 }
 
 /// A mid-turn roster read releases the parked task prompt: a parent that
@@ -677,10 +730,9 @@ async fn an_unreachable_child_delivers_the_failure_notice_instead_of_no_reply() 
 static GIVE_UP_POLL: tokio::sync::Notify = tokio::sync::Notify::const_new();
 static VERDICT_LANDED: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
-/// Hand-off into the parked prompt failure: the fake parks the released
-/// prompt command, the test scores its collect misread, the fake lands
-/// the failure verdict. Only the failure-window test uses these.
-static PROMPT_FAIL_POLL: tokio::sync::Notify = tokio::sync::Notify::const_new();
+/// Hand-off into the parked prompt failure: the test scores its collect
+/// misread, then this release lands the failure verdict. Only the
+/// failure-window test uses it.
 static PROMPT_FAIL_LANDED: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
 /// A reader's refresh can settle the child between the watcher's settle
@@ -967,9 +1019,9 @@ async fn close_children_stops_the_child_and_clears_the_roster() {
 }
 
 /// A started top-level session outlives its starter: `close_children`
-/// never stops it and the registry keeps its row.
+/// never stops it, only unregistering the starter's registry row.
 #[tokio::test]
-async fn close_children_skips_a_top_level_session() {
+async fn close_children_unregisters_a_top_level_session() {
     let (follow_up_tx, _follow_up_rx) = mpsc::unbounded_channel();
     let (sessions, mut kill_rx) =
         sessions_with_fake_supervisor(follow_up_tx, 10_000, FakeKill::Success, FakeChild::Healthy)

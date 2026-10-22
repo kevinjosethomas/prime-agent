@@ -42,24 +42,6 @@ pub fn catalog_models(agent_dir: &Path) -> Vec<RlmModelInfo> {
         .collect()
 }
 
-/// Resolve the child model reference, then enforce the daemon
-/// `allowedModels` allowlist on the resolved selector (inherited parent
-/// model included): outside the allowlist fails loudly, never a fallback.
-///
-/// # Errors
-/// Returns an error when the reference cannot be resolved or the selector is outside the allowlist.
-pub fn resolve_child_model(
-    agent_dir: &Path,
-    reference: Option<&str>,
-    parent_model: Option<&str>,
-    target: &str,
-    allowlist: &crate::model_allowlist::DaemonAllowlist,
-) -> Result<String> {
-    let model = resolve_child_model_unchecked(agent_dir, reference, parent_model, target)?;
-    crate::model_allowlist::assert_allowed(allowlist, &model)?;
-    Ok(model)
-}
-
 /// The resolution before the allowlist gate: `None` inherits the parent model; a reference resolves
 /// parent equality first, then an exact catalog selector, then a unique short-form match.
 /// Public for the daemonless print host: print sessions do not enforce
@@ -236,7 +218,6 @@ pub fn cap_text(text: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model_allowlist::DaemonAllowlist;
     use serde_json::json;
 
     /// A models.json custom provider, like the pa-core registry tests.
@@ -301,51 +282,40 @@ mod tests {
     fn resolves_parent_exact_and_short_form_references() {
         let dir = tempfile::TempDir::new().unwrap();
         write_catalog(dir.path());
-        let resolved = resolve_child_model(
+        let resolved = resolve_child_model_unchecked(
             dir.path(),
             None,
             Some("test-provider/glm-5.3"),
             "subagent",
-            &DaemonAllowlist::Unrestricted,
         )
         .unwrap();
         assert_eq!(resolved, "test-provider/glm-5.3");
         // Parent equality short-circuits even a catalog refresh miss.
-        let resolved = resolve_child_model(
+        let resolved = resolve_child_model_unchecked(
             dir.path(),
             Some("Test-Provider/GLM-5.3"),
             Some("test-provider/glm-5.3"),
             "subagent",
-            &DaemonAllowlist::Unrestricted,
         )
         .unwrap();
         assert_eq!(resolved, "test-provider/glm-5.3");
-        let resolved = resolve_child_model(
+        let resolved = resolve_child_model_unchecked(
             dir.path(),
             Some("test-provider/glm-5.3-turbo"),
             Some("test-provider/glm-5.3"),
             "subagent",
-            &DaemonAllowlist::Unrestricted,
         )
         .unwrap();
         assert_eq!(resolved, "test-provider/glm-5.3-turbo");
-        let resolved = resolve_child_model(
+        let resolved = resolve_child_model_unchecked(
             dir.path(),
             Some("glm-5.3-turbo"),
             Some("test-provider/glm-5.3"),
             "subagent",
-            &DaemonAllowlist::Unrestricted,
         )
         .unwrap();
         assert_eq!(resolved, "test-provider/glm-5.3-turbo");
-        let error = resolve_child_model(
-            dir.path(),
-            None,
-            None,
-            "subagent",
-            &DaemonAllowlist::Unrestricted,
-        )
-        .unwrap_err();
+        let error = resolve_child_model_unchecked(dir.path(), None, None, "subagent").unwrap_err();
         assert_eq!(
             error.to_string(),
             "No model selected. Use /model to pick one."
@@ -359,13 +329,16 @@ mod tests {
         let allow =
             crate::model_allowlist::DaemonAllowlist::Allowed(vec!["prime-inference/*".to_string()]);
         // An explicit reference outside the allowlist fails with the typed refusal.
-        let error = resolve_child_model(
+        let error = resolve_child_model_unchecked(
             dir.path(),
             Some("test-provider/glm-5.3"),
             None,
             "subagent",
-            &allow,
         )
+        .and_then(|model| {
+            crate::model_allowlist::assert_allowed(&allow, &model)?;
+            Ok(model)
+        })
         .unwrap_err();
         let refusal = error
             .downcast_ref::<pa_core::models::ModelAllowlistRefusal>()
@@ -379,13 +352,16 @@ mod tests {
         );
         // An inherited parent model outside the allowlist refuses too:
         // inheritance is a resolution, not an exemption.
-        let error = resolve_child_model(
+        let error = resolve_child_model_unchecked(
             dir.path(),
             None,
             Some("test-provider/glm-5.3"),
             "subagent",
-            &allow,
         )
+        .and_then(|model| {
+            crate::model_allowlist::assert_allowed(&allow, &model)?;
+            Ok(model)
+        })
         .unwrap_err();
         assert!(
             error
@@ -393,22 +369,18 @@ mod tests {
                 .is_some(),
             "{error}"
         );
-        let resolved = resolve_child_model(
+        let allowed =
+            crate::model_allowlist::DaemonAllowlist::Allowed(vec!["test-provider/*".to_string()]);
+        let resolved = resolve_child_model_unchecked(
             dir.path(),
             Some("test-provider/glm-5.3"),
             None,
             "subagent",
-            &crate::model_allowlist::DaemonAllowlist::Allowed(vec!["test-provider/*".to_string()]),
         )
-        .unwrap();
-        assert_eq!(resolved, "test-provider/glm-5.3");
-        let resolved = resolve_child_model(
-            dir.path(),
-            Some("test-provider/glm-5.3"),
-            None,
-            "subagent",
-            &DaemonAllowlist::Unrestricted,
-        )
+        .and_then(|model| {
+            crate::model_allowlist::assert_allowed(&allowed, &model)?;
+            Ok(model)
+        })
         .unwrap();
         assert_eq!(resolved, "test-provider/glm-5.3");
     }
@@ -420,12 +392,11 @@ mod tests {
         // TS parity (4649 regression suite): a prefix reference lists
         // close matches, a matching-nothing reference does not (the
         // reference prefixes the test provider, never real defaults).
-        let error = resolve_child_model(
+        let error = resolve_child_model_unchecked(
             dir.path(),
             Some("test-provi"),
             Some("test-provider/glm-5.3"),
             "subagent",
-            &DaemonAllowlist::Unrestricted,
         )
         .unwrap_err();
         let message = error.to_string();
@@ -440,12 +411,11 @@ mod tests {
             message.contains("close matches: \"test-provider/glm-5.3\""),
             "{message}"
         );
-        let error = resolve_child_model(
+        let error = resolve_child_model_unchecked(
             dir.path(),
             Some("zzz"),
             Some("test-provider/glm-5.3"),
             "subagent",
-            &DaemonAllowlist::Unrestricted,
         )
         .unwrap_err();
         assert!(!error.to_string().contains("close matches:"), "{error}");
@@ -526,21 +496,19 @@ mod tests {
         assert!(catalog_models(dir.path())
             .iter()
             .any(|model| model.id == "internal/glm-5.3-fast"));
-        let resolved = resolve_child_model(
+        let resolved = resolve_child_model_unchecked(
             dir.path(),
             Some("prime-inference/internal/glm-5.3-fast"),
             Some("prime-inference/z-ai/glm-5.3"),
             "subagent",
-            &DaemonAllowlist::Unrestricted,
         )
         .unwrap();
         assert_eq!(resolved, "prime-inference/internal/glm-5.3-fast");
-        let resolved = resolve_child_model(
+        let resolved = resolve_child_model_unchecked(
             dir.path(),
             Some("internal/glm-5.3-fast"),
             Some("prime-inference/z-ai/glm-5.3"),
             "subagent",
-            &DaemonAllowlist::Unrestricted,
         )
         .unwrap();
         assert_eq!(resolved, "prime-inference/internal/glm-5.3-fast");
@@ -622,21 +590,19 @@ mod tests {
             .find(|model| model.selector() == selector)
             .expect("the fetched entry lists for find_models");
         assert_eq!(probe.name, "GPT-6 Probe");
-        let resolved = resolve_child_model(
+        let resolved = resolve_child_model_unchecked(
             dir.path(),
             Some(&selector),
             Some("prime-inference/z-ai/glm-5.3"),
             "subagent",
-            &DaemonAllowlist::Unrestricted,
         )
         .unwrap();
         assert_eq!(resolved, selector);
-        let resolved = resolve_child_model(
+        let resolved = resolve_child_model_unchecked(
             dir.path(),
             Some(PROBE_ID),
             Some("prime-inference/z-ai/glm-5.3"),
             "subagent",
-            &DaemonAllowlist::Unrestricted,
         )
         .unwrap();
         assert_eq!(resolved, selector);

@@ -533,7 +533,11 @@ fn ledger_child_records(
                 },
                 |display| display.created_at,
             ),
-            settled_status: Some(
+            // A reseeded nested child cannot run again (its worker is
+            // gone with the run): the display file's verdict settles it.
+            // A top-level session is resident and may still be live, so
+            // the row stays unsettled and reads tell the truth.
+            settled_status: (!edge.top_level).then_some(
                 if display
                     .as_ref()
                     .is_some_and(|display| display.status == "running")
@@ -543,7 +547,7 @@ fn ledger_child_records(
                     "done"
                 },
             ),
-            settled: true,
+            settled: !edge.top_level,
             answer_preview: None,
             answer_text: None,
             answer_captured: false,

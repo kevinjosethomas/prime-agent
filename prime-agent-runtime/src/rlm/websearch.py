@@ -7,11 +7,6 @@ import json
 import os
 from pathlib import Path
 
-# Imported lazily so only a kernel that actually searches pays httpx's import cost;
-# the find_spec guard keeps the familiar missing-dependency error when it is absent.
-if importlib.util.find_spec("httpx") is None:
-    raise ModuleNotFoundError("No module named 'httpx'")
-
 _MAX_OUTPUT = 8192
 _DEFAULT_TIMEOUT = 45
 _DEFAULT_NUM_RESULTS = 5
@@ -112,6 +107,8 @@ def _format_serper_results(data: dict, query: str, num_results: int) -> str:
 
 
 async def _fetch_serper(query: str, api_key: str, timeout: int, num_results: int) -> str:
+    if importlib.util.find_spec("httpx") is None:
+        raise ModuleNotFoundError("No module named 'httpx'")
     import httpx
 
     try:
