@@ -1096,6 +1096,113 @@ async fn frame_cap_tears_down_the_transport_and_fails_pending_as_uncertain() {
     client.close();
 }
 
+#[tokio::test]
+async fn frame_cap_fails_only_the_request_the_frame_answers() {
+    // The oversized response is id-first and split across fills: its head
+    // trips the cap before the newline, the reader skips to the frame's end,
+    // fails the owning request, and keeps the connection for the next one.
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("d.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let (reader, mut writer) = stream.into_split();
+        let mut reader = BufReader::new(reader);
+        let hello = json!({
+            "type": "daemon_hello",
+            "protocol": { "name": "prime-agent.daemon", "version": 7 },
+            "clientId": "srv",
+            "serverCapabilities": [],
+        });
+        writer
+            .write_all(format!("{hello}\n").as_bytes())
+            .await
+            .unwrap();
+        let mut seen = String::new();
+        loop {
+            seen.clear();
+            match reader.read_line(&mut seen).await {
+                Ok(0) | Err(_) => return,
+                Ok(_) => {}
+            }
+            let envelope: Value = serde_json::from_str(seen.trim()).unwrap();
+            let id = envelope["id"].as_str().unwrap_or_default();
+            let command_type = envelope["command"]["type"].as_str().unwrap_or_default();
+            if command_type == "get_session_tree" {
+                // The daemon's typed response line writes the id first.
+                let head = format!(
+                    "{{\"id\":\"{id}\",\"type\":\"response\",\"command\":\"get_session_tree\",\"success\":true,\"data\":{{\"pad\":\""
+                );
+                writer.write_all(head.as_bytes()).await.unwrap();
+                writer
+                    .write_all("x".repeat(600).as_bytes())
+                    .await
+                    .unwrap();
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                let mut tail = "x".repeat(100);
+                tail.push('\n');
+                writer.write_all(tail.as_bytes()).await.unwrap();
+                continue;
+            }
+            let response = json!({
+                "type": "response",
+                "id": id,
+                "command": command_type,
+                "success": true,
+                "data": { "ok": true },
+            });
+            writer
+                .write_all(format!("{response}\n").as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+
+    let (client, _events) = DaemonClient::connect_with_options(
+        &socket,
+        DaemonClientOptions {
+            max_frame_bytes: Some(512),
+            ..DaemonClientOptions::default()
+        },
+    )
+    .await
+    .unwrap();
+    let error = client
+        .request_with_timeout(
+            DaemonCommand::GetSessionTree {
+                id: None,
+                active_session_id: "s1".to_string(),
+                rest: Map::default(),
+            },
+            30_000,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("exceeded the frame limit"),
+        "unexpected error: {error}"
+    );
+    assert!(!is_command_result_uncertain(&error));
+    assert!(!is_command_not_sent(&error));
+    // The transport survives the discarded frame: the next request answers.
+    let data = client
+        .request_with_timeout(
+            DaemonCommand::List {
+                id: None,
+                all: None,
+                cwd: None,
+                session_dir: None,
+                include_client_owned: None,
+                rest: Map::default(),
+            },
+            30_000,
+        )
+        .await
+        .unwrap();
+    assert_eq!(data["ok"], true);
+    client.close();
+}
+
 #[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn pending_cap_refuses_the_send_before_queuing() {

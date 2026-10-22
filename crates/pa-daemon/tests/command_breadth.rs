@@ -109,6 +109,7 @@ const TS_DAEMON_COMMAND_TYPES: &[&str] = &[
     "delete_saved_session",
     "get_session_context",
     "get_session_tree",
+    "get_session_tree_page",
     "get_user_messages_for_forking",
     "get_last_assistant_text",
     "get_system_prompt",
@@ -465,6 +466,10 @@ const WIRE_FIXTURES: &[(&str, &str)] = &[
     (
         "get_session_tree",
         r#"{"type": "get_session_tree", "activeSessionId": "sess"}"#,
+    ),
+    (
+        "get_session_tree_page",
+        r#"{"type": "get_session_tree_page", "activeSessionId": "sess", "cursor": "e1", "limit": 5}"#,
     ),
     (
         "get_user_messages_for_forking",

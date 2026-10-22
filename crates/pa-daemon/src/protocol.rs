@@ -143,6 +143,7 @@ pub const KNOWN_COMMAND_TYPES: &[&str] = &[
     "delete_saved_session",
     "get_session_context",
     "get_session_tree",
+    "get_session_tree_page",
     "get_user_messages_for_forking",
     "get_last_assistant_text",
     "get_system_prompt",
@@ -885,6 +886,9 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
         | DaemonCommand::GetSessionTree {
             active_session_id, ..
         }
+        | DaemonCommand::GetSessionTreePage {
+            active_session_id, ..
+        }
         | DaemonCommand::GetUserMessagesForForking {
             active_session_id, ..
         }
@@ -1084,6 +1088,7 @@ pub fn command_type_name(command: &DaemonCommand) -> &'static str {
         DaemonCommand::DeleteSavedSession { .. } => "delete_saved_session",
         DaemonCommand::GetSessionContext { .. } => "get_session_context",
         DaemonCommand::GetSessionTree { .. } => "get_session_tree",
+        DaemonCommand::GetSessionTreePage { .. } => "get_session_tree_page",
         DaemonCommand::GetUserMessagesForForking { .. } => "get_user_messages_for_forking",
         DaemonCommand::GetLastAssistantText { .. } => "get_last_assistant_text",
         DaemonCommand::GetSystemPrompt { .. } => "get_system_prompt",

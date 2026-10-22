@@ -17,6 +17,7 @@ impl Worker {
         if matches!(
             command_type,
             "get_session_tree"
+                | "get_session_tree_page"
                 | "get_context_tree"
                 | "get_user_messages_for_forking"
                 | "set_session_entry_label"
@@ -140,6 +141,7 @@ impl Worker {
             "set_task_reporter" => Self::handle_set_task_reporter(payload),
             "abort_retry" => self.handle_abort_retry(),
             "get_session_tree" => self.tree_navigation.get_session_tree(),
+            "get_session_tree_page" => self.tree_navigation.get_session_tree_page(payload),
             "get_user_messages_for_forking" => self.tree_navigation.get_user_messages_for_forking(),
             "set_session_entry_label" => self.tree_navigation.set_session_entry_label(payload),
             "navigate_tree" => self.handle_navigate_tree(payload).await,

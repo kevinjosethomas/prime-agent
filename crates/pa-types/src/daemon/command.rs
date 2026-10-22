@@ -1232,6 +1232,17 @@ pub enum DaemonCommand {
         #[serde(flatten)]
         rest: JsonMap,
     },
+    GetSessionTreePage {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        active_session_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cursor: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u64>,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
     GetUserMessagesForForking {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,
