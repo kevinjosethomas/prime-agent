@@ -121,16 +121,6 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
                 layers::layer_source("core").unwrap_or_default(),
                 layers::CORE_LAYER.trim().to_string(),
             ));
-            segments.push(PromptSegment::static_segment(
-                "usage",
-                layers::layer_source("usage").unwrap_or_default(),
-                layers::USAGE_LAYER.trim().to_string(),
-            ));
-            segments.push(PromptSegment::static_segment(
-                "opinionated",
-                layers::layer_source("opinionated").unwrap_or_default(),
-                layers::OPINIONATED_LAYER.trim().to_string(),
-            ));
             if let Some(extras) = options.model_prompt_extras {
                 segments.push(PromptSegment::static_segment(
                     "model-prompts",
@@ -146,9 +136,9 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
         .sum::<usize>()
         + 2 * segments.len().saturating_sub(1);
 
-    // The dynamic tail, in fixed order: packages -> project context ->
-    // skills inventory -> MCP servers -> environment -> session role ->
-    // additional guidance -> appended prompt.
+    // Everything after the static prefix, in fixed order, most stable first:
+    // appended prompt -> packages -> skills inventory -> MCP servers ->
+    // project context -> environment -> session role.
     let tools: Vec<&str> = options
         .selected_tools
         .clone()
@@ -156,20 +146,21 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
     let has_ipython = tools.contains(&pa_types::ai::PYTHON_TOOL_NAME);
     let has_file_access = has_ipython || tools.contains(&"bash");
 
+    if let Some(extra) = options.append_system_prompt.as_deref() {
+        if !extra.is_empty() {
+            segments.push(PromptSegment::dynamic_segment(
+                "appended-prompt",
+                "--append-system-prompt",
+                extra.to_string(),
+            ));
+        }
+    }
+
     segments.push(PromptSegment::dynamic_segment(
         "packages",
         "kernel bootstrap defaults",
         packages_section(),
     ));
-
-    let context = context_files_section(&options.context_files);
-    if !context.is_empty() {
-        segments.push(PromptSegment::dynamic_segment(
-            "project-context",
-            "AGENTS.md discovery",
-            context,
-        ));
-    }
 
     let visible_skills: Vec<&Skill> = options
         .skills
@@ -196,6 +187,15 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
         }
     }
 
+    let context = context_files_section(&options.context_files);
+    if !context.is_empty() {
+        segments.push(PromptSegment::dynamic_segment(
+            "project-context",
+            "AGENTS.md discovery",
+            context,
+        ));
+    }
+
     segments.push(PromptSegment::dynamic_segment(
         "environment",
         "session configuration",
@@ -209,16 +209,6 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
             "RLM recursion state",
             role,
         ));
-    }
-
-    if let Some(extra) = options.append_system_prompt.as_deref() {
-        if !extra.is_empty() {
-            segments.push(PromptSegment::dynamic_segment(
-                "appended-prompt",
-                "--append-system-prompt",
-                extra.to_string(),
-            ));
-        }
     }
 
     let assembled = segments
@@ -318,10 +308,7 @@ fn session_role_section(options: &BuildSystemPromptOptions, has_ipython: bool) -
         ));
         if has_ipython {
             lines.push(
-                "When a task calls for an answer, reply explicitly with `await (await agents.parent()).send(message)`. Not every message or task needs a reply; continue cleanup after sending and go idle normally.".to_string(),
-            );
-            lines.push(
-                "For long-running work, report brief progress with `await agents.note('...')` (at most 512 characters, about one per 10 seconds; False when throttled); the parent sees notes without needing a reply.".to_string(),
+                "When a task calls for an answer, send it with `await (await agents.parent()).send(message)`, then finish normally. Not every message needs a reply.".to_string(),
             );
         }
     }
@@ -348,36 +335,20 @@ fn today() -> String {
 }
 
 fn format_generic_mcp_guidance(servers: &[String]) -> String {
-    let mut enabled: Vec<&String> = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    for server in servers {
-        if seen.insert(server) {
-            enabled.push(server);
-        }
-    }
+    let mut enabled: Vec<&String> = servers.iter().collect();
     enabled.sort();
+    enabled.dedup();
     if enabled.is_empty() {
         return String::new();
     }
-    let mut lines = vec![
-        "# Generic MCP Connections".to_string(),
-        String::new(),
-        "Generic MCP connections are accessed through the pre-imported Python `mcp` object in the Python REPL, not as top-level native tool namespaces or installed Python skills.".to_string(),
-        format!(
-            "Enabled generic MCP servers: {}.",
-            enabled
-                .iter()
-                .map(|server| format!("`{server}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    ];
-    for server in &enabled {
-        lines.push(format!(
-            "For `{server}`, first discover its tools with `await mcp.tools(\"{server}\")`, then call one with `await mcp.call(\"{server}\", \"<tool>\", **arguments)`."
-        ));
-    }
-    lines.join("\n")
+    format!(
+        "Enabled MCP servers (use them through `mcp`): {}.",
+        enabled
+            .iter()
+            .map(|server| format!("`{server}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 #[cfg(test)]
@@ -420,7 +391,9 @@ mod tests {
     fn default_prompt_is_layered_with_static_prefix_first() {
         let breakdown = system_prompt_breakdown(&base_options());
         let prompt = &breakdown.assembled;
-        assert!(prompt.starts_with("# prime-agent harness"));
+        assert!(
+            prompt.starts_with("You are an expert coding assistant operating inside prime-agent")
+        );
         assert_eq!(breakdown.segments[0].kind, SegmentKind::Static);
         assert_eq!(breakdown.segments[0].name, "core");
         let names: Vec<&str> = breakdown
@@ -429,18 +402,13 @@ mod tests {
             .map(|segment| segment.name)
             .collect();
         assert_eq!(
-            names[..4],
-            ["core", "usage", "opinionated", "packages"],
-            "core/usage/opinionated layers, then the dynamic tail"
+            names[..2],
+            ["core", "packages"],
+            "the core layer, then the dynamic tail"
         );
         assert_eq!(
             &prompt[..breakdown.cached_prefix_len],
-            format!(
-                "{}\n\n{}\n\n{}",
-                layers::CORE_LAYER.trim(),
-                layers::USAGE_LAYER.trim(),
-                layers::OPINIONATED_LAYER.trim()
-            )
+            layers::CORE_LAYER.trim()
         );
         let tail = &prompt[breakdown.cached_prefix_len..];
         assert!(tail.contains("Working directory: /w"));
@@ -467,7 +435,7 @@ mod tests {
         );
         assert_eq!(left.cached_prefix_len, right.cached_prefix_len);
         assert!(right.assembled[right.cached_prefix_len..]
-            .contains("Enabled generic MCP servers: `slack`"));
+            .contains("Enabled MCP servers (use them through `mcp`): `slack`."));
         assert!(right.assembled[right.cached_prefix_len..]
             .contains("You are a child agent spawned by the lead."));
     }
@@ -485,7 +453,7 @@ mod tests {
         assert!(prompt.contains("## AGENTS.md\n\nRule one."));
         assert!(prompt.contains("Working directory: /w"));
         assert!(prompt.contains("Current date: "));
-        assert!(!prompt.contains("# prime-agent harness"));
+        assert!(!prompt.contains("You are an expert coding assistant operating inside prime-agent"));
         assert!(!prompt.contains("Tier-2 guidance."));
     }
 
@@ -500,10 +468,9 @@ mod tests {
             .map(|segment| segment.name)
             .collect();
         assert!(names.contains(&"mcp-servers"));
-        assert!(breakdown.assembled.contains("# Generic MCP Connections"));
         assert!(breakdown
             .assembled
-            .contains("Enabled generic MCP servers: `t`."));
+            .contains("Enabled MCP servers (use them through `mcp`): `t`."));
     }
 
     #[test]
@@ -517,9 +484,26 @@ mod tests {
             .map(|segment| segment.name)
             .collect();
         assert_eq!(
-            names[..5],
-            ["core", "usage", "opinionated", "model-prompts", "packages"],
+            names[..3],
+            ["core", "model-prompts", "packages"],
             "extras are the last static segment, directly before the dynamic tail"
         );
+    }
+
+    #[test]
+    fn appended_prompt_directly_follows_the_static_prefix() {
+        let mut options = base_options();
+        options.append_system_prompt = Some("Orchestrator rules.".to_string());
+        options.context_files = vec![("AGENTS.md".to_string(), "Rule one.".to_string())];
+        let breakdown = system_prompt_breakdown(&options);
+        let names: Vec<&str> = breakdown
+            .segments
+            .iter()
+            .map(|segment| segment.name)
+            .collect();
+        assert_eq!(names[..3], ["core", "appended-prompt", "packages"]);
+        assert_eq!(names.last(), Some(&"session-role"));
+        assert!(breakdown.assembled[breakdown.cached_prefix_len..]
+            .starts_with("\n\nOrchestrator rules."));
     }
 }

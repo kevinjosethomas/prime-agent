@@ -176,7 +176,7 @@ EXPLICIT EXCEPTION: wire-protocol identifiers that must stay byte-compatible wit
 
 - Tools exposed to the model: `bash`, `edit`, `python_repl` (internal helpers: `rename`, `stdout`).
 - Python kernel API in the persistent Python REPL: `agents` (spawn/list/parent/siblings/broadcast/note/rename, `Agent.send/recent/wait/stop/rename`), `harness` (context/compact/models/goal), `heartbeat`, `mcp` (connections/tools/call), `factory`, `bash`, `edit`, `websearch`, `attach_image`, skills (markdown + Python) per the skill contract in the base system prompt.
-- System prompt structure: layered — cache-stable static layer files (core harness description with the full API surface, mandatory usage rules, opinionated guidelines, per-model additions from the model-prompts TOML rule map) followed by one dynamic tail (packages, project context, skills inventory, MCP servers, environment, session role). `prime-agent prompt` dumps the assembled prompt with its layer breakdown.
+- System prompt structure: a cache-stable static prefix (the core layer with identity, `<api>`, `<rules>` and `<subagents>`, then per-model additions from the model-prompts TOML rule map), followed by the appended prompt and a dynamic tail (packages, skills inventory, MCP servers, project context, environment, session role). `prime-agent prompt` dumps the assembled prompt with its layer breakdown.
 - CLI shape: `prime-agent` with the same commands/flags as the TS product; headless modes (RPC/daemon/session-worker) with identical behavior.
 
 ## Crates

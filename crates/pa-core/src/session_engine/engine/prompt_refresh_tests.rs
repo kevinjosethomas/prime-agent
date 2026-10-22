@@ -98,7 +98,7 @@ async fn prompt_sources_refresh_only_after_successful_compaction() {
     let after = provider.calls();
     let refreshed = after.last().unwrap().system_prompt.as_deref().unwrap();
     assert!(refreshed.starts_with("Updated system"));
-    assert!(refreshed.ends_with("Updated desktop guidance"));
+    assert!(refreshed.contains("Updated desktop guidance"));
     assert!(refreshed.contains("Updated project context"));
     assert!(!refreshed.contains("Original"));
     assert_eq!(

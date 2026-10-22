@@ -67,15 +67,17 @@ async fn assert_prompt_case(case: PromptCase) {
         if case.custom_system {
             assert!(prompt.starts_with("CUSTOM_SYSTEM_SENTINEL"));
         } else {
-            assert!(prompt.starts_with("# prime-agent harness"));
+            assert!(prompt
+                .starts_with("You are an expert coding assistant operating inside prime-agent"));
         }
         for context in ["PROJECT_CONTEXT_SENTINEL", "GLOBAL_CONTEXT_SENTINEL"] {
             assert_eq!(prompt.matches(context).count(), 1);
         }
         let expected = case.expected;
+        let working_directory = prompt.find("Working directory:").unwrap();
         assert!(
-            prompt.ends_with(expected),
-            "daemonless={daemonless}: missing appended {expected:?}"
+            prompt[..working_directory].contains(expected),
+            "daemonless={daemonless}: missing appended {expected:?} before the session tail"
         );
         for candidate in [case.global, case.project].into_iter().flatten() {
             if !candidate.is_empty() && candidate != expected {

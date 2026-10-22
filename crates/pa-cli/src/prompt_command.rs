@@ -223,7 +223,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (breakdown, errors) = assemble_breakdown(dir.path(), Some("mock/mock-1")).unwrap();
         assert!(errors.is_empty());
-        assert!(breakdown.assembled.starts_with("# prime-agent harness"));
+        assert!(breakdown
+            .assembled
+            .starts_with("You are an expert coding assistant operating inside prime-agent"));
         assert!(breakdown
             .assembled
             .contains("Recursive agent depth: 0 (root)"));

@@ -110,17 +110,6 @@ impl Skill {
     pub fn is_python(&self) -> bool {
         self.kind == SkillKind::Python
     }
-
-    /// The kind label the prompt inventory and telemetry share
-    /// (`<type>` in `format_skills_for_prompt`, `skill_kind` in events).
-    #[must_use]
-    pub fn kind_label(&self) -> &'static str {
-        if self.is_python() {
-            "python"
-        } else {
-            "markdown"
-        }
-    }
 }
 
 /// Runtime info for kernel-side Python skill preparation.
@@ -215,17 +204,13 @@ pub fn format_skills_for_prompt(skills: &[Skill]) -> String {
         return String::new();
     }
     let mut lines = vec![
-        "\n\nThe following skills provide specialized instructions for specific tasks.".to_string(),
-        "Use python_repl to inspect a skill's file when the task matches its description.".to_string(),
-        "Skills with a python_import are prepared in the persistent Python kernel when available and can be called directly by that import name.".to_string(),
-        "When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.".to_string(),
+        "The following skills provide specialized instructions for specific tasks. Read a skill's file with python_repl when the task matches its description. A skill with a python_import is already imported under that name. Resolve relative paths in a skill file against its directory.".to_string(),
         String::new(),
         "<available_skills>".to_string(),
     ];
     for skill in visible {
         lines.push("  <skill>".to_string());
         lines.push(format!("    <name>{}</name>", escape_xml(&skill.name)));
-        lines.push(format!("    <type>{}</type>", skill.kind_label()));
         if let Some(python) = &skill.python {
             lines.push(format!(
                 "    <python_import>{}</python_import>",
@@ -446,7 +431,7 @@ mod tests {
         assert_eq!(hidden, "");
         let formatted = format_skills_for_prompt(&[skill("web-search", false)]);
         assert!(formatted.contains("<name>web-search</name>"));
-        assert!(formatted.contains("<type>markdown</type>"));
+        assert!(!formatted.contains("<type>"));
         assert!(formatted.contains("<description>Does web-search</description>"));
     }
 }
