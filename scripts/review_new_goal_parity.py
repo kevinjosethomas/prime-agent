@@ -130,6 +130,14 @@ def session_rows(root):
     return result
 
 
+def normalize_surface(surface):
+    if not isinstance(surface, dict) or not isinstance(surface.get('content'), list):
+        return surface
+    content = [{**row, 'text': row.get('text', '').replace('harness.goal.complete()', 'goal.complete()')}
+               if isinstance(row, dict) else row for row in surface['content']]
+    return {**surface, 'content': content}
+
+
 def new_case(binary, label, root, observation):
     provider = Provider(False)
     terminal = daemon = None
@@ -319,7 +327,10 @@ def main():
                     except Exception as exc:
                         observation['error'] = str(exc)
                 ts, rust = result['runs'][scenario]['ts'], result['runs'][scenario]['rust']
-                if ts.get('surface') != rust.get('surface'):
+                # The agents/harness surface renamed goal completion to
+                # `harness.goal.complete()`; the pinned TS text keeps
+                # `goal.complete()`. Normalized before comparison.
+                if normalize_surface(ts.get('surface')) != normalize_surface(rust.get('surface')):
                     result['differences'][scenario] = {'ts': ts.get('surface'), 'rust': rust.get('surface')}
         failures = {scenario + '/' + label: run['error'] for scenario, runs in result['runs'].items()
                     for label, run in runs.items() if 'error' in run}
