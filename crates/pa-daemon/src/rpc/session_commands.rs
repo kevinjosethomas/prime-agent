@@ -601,7 +601,14 @@ async fn get_commands(state: &Arc<RpcState>) -> Result<ResponseData, String> {
         }
         commands.push(entry);
     }
-    for skill in &engine.skills {
+    let skills = engine.skills();
+    for skill in &skills {
+        // Same hiding rule as the resource snapshot: a file deleted under
+        // the running session never becomes a command again, even before
+        // the explicit reload.
+        if !skill.file_path.exists() {
+            continue;
+        }
         let mut entry = json!({
             "name": format!("skill:{}", skill.name),
             "source": "skill",

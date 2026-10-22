@@ -53,7 +53,8 @@ impl PromptSources {
 }
 
 impl super::AgentSession {
-    /// The prompt pinned at the latest successful compaction (or creation).
+    /// The prompt pinned at the latest successful compaction, the
+    /// latest `/reload` (or creation).
     ///
     /// # Panics
     /// Panics if the pinned-prompt lock is poisoned.
@@ -75,6 +76,19 @@ impl super::AgentSession {
         &self,
         model: &pa_types::ai::Model,
     ) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .reload_prompt_sources(model)
+            .await?
+            .map(|(_, prompt)| prompt))
+    }
+
+    /// Re-run the session's resource loader (the same roots and settings
+    /// resolution the build used; the loader re-reads settings from disk)
+    /// and assemble the current system prompt from what disk holds now.
+    async fn reload_prompt_sources(
+        &self,
+        model: &pa_types::ai::Model,
+    ) -> anyhow::Result<Option<(LoadedResources, String)>> {
         let Some(sources) = self.prompt_sources.clone() else {
             return Ok(None);
         };
@@ -82,7 +96,7 @@ impl super::AgentSession {
         let selector = format!("{}/{}", model.provider, model.id);
         let vision_capable = Some(model.input.contains(&pa_types::ai::ModelInput::Image));
         // File and package resolution must not block the worker's async lane.
-        let prompt = tokio::task::spawn_blocking(move || {
+        let (resources, prompt) = tokio::task::spawn_blocking(move || {
             let options = &sources.resource_options;
             let mut overrides = options.extra_builtin_skill_overrides.clone();
             overrides.extend(
@@ -111,9 +125,41 @@ impl super::AgentSession {
                     .unwrap()
                     .get_enabled_persistent_generic_servers(),
             );
-            Ok::<_, anyhow::Error>(sources.assemble(&resources, &selector, servers, vision_capable))
+            let prompt = sources.assemble(&resources, &selector, servers, vision_capable);
+            Ok::<_, anyhow::Error>((resources, prompt))
         })
         .await??;
-        Ok(Some(prompt))
+        Ok(Some((resources, prompt)))
+    }
+
+    /// `/reload`'s skill half: re-run the session's resource loader and
+    /// rebuild the skill inventory AND the system prompt from what disk
+    /// holds now, so `/skill:` expansion, the resource snapshot, and
+    /// `<available_skills>` match disk. The prompt changes ONLY here
+    /// (and at compaction, as before): turns keep the built prompt, so
+    /// the provider's prompt cache stays stable without an explicit
+    /// reload. A session built without prompt sources reloads nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns the resource-loading failure; nothing is swapped (the
+    /// inventory and prompt keep their previous state) when the disk
+    /// re-read fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a prompt or pinned-prompt lock is poisoned.
+    pub async fn reload_skills_and_prompt(
+        &self,
+        model: &pa_types::ai::Model,
+    ) -> anyhow::Result<()> {
+        let Some((resources, prompt)) = self.reload_prompt_sources(model).await? else {
+            return Ok(());
+        };
+        self.set_skills(resources.skills);
+        self.set_skill_diagnostics(resources.skill_diagnostics);
+        self.agent.set_system_prompt(prompt.clone()).await;
+        *self.pinned_prompt.write().unwrap() = Some(prompt);
+        Ok(())
     }
 }

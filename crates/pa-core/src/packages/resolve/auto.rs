@@ -107,12 +107,23 @@ impl PackageManager {
         add_resources(
             accumulator,
             ResourceType::Skills,
-            [
-                collect_skill_entries(&user_dirs[0], SkillDiscoveryMode::Pi),
-                collect_skill_entries(&user_agents_skills_dir, SkillDiscoveryMode::Agents),
-            ]
-            .concat(),
+            collect_skill_entries(&user_dirs[0], SkillDiscoveryMode::Pi),
             &user_metadata,
+            &user_overrides[0],
+            global_base_dir,
+        );
+        // `~/.agents/skills` auto-discovery reports its own root as the
+        // base_dir (it contains the skill); the settings base the other
+        // auto slots carry never contains these files.
+        let user_agents_metadata = PathMetadata {
+            base_dir: Some(user_agents_skills_dir.clone()),
+            ..user_metadata.clone()
+        };
+        add_resources(
+            accumulator,
+            ResourceType::Skills,
+            collect_skill_entries(&user_agents_skills_dir, SkillDiscoveryMode::Agents),
+            &user_agents_metadata,
             &user_overrides[0],
             global_base_dir,
         );

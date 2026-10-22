@@ -18,7 +18,7 @@ import tempfile
 import threading
 import time
 
-from review_draft_disconnect_parity import Terminal, env_for, stop, LIMIT
+from review_draft_disconnect_parity import Terminal, env_for, kernel_env_for, stop, LIMIT
 from review_goal_backoff_parity import TS_ARCHIVE_SHA256, sha256
 
 PROMPT = 'NEW_GOAL_PARITY_INITIAL_PROMPT'
@@ -89,9 +89,11 @@ def setup(root, label, provider):
     env = env_for(root, label)
     if label == 'rust':
         env['PA_COMPACTION_TRACE'] = 'stderr'
-    for key in ('PYTHONPATH', 'PRIME_AGENT_KERNEL_PYTHON', 'PA_E2E_KERNEL_PYTHON'):
-        if key in os.environ:
-            env[key] = os.environ[key]
+    kernel_python = kernel_env_for(label)
+    env['PRIME_AGENT_KERNEL_PYTHON'] = kernel_python
+    env['PA_E2E_KERNEL_PYTHON'] = kernel_python
+    if 'PYTHONPATH' in os.environ:
+        env['PYTHONPATH'] = os.environ['PYTHONPATH']
     library = Path(os.environ['PI_PACKAGE_DIR']) / 'skills'
     env['PYTHONPATH'] = os.pathsep.join(sorted(str(p) for p in library.glob('*/src'))
                                        + [env.get('PYTHONPATH', '')])

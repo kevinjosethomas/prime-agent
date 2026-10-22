@@ -90,9 +90,43 @@ impl AgentSession {
 
     /// Install the skill inventory `/skill:<name>` submissions expand
     /// against (TS reads the resource loader at expansion time; the Rust
-    /// session snapshots the engine's loaded list here).
-    pub fn set_skills(&mut self, skills: Vec<crate::skills::Skill>) {
-        self.skills = skills;
+    /// session snapshots the engine's loaded list here, and `/reload`
+    /// re-snapshots it from disk under the running session).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the skills lock is poisoned.
+    pub fn set_skills(&self, skills: Vec<crate::skills::Skill>) {
+        *self.skills.write().unwrap() = skills;
+    }
+
+    /// The skill inventory's current snapshot (cloned; the prompt
+    /// expansion and the daemon read seams copy it out).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the skills lock is poisoned.
+    pub fn skills(&self) -> Vec<crate::skills::Skill> {
+        self.skills.read().unwrap().clone()
+    }
+
+    /// Install the skill-loading diagnostics the connection resource
+    /// snapshot surfaces.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the diagnostics lock is poisoned.
+    pub fn set_skill_diagnostics(&self, diagnostics: Vec<crate::skills::ResourceDiagnostic>) {
+        *self.skill_diagnostics.write().unwrap() = diagnostics;
+    }
+
+    /// The skill-loading diagnostics' current snapshot (cloned).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the diagnostics lock is poisoned.
+    pub fn skill_diagnostics(&self) -> Vec<crate::skills::ResourceDiagnostic> {
+        self.skill_diagnostics.read().unwrap().clone()
     }
 
     /// Bind the telemetry handle the `skill_use_count` counter counts

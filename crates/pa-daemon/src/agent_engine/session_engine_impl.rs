@@ -1063,7 +1063,14 @@ impl SessionEngine for AgentSessionEngine {
                 }
                 commands.push(entry);
             }
-            for skill in &engine.skills {
+            let skills = engine.skills();
+            for skill in &skills {
+                // Same hiding rule as the resource snapshot: a file
+                // deleted under the running session never becomes a
+                // command again, even before the explicit reload.
+                if !skill.file_path.exists() {
+                    continue;
+                }
                 let mut entry = json!({
                     "name": format!("skill:{}", skill.name),
                     "source": "skill",
@@ -1097,7 +1104,15 @@ impl SessionEngine for AgentSessionEngine {
             };
             let cwd = self.cwd().display().to_string();
             let mut skills = Vec::new();
-            for skill in &engine.skills {
+            let inventory = engine.skills();
+            for skill in &inventory {
+                // A skill file deleted under the running session stays in
+                // the inventory (and the prompt) until an explicit reload;
+                // the snapshot hides it now, so the desktop never offers
+                // a skill whose file is gone.
+                if !skill.file_path.exists() {
+                    continue;
+                }
                 let mut entry = json!({
                     "name": skill.name,
                     "filePath": skill.file_path.display().to_string(),
@@ -1155,7 +1170,7 @@ impl SessionEngine for AgentSessionEngine {
                 "prompts": prompts,
                 "themes": [],
                 "diagnostics": {
-                    "skills": engine.skill_diagnostics,
+                    "skills": engine.skill_diagnostics(),
                     "prompts": [],
                     "themes": [],
                 },

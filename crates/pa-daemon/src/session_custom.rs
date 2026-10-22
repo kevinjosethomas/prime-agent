@@ -260,7 +260,8 @@ impl Worker {
             // or the join itself (a panic). Both answer the client's
             // reload with the failure, never a success the session did
             // not apply.
-            match tokio::task::spawn_blocking(move || engine.reload_live_inputs()).await {
+            let auth_engine = std::sync::Arc::clone(&engine);
+            match tokio::task::spawn_blocking(move || auth_engine.reload_live_inputs()).await {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
                     return response_failure(
@@ -278,6 +279,21 @@ impl Worker {
                         None,
                     );
                 }
+            }
+            // The skill half re-reads disk on the async lane (the prompt
+            // swap waits on the agent's state lock): a skill deleted or
+            // added under the running session leaves the inventory, the
+            // resource snapshot, and the system prompt's
+            // `<available_skills>` block stale until this explicit
+            // reload. A resource-loader failure answers the client with
+            // the failure, never a success the session did not apply.
+            if let Err(error) = engine.reload_skill_inventory().await {
+                return response_failure(
+                    None,
+                    "reload",
+                    &format!("session reload failed: {error}"),
+                    None,
+                );
             }
         }
         response_success(None, "reload", None)
