@@ -487,10 +487,8 @@ async fn create_session_without_a_model_uses_the_subagent_default_setting() {
         json!({"subagentDefaultModel": "test-provider/nested/model"}).to_string(),
     )
     .unwrap();
-    let socket = std::env::temp_dir().join(format!(
-        "pa-rlm-cd-{}.sock",
-        uuid::Uuid::new_v4().simple()
-    ));
+    let socket =
+        std::env::temp_dir().join(format!("pa-rlm-cd-{}.sock", uuid::Uuid::new_v4().simple()));
     let (create_seen_tx, mut create_seen_rx) = mpsc::unbounded_channel();
     let (verdict_tx, verdict_rx) = mpsc::unbounded_channel();
     let (rename_seen_tx, _rename_seen_rx) = mpsc::unbounded_channel();
