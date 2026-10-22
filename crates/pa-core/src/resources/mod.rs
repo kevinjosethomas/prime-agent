@@ -439,6 +439,87 @@ mod tests {
     }
 
     #[test]
+    fn home_agents_skills_report_their_discovery_root_as_base_dir() {
+        // `HOME` mutation is process-wide: serialize with the other
+        // env-touching package tests. A failed env test may have left
+        // the lock poisoned; taking it anyway keeps this test's own
+        // HOME save/restore deterministic.
+        let _guard = crate::packages::test_support::ENV_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let previous_home = std::env::var("HOME").ok();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("HOME", tmp.path());
+        let agent_dir = tmp.path().join("agent");
+        let cwd = tmp.path().join("proj");
+        fs::create_dir_all(&agent_dir).unwrap();
+        fs::create_dir_all(&cwd).unwrap();
+        // One user skill in the agent dir, one in ~/.agents/skills.
+        fs::create_dir_all(agent_dir.join("skills").join("agent-skill")).unwrap();
+        fs::write(
+            agent_dir
+                .join("skills")
+                .join("agent-skill")
+                .join("SKILL.md"),
+            "---\nname: agent-skill\ndescription: Agent dir skill\n---\nBody",
+        )
+        .unwrap();
+        let agents_root = tmp.path().join(".agents").join("skills");
+        fs::create_dir_all(agents_root.join("home-skill")).unwrap();
+        fs::write(
+            agents_root.join("home-skill").join("SKILL.md"),
+            "---\nname: home-skill\ndescription: Home dir skill\n---\nBody",
+        )
+        .unwrap();
+
+        let resources = load_resources(ResourceLoaderOptions::new(&cwd, &agent_dir)).unwrap();
+        let home = resources
+            .skills
+            .iter()
+            .find(|skill| skill.name == "home-skill")
+            .expect("the ~/.agents/skills skill loaded");
+        let agents_root_str = agents_root.display().to_string();
+        assert_eq!(
+            home.source_info.base_dir.as_deref(),
+            Some(agents_root_str.as_str()),
+            "sourceInfo.baseDir is the skill's own discovery root"
+        );
+        let base_dir = home.source_info.base_dir.clone().expect("baseDir set");
+        assert!(
+            std::path::Path::new(&base_dir)
+                .join("home-skill")
+                .join("SKILL.md")
+                .exists(),
+            "baseDir contains the skill file"
+        );
+        let agent = resources
+            .skills
+            .iter()
+            .find(|skill| skill.name == "agent-skill")
+            .expect("the agent-dir skill loaded");
+        let agent_dir_str = agent_dir.display().to_string();
+        assert_eq!(
+            agent.source_info.base_dir.as_deref(),
+            Some(agent_dir_str.as_str()),
+            "the agent-dir skill keeps the agent dir as baseDir"
+        );
+        let base_dir = agent.source_info.base_dir.clone().expect("baseDir set");
+        assert!(
+            std::path::Path::new(&base_dir)
+                .join("skills")
+                .join("agent-skill")
+                .join("SKILL.md")
+                .exists(),
+            "the agent-dir baseDir contains the skill file"
+        );
+
+        match previous_home {
+            Some(home) => std::env::set_var("HOME", home),
+            None => std::env::remove_var("HOME"),
+        }
+    }
+
+    #[test]
     fn project_auto_skills_win_name_collisions_over_user_auto() {
         let tmp = tempfile::tempdir().unwrap();
         let agent_dir = tmp.path().join("agent");

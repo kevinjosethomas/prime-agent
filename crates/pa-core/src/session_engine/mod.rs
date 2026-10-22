@@ -134,7 +134,12 @@ pub struct AgentSession {
     /// turn carries ahead of its own prompt row.
     pending_next_turn_rows: std::sync::Arc<std::sync::Mutex<Vec<pa_types::session::CustomMessage>>>,
     /// The skill inventory `/skill:<name>` submissions expand against.
-    skills: Vec<crate::skills::Skill>,
+    /// Interior-mutable: the `/reload` path re-reads disk and swaps the
+    /// whole list under a running session.
+    skills: std::sync::RwLock<Vec<crate::skills::Skill>>,
+    /// Skill-loading diagnostics; the connection resource snapshot
+    /// surfaces them. Swapped with the inventory on reload.
+    skill_diagnostics: std::sync::RwLock<Vec<crate::skills::ResourceDiagnostic>>,
     /// The telemetry handle for the `skill_use_count` counter the prompt
     /// path owns (`None` in sessions without telemetry).
     skill_telemetry: Option<std::sync::Arc<telemetry::SessionTelemetry>>,
@@ -216,7 +221,8 @@ impl AgentSession {
             auxiliary_model: None,
             kernel_state: None,
             pending_next_turn_rows: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-            skills: Vec::new(),
+            skills: std::sync::RwLock::new(Vec::new()),
+            skill_diagnostics: std::sync::RwLock::new(Vec::new()),
             skill_telemetry: None,
             image_model_router: None,
             compaction_summary_sink: std::sync::Mutex::new(None),

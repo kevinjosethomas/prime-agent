@@ -104,10 +104,6 @@ pub struct SessionEngineConfig {
 
 pub struct SessionEngine {
     pub session: AgentSession,
-    pub skills: Vec<crate::skills::Skill>,
-    /// Skill-loading diagnostics; the connection resource snapshot
-    /// surfaces them.
-    pub skill_diagnostics: Vec<crate::skills::ResourceDiagnostic>,
     pub prompt_templates: Vec<PromptTemplate>,
     pub agents_files: Vec<crate::resources::ContextFile>,
     /// Creation-time snapshot; `session.pinned_system_prompt()` tracks compaction refreshes.
@@ -707,6 +703,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     ));
     session.set_kernel_state_probe(Some(kernel_state_probe));
     session.set_skills(resources.skills.clone());
+    session.set_skill_diagnostics(resources.skill_diagnostics.clone());
     session.set_image_model_router(config.image_model_router.clone());
     // The semantic-edge handoff: the daemon's child registry and retry
     // park read the recorder; the side question keeps the pre-semantic
@@ -785,8 +782,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     let goal_driver = wiring.runtime.goal_driver().clone();
     Ok(SessionEngine {
         session,
-        skills: resources.skills,
-        skill_diagnostics: resources.skill_diagnostics,
         prompt_templates: resources.prompts,
         agents_files: resources.agents_files,
         system_prompt,
@@ -831,7 +826,19 @@ impl SessionEngine {
     /// turn's own expansion is idempotent over the block. The
     /// `skill_use_count` counter counts at the admission, not here.
     pub fn expand_skill_submission(&self, text: &str) -> String {
-        crate::skills::expand_skill_command(text, &self.skills).0
+        crate::skills::expand_skill_command(text, &self.skills()).0
+    }
+
+    /// The session's live skill inventory; `/reload` re-reads disk and
+    /// swaps it under the running session.
+    pub fn skills(&self) -> Vec<crate::skills::Skill> {
+        self.session.skills()
+    }
+
+    /// Skill-loading diagnostics; the connection resource snapshot
+    /// surfaces them.
+    pub fn skill_diagnostics(&self) -> Vec<crate::skills::ResourceDiagnostic> {
+        self.session.skill_diagnostics()
     }
 
     /// Withdraw the queued goal-context turns: a minted continuation waiting
@@ -934,3 +941,6 @@ mod append_system_tests;
 
 #[cfg(test)]
 mod prompt_refresh_tests;
+
+#[cfg(test)]
+mod reload_skills_tests;
