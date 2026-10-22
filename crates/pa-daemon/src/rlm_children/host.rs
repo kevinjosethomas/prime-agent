@@ -3,13 +3,13 @@
 //! `collect`, `rename`) over the supervisor's child-sessions registry,
 //! with the spawn-admission helpers only this surface uses.
 use super::{
-    assert_thinking_supported, bail, create_default_rlm_subagent_session_name, json, now_ms,
-    resolve_child_model, rlm_child_label, rlm_depth_limit_error, spawn_name_unavailable_error, Arc,
+    anyhow, assert_thinking_supported, bail, create_default_rlm_subagent_session_name, json,
+    now_ms, rlm_child_label, rlm_depth_limit_error, spawn_name_unavailable_error, Arc,
     ChildCloseReason, ChildRecord, Context, DaemonCommand, Duration, Instant, Mutex, Path, PathBuf,
     Result, RlmChildResult, RlmCreateSessionHandle, RlmCreateSessionRequest,
     RlmDeleteSubagentResult, RlmHostFuture, RlmSpawnHandle, RlmSpawnRequest, RlmSubagentEntry,
     RlmSubagentHost, SpawnNameReservationGuard, SupervisorChildSessions,
-    SupervisorChildSessionsInner, Value, KILL_TIMEOUT_MS, RENAME_TIMEOUT_MS,
+    SupervisorChildSessionsInner, Value, KICKOFF_POLL_MS, KILL_TIMEOUT_MS, RENAME_TIMEOUT_MS,
 };
 
 /// Resolve the child model with the daemon `allowedModels` allowlist enforced, refusing loudly with
@@ -28,25 +28,16 @@ async fn resolve_child_model_allowlisted(
     let target = target.to_string();
     let resolved = tokio::task::spawn_blocking(move || {
         let allowlist = crate::model_allowlist::load(Path::new(&load_cwd), &agent_dir);
-        if surface == "spawn" {
-            crate::rlm_child_model::resolve_spawn_model_unchecked(
-                &agent_dir,
-                reference.as_deref(),
-                identity.model.as_deref(),
-            )
-            .and_then(|model| {
-                crate::model_allowlist::assert_allowed(&allowlist, &model)?;
-                Ok(model)
-            })
-        } else {
-            resolve_child_model(
-                &agent_dir,
-                reference.as_deref(),
-                identity.model.as_deref(),
-                &target,
-                &allowlist,
-            )
-        }
+        crate::rlm_child_model::resolve_spawn_model_unchecked(
+            &agent_dir,
+            reference.as_deref(),
+            identity.model.as_deref(),
+            &target,
+        )
+        .and_then(|model| {
+            crate::model_allowlist::assert_allowed(&allowlist, &model)?;
+            Ok(model)
+        })
     })
     .await
     .context("the child model resolution task join failed")?;
@@ -95,6 +86,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
     fn spawn(&self, request: RlmSpawnRequest) -> RlmHostFuture<RlmSpawnHandle> {
         let this = Arc::clone(&self.inner);
         Box::pin(async move {
+            let activity_generation = this.note_parent_activity();
             let identity = this.identity.lock().expect("identity lock").clone();
             if identity.rlm_depth >= identity.rlm_max_depth {
                 bail!(rlm_depth_limit_error(
@@ -169,6 +161,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     session_name: created.session_name.clone().unwrap_or_else(|| name.clone()),
                     active_session_id: created.active_session_id.clone(),
                     session_id: created.session_id.clone(),
+                    top_level: false,
                     session_dir: created.session_dir.clone(),
                     model: model.clone(),
                     label: rlm_child_label(&request.prompt),
@@ -182,6 +175,8 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     notice_delivered: false,
                     prompt_admitted: false,
                     error: None,
+                    progress_note: None,
+                    note_at: None,
                     closed_by_parent: false,
                     retirement_finished: false,
                     retirement_notified: false,
@@ -250,17 +245,20 @@ impl RlmSubagentHost for SupervisorChildSessions {
             let child_log_id = child_id.clone();
             // Capture the current turn boundary before detaching: spawn
             // admission happens mid-turn, so the parent's continuation
-            // request reaches the provider first (see `wait_turn_done`).
+            // request reaches the provider first, but the parent's next
+            // subagent-host request (a poll) releases the prompt without
+            // the boundary wait (see `wait_prompt_release`).
             let turn_generation = *this.turn_done.subscribe().borrow();
             tokio::spawn(async move {
-                watcher_this.wait_turn_done(turn_generation).await;
+                watcher_this
+                    .wait_prompt_release(turn_generation, activity_generation)
+                    .await;
                 // The parent closed before the prompt admitted: the
                 // child is closed with it, so the detached task prompt
                 // never fires.
                 if watcher_record.lock().await.closed_by_parent {
                     return;
                 }
-                watcher_record.lock().await.prompt_admitted = true;
                 if let Err(error) = watcher_this
                     .prompt_child(
                         &child_active_session_id,
@@ -305,10 +303,15 @@ impl RlmSubagentHost for SupervisorChildSessions {
                         return;
                     }
                 }
+                watcher_record.lock().await.prompt_admitted = true;
                 watcher_this.watch_child_settle(&watcher_record).await;
             });
+            let session_id = created.session_id.clone().ok_or_else(|| {
+                anyhow!("supervisor returned a session summary without a session id")
+            })?;
             Ok(RlmSpawnHandle {
                 rlm_child_id: child_id,
+                session_id,
                 name,
                 session_dir: created.session_dir,
                 model,
@@ -322,10 +325,21 @@ impl RlmSubagentHost for SupervisorChildSessions {
     ) -> RlmHostFuture<RlmCreateSessionHandle> {
         let this = Arc::clone(&self.inner);
         Box::pin(async move {
+            this.note_parent_activity();
             let identity = this.identity.lock().expect("identity lock").clone();
             if identity.rlm_depth != 0 {
-                bail!("rlm.create_session is available only from a depth-0 session");
+                bail!("top-level sessions can only be created from a depth-0 session");
             }
+            // The admission metadata below hard-fails without the file;
+            // refuse before the worker launch instead.
+            anyhow::ensure!(
+                identity.session_file.is_some(),
+                "top-level admission is missing starterSessionFile"
+            );
+            // The registry key the starter tracks the created session by.
+            let child_id = format!("sub-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+            // No explicit model resolves through the subagent default, like
+            // a child spawn (the settings contract for started sessions).
             let model = resolve_child_model_allowlisted(
                 &this,
                 request.model.as_deref(),
@@ -345,9 +359,25 @@ impl RlmSubagentHost for SupervisorChildSessions {
             std::fs::create_dir_all(&sessions_dir)
                 .with_context(|| format!("create sessions dir {}", sessions_dir.display()))?;
             let thinking = request.thinking.as_deref().or(identity.thinking.as_deref());
+            // The starter link rides the created session's runtime
+            // metadata: the family view reads it as a parent edge, while
+            // the parent-death cascade joins only `parentActiveSessionId`
+            // and skips it.
+            let mut runtime_metadata = json!({
+                "kind": "top-level",
+                "rlmChildId": child_id,
+                "starterActiveSessionId": this.parent_active_session_id,
+                "createdAt": now_ms(),
+            });
+            if let Some(session_id) = &identity.session_id {
+                runtime_metadata["starterSessionId"] = json!(session_id);
+            }
+            if let Some(session_file) = &identity.session_file {
+                runtime_metadata["starterSessionFile"] = json!(session_file);
+            }
             let created = this
                 .launch_child(
-                    "root",
+                    &child_id,
                     request.name.as_deref(),
                     &request.prompt,
                     0,
@@ -355,10 +385,10 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     thinking,
                     &cwd.to_string_lossy(),
                     &sessions_dir,
-                    None,
+                    Some(runtime_metadata),
                     &identity,
-                    // The TS minimal map for a depth-0 root (the
-                    // env-key heuristic is stated in the PR).
+                    // The TS minimal map for a depth-0 root: PATH, the
+                    // provider's API-key env var and PRIME_TEAM_ID only.
                     Some(create_session_launch_env(&model)),
                 )
                 .await?;
@@ -367,7 +397,56 @@ impl RlmSubagentHost for SupervisorChildSessions {
             if created.summary_rlm_depth.is_some_and(|depth| depth != 0) {
                 bail!("Daemon supervisor returned an invalid depth-0 session summary");
             }
+            let record = Arc::new(Mutex::new(ChildRecord {
+                rlm_child_id: child_id.clone(),
+                session_name: created
+                    .session_name
+                    .clone()
+                    .unwrap_or_else(|| created.active_session_id.clone()),
+                active_session_id: created.active_session_id.clone(),
+                session_id: created.session_id.clone(),
+                top_level: true,
+                session_dir: created.session_dir.clone(),
+                model: model.clone(),
+                label: rlm_child_label(&request.prompt),
+                started_at_ms: now_ms(),
+                settled_status: None,
+                settled: false,
+                answer_preview: None,
+                answer_text: None,
+                answer_captured: false,
+                replied_since_task: false,
+                notice_delivered: false,
+                // The prompt was admitted inside `launch_child`.
+                prompt_admitted: true,
+                error: None,
+                progress_note: None,
+                note_at: None,
+                closed_by_parent: false,
+                retirement_finished: false,
+                retirement_notified: false,
+                retirement_roster_emitted: false,
+                usage_registration_forgotten: false,
+                session_file: created.session_file.clone(),
+                attributed_rows: Some(0),
+                pending_usage_report: None,
+                usage_watch_live: false,
+                usage_rearm: false,
+                emit_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+                last_emitted_status: None,
+                rename_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+            }));
+            this.children.lock().await.push(Arc::clone(&record));
+            this.refresh_running().await;
+            this.emit_child_update(&record).await;
+            // The settle watcher owns the answer capture and the starter's
+            // terminal notice, exactly as for a nested child.
+            let watcher_this = Arc::clone(&this);
+            tokio::spawn(async move {
+                watcher_this.watch_child_settle(&record).await;
+            });
             Ok(RlmCreateSessionHandle {
+                rlm_child_id: child_id,
                 active_session_id: created.active_session_id.clone(),
                 session_id: created
                     .session_id
@@ -386,6 +465,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
     fn list_subagents(&self) -> RlmHostFuture<Vec<RlmSubagentEntry>> {
         let this = Arc::clone(&self.inner);
         Box::pin(async move {
+            this.note_parent_activity();
             let records = this.children.lock().await.clone();
             let mut entries = Vec::with_capacity(records.len());
             for record in &records {
@@ -401,6 +481,8 @@ impl RlmSubagentHost for SupervisorChildSessions {
     fn delete_subagent(&self, target: String) -> RlmHostFuture<RlmDeleteSubagentResult> {
         let this = Arc::clone(&self.inner);
         Box::pin(async move {
+            // A delete never releases parked prompts: the child being
+            // removed owes no kickoff, and a peer's is not this call's.
             if !this.replay_retired_usage(Some(&target)).await {
                 bail!("RLM child usage remains owed after retirement; retry deletion");
             }
@@ -433,6 +515,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                                     session_id: deleted.session_id.clone(),
                                     session_name: deleted.session_name.clone(),
                                     session_dir: deleted.session_dir.clone(),
+                                    top_level: deleted.top_level,
                                     status: deleted.status,
                                     activity: None,
                                     tool_use_count: None,
@@ -442,6 +525,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
                                     answer_preview: deleted.answer_preview.clone(),
                                     replied_since_task: None,
                                     progress_note: None,
+                                    note_at: None,
                                     label: None,
                                     last_activity_at: Some(deleted.started_at_ms),
                                     activity_stale_ms: None,
@@ -468,15 +552,30 @@ impl RlmSubagentHost for SupervisorChildSessions {
             let active_session_id = record.lock().await.active_session_id.clone();
             // Kill first: a failed kill keeps the child tracked; the
             // `rlmLedgerDelete` marker tells the supervisor this kill is a
-            // delete, never a plain stop.
+            // delete, never a plain stop. A top-level session is stopped
+            // gracefully instead: the `shutdown` close keeps its resume
+            // entry, and the `rlmTopLevelDelete` marker tombstones its
+            // ledger edge and retires the worker.
             let record_guard = record.lock().await;
-            let command = DaemonCommand::Kill {
-                id: None,
-                active_session_id: active_session_id.clone(),
-                rest: serde_json::Map::from_iter([
-                    ("rlmLedgerDelete".to_string(), json!("user")),
-                    ("rlmChildId".to_string(), json!(record_guard.rlm_child_id)),
-                ]),
+            let command = if record_guard.top_level {
+                DaemonCommand::Kill {
+                    id: None,
+                    active_session_id: active_session_id.clone(),
+                    rest: serde_json::Map::from_iter([
+                        ("rlmCloseReason".to_string(), json!("shutdown")),
+                        ("rlmTopLevelDelete".to_string(), json!("user")),
+                        ("rlmChildId".to_string(), json!(record_guard.rlm_child_id)),
+                    ]),
+                }
+            } else {
+                DaemonCommand::Kill {
+                    id: None,
+                    active_session_id: active_session_id.clone(),
+                    rest: serde_json::Map::from_iter([
+                        ("rlmLedgerDelete".to_string(), json!("user")),
+                        ("rlmChildId".to_string(), json!(record_guard.rlm_child_id)),
+                    ]),
+                }
             };
             drop(record_guard);
             let was_running = record.lock().await.settled_status.is_none();
@@ -514,6 +613,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
     fn collect(&self, targets: Vec<String>, timeout_ms: u64) -> RlmHostFuture<Vec<RlmChildResult>> {
         let this = Arc::clone(&self.inner);
         Box::pin(async move {
+            this.note_parent_activity();
             // Resolve targets outside the registry lock: `resolve_record`
             // takes it too, and the tokio mutex is not re-entrant.
             let mut records: Vec<Arc<Mutex<ChildRecord>>> = if targets.is_empty() {
@@ -553,6 +653,9 @@ impl RlmSubagentHost for SupervisorChildSessions {
             let deadline = Instant::now() + Duration::from_millis(timeout_ms);
             let mut results = Vec::with_capacity(records.len());
             for record in &records {
+                while record.lock().await.kickoff_pending() && Instant::now() < deadline {
+                    tokio::time::sleep(Duration::from_millis(KICKOFF_POLL_MS)).await;
+                }
                 this.refresh_record(record).await;
                 // A settled child that is busy again runs a follow-up turn:
                 // re-arm usage observation (the task-run watcher retired at
@@ -587,6 +690,7 @@ impl RlmSubagentHost for SupervisorChildSessions {
     fn rename(&self, name: String, session_id: Option<String>) -> RlmHostFuture<String> {
         let this = Arc::clone(&self.inner);
         Box::pin(async move {
+            this.note_parent_activity();
             // Resolve the target: the caller's own session (an absent
             // session id, its live active id, or its durable session id),
             // or one direct child by rlm child id, active id, or durable

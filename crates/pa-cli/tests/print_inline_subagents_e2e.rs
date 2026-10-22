@@ -169,18 +169,16 @@ impl PrintLane {
 /// The parent's spawn cell (turn 1): two named children, then the turn
 /// ends while both still run — the #2270 scenario.
 fn spawn_cell() -> String {
-    "a = await rlm.spawn(\"run the alpha task\", name=\"alpha\")\n\
-     b = await rlm.spawn(\"run the beta task\", name=\"beta\")\n\
-     print(\"SPAWNED\", a.rlm_child_id, b.rlm_child_id)"
+    "a = await agents.spawn(\"run the alpha task\", name=\"alpha\")\n\
+     b = await agents.spawn(\"run the beta task\", name=\"beta\")\n\
+     print(\"SPAWNED\", a.child_id, b.child_id)"
         .to_string()
 }
 
 /// One child's reply cell: the ipython lane sends the parent a message
 /// (the reply that must survive the print run staying open).
 fn reply_cell(child: &str) -> String {
-    format!(
-        "await agent_message.send(\"{child}-RESULT\", receiver_role=\"parent\")\nprint(\"{child} REPLIED\")"
-    )
+    format!("await (await agents.parent()).send(\"{child}-RESULT\")\nprint(\"{child} REPLIED\")")
 }
 
 /// The parent script whose every later turn answers with the combined
@@ -373,12 +371,12 @@ fn print_inline_subagents_wait_for_replies_and_combine_them() {
 fn print_inline_subagents_enforce_the_depth_limit() {
     let lane = lane();
     let kernel = PrintLane::kernel_python();
-    let spawn_attempt = "try:\n    g = await rlm.spawn(\"run the grandkid task\", name=\"grandkid\")\n    print(\"SPAWN_OK\", g.rlm_child_id)\nexcept Exception as error:\n    print(\"SPAWN_FAILED:\", error)".to_string();
+    let spawn_attempt = "try:\n    g = await agents.spawn(\"run the grandkid task\", name=\"grandkid\")\n    print(\"SPAWN_OK\", g.child_id)\nexcept Exception as error:\n    print(\"SPAWN_FAILED:\", error)".to_string();
     let script = serde_json::json!({
         "responses": [
             { "content": [
                 { "type": "toolCall", "name": "ipython",
-                  "arguments": { "code": "kid = await rlm.spawn(\"run the kid task\", name=\"kid\")\nprint(\"KID\", kid.rlm_child_id)" } },
+                  "arguments": { "code": "kid = await agents.spawn(\"run the kid task\", name=\"kid\")\nprint(\"KID\", kid.child_id)" } },
             ] },
             "PARENT DONE",
         ],
@@ -452,12 +450,12 @@ fn print_inline_subagents_enforce_the_depth_limit() {
 fn print_inline_subagents_wait_for_a_retasked_child() {
     let lane = lane();
     let kernel = PrintLane::kernel_python();
-    let follow_up_cell = "collected = await rlm.collect([\"kid\"], timeout_ms=60000)\nprint(\"FIRST-TASK\", collected[0].status, collected[0].settled, collected[0].answer_text)\nawait agent_message.send(\"SECOND-RESULT\", receiver_role=\"child\", receiver_name=\"kid\")\nretasked = await rlm.collect([\"kid\"], timeout_ms=60000)\nprint(\"SECOND-TASK\", retasked[0].status, retasked[0].settled, retasked[0].answer_text)".to_string();
+    let follow_up_cell = "first = await kid.wait(timeout=60)\nprint(\"FIRST-TASK\", first.status, first.answer)\nawait kid.send(\"SECOND-RESULT\")\nretasked = await kid.wait(timeout=60)\nprint(\"SECOND-TASK\", retasked.status, retasked.answer)".to_string();
     let script = serde_json::json!({
         "responses": [
             { "content": [
                 { "type": "toolCall", "name": "ipython",
-                  "arguments": { "code": "kid = await rlm.spawn(\"run the kid task\", name=\"kid\")\nprint(\"KID\", kid.rlm_child_id)" } },
+                  "arguments": { "code": "kid = await agents.spawn(\"run the kid task\", name=\"kid\")\nprint(\"KID\", kid.child_id)" } },
             ] },
             { "content": [
                 { "type": "toolCall", "name": "ipython",
@@ -512,11 +510,11 @@ fn print_inline_subagents_wait_for_a_retasked_child() {
     // settled child's stale first answer.
     let parent_text = serde_json::to_string(&parent_entries).unwrap();
     assert!(
-        parent_text.contains("FIRST-TASK done True kid finished the first task"),
+        parent_text.contains("FIRST-TASK done kid finished the first task"),
         "the collect before the follow-up read the first task's settled answer: {parent_text}"
     );
     assert!(
-        parent_text.contains("SECOND-TASK done True kid finished the second task"),
+        parent_text.contains("SECOND-TASK done kid finished the second task"),
         "the collect after the follow-up returned the second task's answer: {parent_text}"
     );
 }
@@ -533,10 +531,10 @@ fn print_inline_subagents_report_a_failed_child_then_a_clean_retry() {
     let kernel = PrintLane::kernel_python();
     // The turn over the failure row: read the failed verdict, then
     // re-task the child from the parent.
-    let retask_cell = "collected = await rlm.collect([\"flaky\"], timeout_ms=60000)\nprint(\"FIRST-COLLECT\", collected[0].status, collected[0].error)\nawait agent_message.send(\"retry the task\", receiver_role=\"child\", receiver_name=\"flaky\")".to_string();
+    let retask_cell = "first = await kid.wait(timeout=60)\nprint(\"FIRST-COLLECT\", first.status, first.error)\nawait kid.send(\"retry the task\")".to_string();
     // The turn over the second reply: collect the clean retry.
     let second_collect_cell =
-        "collected = await rlm.collect([\"flaky\"], timeout_ms=60000)\nprint(\"SECOND-COLLECT\", collected[0].status, collected[0].error)".to_string();
+        "second = await kid.wait(timeout=60)\nprint(\"SECOND-COLLECT\", second.status, second.error)".to_string();
     let script = serde_json::json!({
         // Turn 1 spawns and ends ("WAITING"); the failed task's failure
         // row drains as turn 2 (the re-task), the second reply drains as
@@ -544,7 +542,7 @@ fn print_inline_subagents_report_a_failed_child_then_a_clean_retry() {
         "responses": [
             { "content": [
                 { "type": "toolCall", "name": "ipython",
-                  "arguments": { "code": "kid = await rlm.spawn(\"run the kid task\", name=\"flaky\")\nprint(\"KID\", kid.rlm_child_id)" } },
+                  "arguments": { "code": "kid = await agents.spawn(\"run the kid task\", name=\"flaky\")\nprint(\"KID\", kid.child_id)" } },
             ] },
             "WAITING",
             { "content": [
@@ -675,20 +673,21 @@ fn autonomous_continuation_row_at(entries: &[serde_json::Value]) -> Option<usize
 /// `goal_context` row after the seeded one — lands only AFTER the
 /// child's reply row, and its turn completes the goal, so the printed
 /// answer is the post-reply turn. No backoff sleeps: the continuation
-/// turn produces output and calls `goal.complete()`.
+/// turn produces output and calls `harness.goal.complete()`.
 #[test]
 fn print_inline_goal_continuation_waits_for_the_child_reply() {
     let lane = lane();
     let kernel = PrintLane::kernel_python();
-    let complete_cell = "done = await goal.complete()\nprint(\"GOAL COMPLETED\")".to_string();
+    let complete_cell =
+        "done = await harness.goal.complete()\nprint(\"GOAL COMPLETED\")".to_string();
     let script = serde_json::json!({
         // Turn 1 spawns and ends ("WAITING"); the reply drains as turn 2;
         // the owed goal continuation runs as the post-reply turn, calls
-        // `goal.complete()`, and ends deterministically.
+        // `harness.goal.complete()`, and ends deterministically.
         "responses": [
             { "content": [
                 { "type": "toolCall", "name": "ipython",
-                  "arguments": { "code": "kid = await rlm.spawn(\"run the kid task\", name=\"kid\")\nprint(\"KID\", kid.rlm_child_id)" } },
+                  "arguments": { "code": "kid = await agents.spawn(\"run the kid task\", name=\"kid\")\nprint(\"KID\", kid.child_id)" } },
             ] },
             "WAITING",
             "READ THE REPLY",
@@ -767,7 +766,7 @@ fn print_inline_autonomous_continuation_waits_for_the_child_reply() {
         "responses": [
             { "content": [
                 { "type": "toolCall", "name": "ipython",
-                  "arguments": { "code": "kid = await rlm.spawn(\"run the kid task\", name=\"kid\")\nprint(\"KID\", kid.rlm_child_id)" } },
+                  "arguments": { "code": "kid = await agents.spawn(\"run the kid task\", name=\"kid\")\nprint(\"KID\", kid.child_id)" } },
             ] },
             "WAITING",
             "READ THE REPLY",
@@ -834,7 +833,8 @@ fn print_inline_autonomous_continuation_waits_for_the_child_reply() {
 fn print_inline_budget_steer_from_a_drained_reply_runs_after_it() {
     let warm_lane = lane();
     let kernel = PrintLane::kernel_python();
-    let complete_cell = "done = await goal.complete()\nprint(\"GOAL COMPLETED\")".to_string();
+    let complete_cell =
+        "done = await harness.goal.complete()\nprint(\"GOAL COMPLETED\")".to_string();
     let script = serde_json::json!({
         // Turn 1 spawns and ends; the reply drains as turn 2 (crossing
         // the budget); the wrap-up steer runs as turn 3 and completes the
@@ -842,7 +842,7 @@ fn print_inline_budget_steer_from_a_drained_reply_runs_after_it() {
         "responses": [
             { "content": [
                 { "type": "toolCall", "name": "ipython",
-                  "arguments": { "code": "kid = await rlm.spawn(\"run the kid task\", name=\"kid\")\nprint(\"KID\", kid.rlm_child_id)" } },
+                  "arguments": { "code": "kid = await agents.spawn(\"run the kid task\", name=\"kid\")\nprint(\"KID\", kid.child_id)" } },
             ] },
             "WAITING",
             "READ THE REPLY",
@@ -964,29 +964,30 @@ fn print_inline_rename_rejects_sibling_collisions_and_preserves_routing() {
     let lane = lane();
     let kernel = PrintLane::kernel_python();
     let parent_cell = r#"
-alpha = await rlm.spawn("answer alpha", name="alpha")
-beta = await rlm.spawn("check self rename", name="beta")
-first = await rlm.collect([beta], timeout_ms=60000)
-assert first[0].settled and first[0].answer_text == "beta checked"
+import asyncio
+alpha = await agents.spawn("answer alpha", name="alpha")
+beta = await agents.spawn("check self rename", name="beta")
+first = await beta.wait(timeout=60)
+assert first.status == "done" and first.answer == "beta checked", first
 try:
-    await rlm.rename("alpha", session_id=beta)
+    await beta.rename("alpha")
 except Exception as error:
     assert "unavailable" in str(error), str(error)
 else:
     raise AssertionError("parent rename accepted a duplicate sibling name")
-rows = await rlm.list_subagents()
-assert {row.rlm_child_id: row.session_name for row in rows} == {alpha.rlm_child_id: "alpha", beta.rlm_child_id: "beta"}
-results = await rlm.collect(["alpha", "beta"], timeout_ms=60000)
-assert [(result.session_name, result.answer_text) for result in results] == [("alpha", "alpha answered"), ("beta", "beta checked")]
-assert await rlm.rename("beta", session_id=beta) == "beta"
-assert await rlm.rename("gamma", session_id=beta) == "gamma"
-renamed = await rlm.collect(["gamma"], timeout_ms=60000)
-assert renamed[0].rlm_child_id == beta.rlm_child_id
+rows = await agents.list()
+assert {row.child_id: row.name for row in rows} == {alpha.child_id: "alpha", beta.child_id: "beta"}
+answered = await asyncio.gather(alpha.wait(timeout=60), beta.wait(timeout=60))
+assert [result.answer for result in answered] == ["alpha answered", "beta checked"]
+assert (await beta.rename("beta")).name == "beta"
+assert (await beta.rename("gamma")).name == "gamma"
+rows = await agents.list()
+assert {row.child_id: row.name for row in rows} == {alpha.child_id: "alpha", beta.child_id: "gamma"}
 print("RENAME ROUTING VERIFIED")
 "#;
     let child_cell = r#"
 try:
-    await rlm.rename("alpha")
+    await agents.rename("alpha")
 except Exception as error:
     assert "unavailable" in str(error), str(error)
 else:
@@ -1046,13 +1047,12 @@ async def accept_ready(reader, writer):
 server = await asyncio.start_server(accept_ready, "127.0.0.1", 0)
 try:
     Path("cancel-port").write_text(str(server.sockets[0].getsockname()[1]))
-    child = await rlm.spawn("wait until cancelled", name="waiting")
+    child = await agents.spawn("wait until cancelled", name="waiting")
     await asyncio.wait_for(ready, timeout=30)
-    deleted = await rlm.delete_subagent(child)
-    assert deleted.status == "cancelled", deleted
-    assert await rlm.list_subagents() == []
+    await child.stop()
+    assert await agents.list() == []
     try:
-        await rlm.collect([child], timeout_ms=0)
+        await child.wait(timeout=0)
     except Exception as error:
         assert "No direct RLM child matches" in str(error), str(error)
     else:

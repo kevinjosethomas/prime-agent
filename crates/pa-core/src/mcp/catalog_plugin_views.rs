@@ -650,85 +650,6 @@ pub fn build_connection_views(
     views.sort_by(|left, right| left.connection_id.cmp(&right.connection_id));
     views
 }
-
-/// Filter the plugin cards by an exact connection status.
-pub fn filter_plugin_views_by_status(views: &[McpPluginView], status: &str) -> Vec<McpPluginView> {
-    views
-        .iter()
-        .filter(|view| view.connection_status.as_str() == status)
-        .cloned()
-        .collect()
-}
-
-/// Search the plugin cards by service ids, labels, aliases, account ids, descriptions, categories,
-/// publishers, and docs URLs.
-pub fn search_plugin_views(
-    views: &[McpPluginView],
-    query: &str,
-    limit: usize,
-) -> Vec<McpPluginView> {
-    let needle = query.trim().to_lowercase();
-    if needle.is_empty() {
-        return views.iter().take(limit).cloned().collect();
-    }
-    let mut matches = Vec::new();
-    for view in views {
-        let mut fields: Vec<String> = vec![
-            view.service_id.clone(),
-            view.label.clone(),
-            view.category.clone().unwrap_or_default(),
-        ];
-        fields.push(view.description.clone().unwrap_or_default());
-        fields.push(view.publisher.clone().unwrap_or_default());
-        fields.push(view.docs_url.clone().unwrap_or_default());
-        fields.extend(view.aliases.iter().flatten().cloned());
-        fields.extend(view.connection_ids.iter().cloned());
-        if fields
-            .iter()
-            .any(|field| field.to_lowercase().contains(&needle))
-        {
-            matches.push(view.clone());
-            if matches.len() >= limit {
-                break;
-            }
-        }
-    }
-    matches
-}
-
-/// Decode one page cursor: digits only, `None` for the first page.
-pub fn decode_plugin_cursor(cursor: Option<&str>) -> Result<usize, String> {
-    let Some(cursor) = cursor else {
-        return Ok(0);
-    };
-    if cursor.is_empty() {
-        return Ok(0);
-    }
-    if !cursor.chars().all(|ch| ch.is_ascii_digit()) {
-        return Err("mcp.list_plugins received an invalid cursor".to_string());
-    }
-    cursor
-        .parse::<usize>()
-        .map_err(|_| "mcp.list_plugins received an invalid cursor".to_string())
-}
-
-/// Slice one bounded page out of the plugin cards.
-///
-/// A cursor at or past the end yields an empty page and no continuation — the TS float-arithmetic
-/// outcome.
-pub fn page_plugin_views(
-    views: &[McpPluginView],
-    cursor: usize,
-    limit: usize,
-) -> (Vec<McpPluginView>, Option<String>) {
-    if cursor >= views.len() {
-        return (Vec::new(), None);
-    }
-    let page: Vec<McpPluginView> = views.iter().skip(cursor).take(limit).cloned().collect();
-    let next_cursor = (cursor + limit < views.len()).then(|| (cursor + limit).to_string());
-    (page, next_cursor)
-}
-
 #[cfg(test)]
 mod connection_view_tests {
     use super::*;
@@ -907,41 +828,6 @@ mod connection_view_tests {
 
     /// An oversized cursor pages to an empty page with NO continuation
     /// instead of overflowing `cursor + limit` (the TS float outcome).
-    #[test]
-    fn oversized_cursor_yields_empty_page_without_overflow() {
-        let views: Vec<McpPluginView> = (0..4)
-            .map(|i| McpPluginView {
-                service_id: format!("s{i}"),
-                label: format!("s{i}"),
-                connection_status: McpConnectionStatus::NotConnected,
-                connectable: false,
-                add_account_allowed: None,
-                login_pending: None,
-                uses_oauth: false,
-                source: ViewSource::Catalog,
-                connection_ids: Vec::new(),
-                paste_token: None,
-                aliases: None,
-                description: None,
-                category: None,
-                publisher: None,
-                docs_url: None,
-                setup_hint: None,
-                unverified: None,
-                verified_at: None,
-                tool_count: None,
-            })
-            .collect();
-        let (page, next) = page_plugin_views(&views, 0, 2);
-        assert_eq!(page.len(), 2);
-        assert_eq!(next.as_deref(), Some("2"));
-        for cursor in [views.len(), usize::MAX] {
-            let (page, next) = page_plugin_views(&views, cursor, 50);
-            assert!(page.is_empty(), "cursor {cursor} must page empty");
-            assert_eq!(next, None, "cursor {cursor} must end paging");
-        }
-    }
-
     /// A service with no dispatchable accounts and no reserved conflict
     /// produces NO row (TS skips the empty connectionIds path silently).
     #[test]

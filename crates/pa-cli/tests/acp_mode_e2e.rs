@@ -2182,7 +2182,7 @@ fn update_meta(frame: &Value) -> &Value {
 /// `rlm_quiescence_barrier_e2e` lane): spawn one RLM child through the
 /// product `rlm.spawn` surface and record its child id.
 fn spawn_cell() -> &'static str {
-    "handle = await rlm.spawn(\"run the lane task\", name=\"kid\")\nprint(handle.rlm_child_id)"
+    "handle = await agents.spawn(\"run the lane task\", name=\"kid\")\nprint(handle.child_id)"
 }
 
 /// The parent faux script whose turns run the spawn cell; the third

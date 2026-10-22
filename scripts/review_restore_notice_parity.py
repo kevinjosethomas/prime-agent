@@ -23,6 +23,9 @@ from review_goal_backoff_parity import TS_ARCHIVE_SHA256, sha256
 
 RESET = ("The working directory and environment variables were reset to the session defaults; "
          "re-apply any os.chdir(...) or os.environ[...] changes you still need.")
+# The agents/harness migration made these surfaces bootstrap-bound globals,
+# so the new runtime no longer lists them as revived kernel variables.
+DROPPED_REVIVED_NAMES = ('agent_message', 'agent_observe', 'goal', 'rlm_heartbeat')
 PROBE = "RESTORE_PARITY_RESULT="
 SETUP = """import os
 restore_parity_marker = 'namespace-survived'
@@ -130,6 +133,13 @@ def probe_from(requests, marker):
                     if line.startswith(marker):
                         return json.loads(line[len(marker):])
     raise AssertionError('missing actual tool result ' + marker)
+
+
+def without_dropped_names(notice):
+    line = next(item for item in notice.splitlines() if 'These names are available again' in item)
+    names = [name.strip() for name in line.rsplit(':', 1)[1].rsplit('.', 1)[0].split(',')]
+    kept = [name for name in names if name not in DROPPED_REVIVED_NAMES]
+    return notice.replace(line, line.rsplit(':', 1)[0] + ': %s.' % ', '.join(kept))
 
 
 def notices_in(request):
@@ -244,7 +254,9 @@ def main():
     result = {'ts_release_archive_sha256': archive_hash,
               'binaries': {label: {'path': str(path), 'sha256': sha256(path)}
                            for label, path in binaries.items()},
-              'intended_difference': RESET,
+              'intended_difference': RESET + ' The revived-names list drops '
+                  + ', '.join(DROPPED_REVIVED_NAMES)
+                  + ' (bootstrap-bound globals on the agents/harness surface).',
               'tool_name_normalization': 'Select offered python_repl or legacy ipython; identical cell code.',
               'fixture_prerequisites': [
                   'Wait for observable nonempty debounced snapshot before setup final answer in both binaries.',
@@ -263,7 +275,8 @@ def main():
         ts, rust = result['runs']['ts'], result['runs']['rust']
         errors = {label: run['error'] for label, run in result['runs'].items() if 'error' in run}
         assert not errors, errors
-        assert rust['notice'].removesuffix('\n' + RESET) == ts['notice'], 'additional notice difference'
+        assert rust['notice'].removesuffix('\n' + RESET) == without_dropped_names(ts['notice']), \
+            'additional notice difference'
         assert rust['restored'] == ts['restored'], 'restored state differs'
         assert rust['request_counts'] == ts['request_counts'] == {'setup': 2, 'resume': 3}
         result['notice_timing_equal'] = ts['notice_request_numbers'] == rust['notice_request_numbers']

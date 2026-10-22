@@ -22,7 +22,7 @@ import tempfile
 import threading
 import time
 
-from review_ledger_liveness_parity import Provider, PARENT, NAME
+from review_ledger_liveness_parity import Provider, PARENT, NAME, TS_CODE, RUST_CODE
 from review_agent_bounce_parity import Client
 from review_draft_disconnect_parity import digest, env_for, TS_ARCHIVE_SHA256
 from review_goal_fixture_lifecycle import OwnedProcesses, TAG, finish, verify_worker, process_identity
@@ -41,6 +41,7 @@ def observe(binary, kind, root, observed):
     library = Path(os.environ['PI_PACKAGE_DIR']) / 'skills'
     env['PYTHONPATH'] = os.pathsep.join(str(p) for p in library.glob('*/src') if p.is_dir())
     provider = Provider()
+    provider.code = TS_CODE if kind == 'ts' else RUST_CODE
     threading.Thread(target=provider.serve_forever, daemon=True).start()
     (root / 'agent/models.json').write_text(json.dumps({'providers': {'parity-local': {
         'api': 'openai-completions', 'apiKey': 'fixture-only',

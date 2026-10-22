@@ -368,7 +368,7 @@ def main():
     receipt = {'verified': False, 'runs': {}, 'scope': 'Raw daemon create, actual REPL/subprocess env, '
         'env clearing/retention and durable launch-env secret exclusion. TS residents require explicit fresh-context reopen; Rust auto-relaunches. No recovery-policy equivalence claim.',
         'not_verified': ['TUI/ACP sender env collection', 'refreshed attach launchEnv recovery',
-                         'rlm.spawn and minimal depth-0 root forwarding', 'automatic resident/promotion recovery parity (actual policies differ)'],
+                         'subagent spawn and minimal depth-0 root forwarding', 'automatic resident/promotion recovery parity (actual policies differ)'],
         'intentional_difference': 'Rust re-filters raw launchEnv internal-prefixed keys; TS trusts sender filtering and merges the injected canary. Exact canary values asserted per phase; raw results retained. Separately, TS parks crashed residents requiring fresh create context, whereas Rust relaunches automatically; exact parked states, explicit fresh-create inputs and durable identity proofs retained.',
         'normalization': 'Generated session IDs, roots, worker PIDs and timestamps excluded only from cross-run comparison; raw wire retained.'}
     try:

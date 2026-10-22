@@ -232,15 +232,16 @@ pub(crate) struct BackgroundShell {
 }
 
 /// TS `readLiteralShellLaunch`: the cell is a single `bash('...')` call
-/// (optionally assigned, optionally preceded by the rlm import).
+/// (optionally assigned, optionally preceded by runtime import lines).
 pub(crate) fn literal_shell_command(code: &str) -> Option<String> {
     let launch: Vec<&str> = code
         .trim()
         .lines()
+        .filter(|line| !line.trim().is_empty())
         .filter(|line| {
-            !line.trim().is_empty() && !line.trim_start().starts_with("from rlm import bash")
+            !line.trim_start().starts_with("from rlm")
+                && !line.trim_start().starts_with("import rlm")
         })
-        .filter(|line| line.trim() != "import rlm")
         .collect();
     let source = launch.first()?.trim_end();
     let open = source.find('(')?;

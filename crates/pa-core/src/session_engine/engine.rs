@@ -432,12 +432,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                 .get_all()
                 .credential(crate::auth::SERPER_CREDENTIAL_ID)
         };
-        let skills = resources.skills.clone();
-        tokio::task::spawn_blocking(move || {
-            super::runtime_wiring::websearch_api_key(&skills, credential)
-        })
-        .await
-        .map_err(|join| anyhow::anyhow!("websearch key resolve join failed: {join}"))?
+        tokio::task::spawn_blocking(move || super::runtime_wiring::websearch_api_key(credential))
+            .await
+            .map_err(|join| anyhow::anyhow!("websearch key resolve join failed: {join}"))?
     };
     let provisioner = super::runtime_wiring::kernel_provisioner(
         session_id,

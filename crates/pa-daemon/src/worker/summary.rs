@@ -418,7 +418,7 @@ pub(crate) struct SummaryInputs {
     pub(crate) bash_running: bool,
     pub(crate) quota_parked: bool,
     pub(crate) subagents_running: bool,
-    pub(crate) progress_note: Option<String>,
+    pub(crate) progress_note: Option<(String, u64)>,
 }
 
 impl SummaryInputs {
@@ -621,10 +621,16 @@ pub(crate) fn session_summary(core: &SessionCore, inputs: SummaryInputs) -> Sess
         created: store.map(|s| s.header.timestamp.clone()),
         modified,
         first_message: store.and_then(crate::session_store::SessionFile::first_message),
-        progress_note: inputs.progress_note,
+        progress_note: inputs.progress_note.as_ref().map(|(note, _)| note.clone()),
+        note_at: inputs
+            .progress_note
+            .as_ref()
+            .map(|(_, at_ms)| crate::util::iso_from_unix_ms(*at_ms)),
         parent_session_path: store.and_then(|store| store.header.parent_session.clone()),
         parent_active_session_id: core.parent_active_session_id.clone(),
         parent_session_id: core.parent_session_id.clone(),
+        starter_active_session_id: core.starter_active_session_id.clone(),
+        starter_session_id: core.starter_session_id.clone(),
         rlm_child_id: core.rlm_child_id.clone(),
         usage,
         response_timing,

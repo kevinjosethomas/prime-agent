@@ -179,6 +179,24 @@ impl Worker {
                 }
                 _ => (None, None, None, None),
             };
+        // The starter link of a depth-0 `rlm.create_session` session: it
+        // rides the summary as a family-view parent edge, never the
+        // parent-death cascade's `parentActiveSessionId` join.
+        let (starter_active_session_id, starter_session_id) = match payload.get("runtimeMetadata") {
+            Some(metadata) if metadata.get("kind").and_then(Value::as_str) == Some("top-level") => {
+                (
+                    metadata
+                        .get("starterActiveSessionId")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    metadata
+                        .get("starterSessionId")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                )
+            }
+            _ => (None, None),
+        };
         let thinking = payload
             .get("thinking")
             .and_then(Value::as_str)
@@ -568,6 +586,8 @@ impl Worker {
             core.rlm_child_id = rlm_child_id;
             core.parent_active_session_id = parent_active_session_id;
             core.parent_session_id = parent_session_id;
+            core.starter_active_session_id = starter_active_session_id;
+            core.starter_session_id = starter_session_id;
             core.child_script.clone_from(&child_script);
             (self.summary_locked(&core, inputs), rlm_depth)
         };

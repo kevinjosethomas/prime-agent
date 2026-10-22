@@ -115,10 +115,13 @@ pub struct SessionSummary {
     pub modified: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_message: Option<String>,
-    /// The run's latest accepted `rlm.progress.note`, cleared at the run
-    /// boundaries so an idle row never carries one.
+    /// The session's latest accepted `rlm.progress.note`, kept on the row
+    /// after the run ends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress_note: Option<String>,
+    /// The wall-clock timestamp of the latest accepted note.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_session_path: Option<String>,
     /// The parent's live active-session id (subagent summaries).
@@ -127,6 +130,12 @@ pub struct SessionSummary {
     /// The parent's persisted session id (subagent summaries).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_session_id: Option<String>,
+    /// The starter's live active-session id (depth-0 `rlm.create_session` summaries).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub starter_active_session_id: Option<String>,
+    /// The starter's persisted session id (depth-0 `rlm.create_session` summaries).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub starter_session_id: Option<String>,
     /// This subagent's child id under its parent (unique per parent; the
     /// roster agent id qualifies it with the parent path).
     #[serde(default, skip_serializing_if = "Option::is_none")]

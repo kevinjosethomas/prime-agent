@@ -1558,14 +1558,14 @@ class ReplTest(unittest.TestCase):
         self.assertEqual(one(events, "result")["text"], "'alive'")
 
     def test_list_names(self):
-        self.repl.execute("ln1", "alpha = 1\ndef helper(n):\n    return n\n_hidden = 2\nrlm = object()")
+        self.repl.execute("ln1", "alpha = 1\ndef helper(n):\n    return n\n_hidden = 2\nagents = object()")
         self.repl.send({"type": "list_names", "id": "ln2"})
         done = one(self.repl.until_done("ln2"), "done")
         self.assertEqual(done["status"], "ok")
         self.assertIn("alpha", done["names"])
         self.assertIn("helper", done["names"])
         self.assertNotIn("_hidden", done["names"])
-        self.assertNotIn("rlm", done["names"])
+        self.assertNotIn("agents", done["names"])
         self.assertEqual(done["names"], sorted(done["names"]))
 
     def test_mcp_status_without_servers(self):

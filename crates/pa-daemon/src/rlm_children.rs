@@ -29,8 +29,7 @@ use pa_core::session_engine::rlm_host::{
 };
 
 use crate::rlm_child_model::{
-    assert_thinking_supported, cap_text, compact_rlm_text, resolve_child_model, rlm_child_label,
-    ANSWER_TEXT_MAX_CHARS,
+    assert_thinking_supported, cap_text, compact_rlm_text, rlm_child_label, ANSWER_TEXT_MAX_CHARS,
 };
 use crate::supervisor_link::SupervisorLink;
 use crate::util::now_ms;
@@ -62,6 +61,8 @@ impl ChildCloseReason {
 /// How long a detached child prompt waits for its spawning parent turn
 /// before prompting anyway; a stuck turn must not orphan the child's task.
 const TURN_DONE_WAIT_SECS: u64 = 60;
+/// Poll interval of a blocking collect waiting for a released task prompt to land.
+const KICKOFF_POLL_MS: u64 = 20;
 
 /// Grace between the first idle observation and the settle decision.
 const WATCH_SETTLE_GRACE_MS: u64 = 250;
@@ -120,6 +121,8 @@ pub struct RlmChildIdentity {
     pub active_session_id: String,
     pub session_id: Option<String>,
     pub session_name: String,
+    /// A depth-0 session this starter created (a first-class agent, not a nested child).
+    pub top_level: bool,
 }
 
 /// The selector that reaches a child whether or not its worker is
@@ -141,6 +144,10 @@ struct ChildRecord {
     model: String,
     label: String,
     started_at_ms: u64,
+    /// A depth-0 session this starter created (`rlm.create_session`): it
+    /// joins the registry like a child but outlives the starter and never
+    /// cascades at parent close.
+    top_level: bool,
     /// Terminal state (`done` | `error` | `cancelled`); running while absent.
     settled_status: Option<&'static str>,
     /// Set only by the settle funnel, after the terminal notice is delivered; the
@@ -160,12 +167,15 @@ struct ChildRecord {
     /// The terminal notice was claimed: exactly one of the settle watcher,
     /// the delete path, or a late natural settle delivers it.
     notice_delivered: bool,
-    /// The task prompt was admitted; never settle a pre-prompt child (it
+    /// The task prompt landed on the child; never settle a pre-prompt child (it
     /// is idle with an empty queue by construction).
     prompt_admitted: bool,
     /// Terminal error text: the cancel reason for a cancelled run, the
     /// failure text for a failed one.
     error: Option<String>,
+    /// The child's latest accepted note and its timestamp, off its session summary.
+    progress_note: Option<String>,
+    note_at: Option<String>,
     /// The parent session closed while this child ran: the settle watcher
     /// exits without a notice — none is owed to a session being torn down.
     closed_by_parent: bool,
@@ -204,6 +214,11 @@ impl ChildRecord {
     /// Raw run status: `running` | `done` | `error` | `cancelled`.
     fn status(&self) -> &'static str {
         self.settled_status.unwrap_or("running")
+    }
+
+    /// The released task prompt is still on its way to the child.
+    fn kickoff_pending(&self) -> bool {
+        !self.prompt_admitted && self.settled_status.is_none() && !self.closed_by_parent
     }
 
     fn snapshot_value(&self) -> Value {
@@ -253,10 +268,13 @@ impl ChildRecord {
     }
 }
 
-/// Whether any record's settle funnel has not fired yet.
+/// Whether any nested child's settle funnel has not fired yet. Top-level
+/// records never gate the starter's quiescence: the starter is not
+/// "working" while its started top-level sessions run.
 async fn any_unsettled(children: &[Arc<Mutex<ChildRecord>>]) -> bool {
     for record in children {
-        if !record.lock().await.settled {
+        let child = record.lock().await;
+        if !child.top_level && !child.settled {
             return true;
         }
     }
@@ -276,6 +294,7 @@ struct DeletedChild {
     session_name: String,
     session_dir: String,
     started_at_ms: u64,
+    top_level: bool,
     /// The roster status the row carried at its delete (the idempotent
     /// re-delete receipt reports it verbatim, so a repeated retire reads
     /// the same verdict as the first).
@@ -357,6 +376,10 @@ struct SupervisorChildSessionsInner {
     /// Bumped once per completed parent turn: mid-turn prompt tasks wait for the next bump (the
     /// continuation is in flight before the child's first model turn).
     turn_done: tokio::sync::watch::Sender<u64>,
+    /// Bumped on every subagent-host request from the parent: a poll
+    /// mid-turn releases the parked task prompts instead of waiting out
+    /// the boundary.
+    parent_activity: tokio::sync::watch::Sender<u64>,
     /// The parent engine's child-settle hook (goal continuation resume).
     settle_hook: std::sync::Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     /// Whether any tracked child run is unsettled (the `any_running`
@@ -417,6 +440,7 @@ impl SupervisorChildSessions {
                 pending_spawn_names: std::sync::Mutex::new(std::collections::HashSet::new()),
                 deleted_children: std::sync::Mutex::new(std::collections::HashMap::new()),
                 turn_done: tokio::sync::watch::Sender::new(0),
+                parent_activity: tokio::sync::watch::Sender::new(0),
                 settle_hook: std::sync::Mutex::new(None),
                 running: tokio::sync::watch::Sender::new(false),
                 settle_notify: tokio::sync::Notify::new(),
@@ -627,6 +651,7 @@ impl SupervisorChildSessions {
                 active_session_id: record.active_session_id.clone(),
                 session_id: record.session_id.clone(),
                 session_name: record.session_name.clone(),
+                top_level: record.top_level,
             });
         }
         identities
@@ -684,6 +709,7 @@ impl SupervisorChildSessions {
                 active_session_id: identity.active_session_id,
                 session_id: identity.session_id,
                 session_dir: String::new(),
+                top_level: identity.top_level,
                 model: String::new(),
                 label: String::new(),
                 started_at_ms: 0,
@@ -696,6 +722,8 @@ impl SupervisorChildSessions {
                 notice_delivered: false,
                 prompt_admitted: true,
                 error: None,
+                progress_note: None,
+                note_at: None,
                 closed_by_parent: false,
                 retirement_finished: false,
                 retirement_notified: false,
@@ -760,6 +788,7 @@ impl SupervisorChildSessions {
             session_id: record.session_id.clone(),
             session_name: record.session_name.clone(),
             session_dir: record.session_dir.clone(),
+            top_level: record.top_level,
             status: record.roster_status(),
             // Live tool introspection across worker processes is a follow-up;
             // a running child reports `executing`.
@@ -771,7 +800,8 @@ impl SupervisorChildSessions {
             duration_ms: Some(now_ms().saturating_sub(record.started_at_ms)),
             answer_preview: record.answer_preview.clone(),
             replied_since_task: None,
-            progress_note: None,
+            progress_note: record.progress_note.clone(),
+            note_at: record.note_at.clone(),
             label: (!record.label.is_empty()).then(|| record.label.clone()),
             last_activity_at: Some(record.started_at_ms),
             activity_stale_ms: None,
@@ -874,15 +904,33 @@ impl SupervisorChildSessionsInner {
         sink(row);
     }
 
+    /// The parent came back to the subagent host mid-turn: parked task
+    /// prompts release instead of waiting out the turn boundary. Answers
+    /// the generation this bump wrote, so the caller's capture is atomic.
+    pub fn note_parent_activity(&self) -> u64 {
+        let mut generation = 0;
+        self.parent_activity.send_modify(|value| {
+            *value += 1;
+            generation = *value;
+        });
+        generation
+    }
+
     /// Wait for the parent turn that spawned a task to complete (generation
-    /// strictly greater than the one captured at spawn admission). Bounded:
-    /// a turn that never settles releases the child anyway.
-    pub async fn wait_turn_done(&self, generation: u64) {
-        let mut receiver = self.turn_done.subscribe();
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(TURN_DONE_WAIT_SECS),
-            receiver.wait_for(|value| *value > generation),
-        )
+    /// strictly greater than the one captured at spawn admission) or the
+    /// parent's next subagent-host request, whichever comes first. Bounded:
+    /// a turn that never settles releases the child anyway. `wait_for` (not
+    /// `changed`) reads the current value first, so a bump that landed
+    /// before the task first polls still releases.
+    pub async fn wait_prompt_release(&self, turn_generation: u64, activity_generation: u64) {
+        let mut turn_receiver = self.turn_done.subscribe();
+        let mut activity_receiver = self.parent_activity.subscribe();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(TURN_DONE_WAIT_SECS), async {
+            tokio::select! {
+                _ = turn_receiver.wait_for(|value| *value > turn_generation) => {}
+                _ = activity_receiver.wait_for(|value| *value > activity_generation) => {}
+            }
+        })
         .await;
     }
 

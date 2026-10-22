@@ -348,8 +348,24 @@ impl Supervisor {
                             || ("/".to_string(), edge.depth),
                             |info| (info.cwd, info.rlm_depth),
                         );
+                // A started top-level session keeps its root runtime and
+                // its starter link on the wake, never a subagent relabel.
+                let wake_metadata = if edge.top_level {
+                    let starter_session_id = std::path::Path::new(&edge.parent)
+                        .file_stem()
+                        .map(|stem| stem.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    json!({
+                        "kind": "top-level",
+                        "rlmChildId": edge.child_id,
+                        "starterSessionId": starter_session_id,
+                        "starterSessionFile": edge.parent,
+                    })
+                } else {
+                    json!({ "kind": "subagent", "rlmChildId": edge.child_id })
+                };
                 Some(
-                    self.launch_ledger_child_wake(&session_file, cwd, &edge.child_id, depth)
+                    self.launch_ledger_child_wake(&session_file, cwd, depth, wake_metadata)
                         .await,
                 )
             }
@@ -365,8 +381,8 @@ impl Supervisor {
         self: &Arc<Self>,
         session_file: &str,
         cwd: String,
-        child_id: &str,
         depth: u32,
+        runtime_metadata: Value,
     ) -> WakeOutcome {
         // Reuse before spawning: a concurrent revival may already host the file.
         if let Some(resident) = self.registry.find_by_session_file(session_file).await {
@@ -385,7 +401,7 @@ impl Supervisor {
             // root and never re-passivates.
             config: Some(json!({ "cwd": cwd, "rlmDepth": depth })),
             telemetry_disabled: None,
-            runtime_metadata: Some(json!({ "kind": "subagent", "rlmChildId": child_id })),
+            runtime_metadata: Some(runtime_metadata),
             lifecycle: None,
             env: None,
             launch_env: None,
@@ -666,6 +682,7 @@ mod tests {
             parent: "/sessions/parent.jsonl".to_string(),
             child: "/artifacts/parent/sub-kid1/sess-kid.jsonl".to_string(),
             depth: 1,
+            top_level: false,
             name: "kid".to_string(),
             deleted: None,
             deleted_usage: None,

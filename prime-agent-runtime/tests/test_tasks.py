@@ -20,6 +20,7 @@ from unittest import mock
 from unittest.mock import AsyncMock
 
 import rlm
+from rlm.agents import Agent
 import tasks
 from tasks import Link
 from tasks._client import Client
@@ -80,17 +81,6 @@ else:
 '''
 
 
-@dataclass
-class Agent:
-    """The frozen Agent shape the new API returns."""
-
-    name: str | None = None
-    session_id: str | None = None
-    relationship: str = "child"
-    child_id: str | None = None
-    session_dir: object = None
-
-
 class TaskTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix="tasks test ")
@@ -110,8 +100,9 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
         parser = await product.subtask("parser", "Structured log parser", status="active")
         parser = await parser.update(links=[
             Link("source", "https://example.com/parser", "Parser design")])
-        await parser.link(rlm.RLMSpawnHandle("child", "parser-owner",
-                                            Path(self.directory.name) / "child", "provider/model"))
+        await parser.link(Agent(name="parser-owner", session_id="child-session", status="idle",
+                                 relationship="child", child_id="child",
+                                 session_dir=Path(self.directory.name) / "child"))
         restarted = Client(**self.config)
         self.assertEqual((await restarted.get("parser")).parent_id, product.id)
         children = [item for item in await restarted.list() if item.parent_id == product.id]
@@ -120,6 +111,7 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await restarted._context())["agents"], [{
             "taskId": "parser", "rlmChildId": "child",
             "sessionDir": str(Path(self.directory.name) / "child"),
+            "sessionId": "child-session",
             "name": "parser-owner", "role": "worker"}])
 
     async def test_patch_updates_preserve_unrelated_fields(self):
@@ -250,54 +242,34 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((await self.client.get("primer")).archived)
         self.assertEqual(await self.client.list(), ())
 
-    async def test_link_accepts_native_handles_and_roster_rows(self):
-        task = await self.client.create("parser", "Parse JSON in Prime CLI logs")
-        handle = rlm.RLMSpawnHandle("child", "worker", Path(self.directory.name) / "child", "provider/model")
-        await task.link(handle)
-        roster_row = rlm.RLMSubagent("child", "actual-active-id", "actual-session-id",
-                                     "worker", Path(self.directory.name) / "child", "running")
-        await task.link(roster_row)
-        self.assertEqual((await self.client._context())["agents"], [{
-            "taskId": "parser", "rlmChildId": "child",
-            "sessionDir": str(Path(self.directory.name) / "child"),
-            "name": "worker", "role": "worker", "sessionId": "actual-session-id"}])
-        native = rlm.RLMCreateSessionHandle("active", "native-session-id", "parser-parent",
-                                           Path(self.directory.name) / "native.jsonl", "provider/model")
-        await task.link(native)
-        self.assertIn({"taskId": "parser", "sessionId": "native-session-id",
-                       "name": "parser-parent", "role": "worker"},
-                      (await self.client._context())["agents"])
-        with self.assertRaises(TypeError):
-            await task.link({"sessionId": "guessed"})
-
     async def test_link_accepts_frozen_agents_with_real_session_ids(self):
         task = await self.client.create("parser", "Parse JSON in Prime CLI logs")
         directory = Path(self.directory.name) / "child"
         await task.link(Agent(name="parser-worker", session_id="child-session",
-                              relationship="child", child_id="child", session_dir=directory))
+                              relationship="child", child_id="child", session_dir=directory, status="idle"))
         self.assertEqual((await self.client._context())["agents"], [{
             "taskId": "parser", "rlmChildId": "child", "sessionDir": str(directory),
             "sessionId": "child-session", "name": "parser-worker", "role": "worker"}])
         for relationship in ("parent", "sibling"):
             with self.subTest(relationship=relationship):
                 await task.link(Agent(name=f"{relationship}-peer", session_id="peer-session",
-                                      relationship=relationship))
+                                      relationship=relationship, status="idle"))
         self.assertEqual([item for item in (await self.client._context())["agents"]
                            if item.get("sessionId") == "peer-session"], [
             {"taskId": "parser", "sessionId": "peer-session", "name": "parent-peer", "role": "worker"},
             {"taskId": "parser", "sessionId": "peer-session", "name": "sibling-peer", "role": "worker"}])
         # Child metadata is optional: without it the Agent associates by session.
         await task.link(Agent(name="worker", session_id="late-child-session",
-                              relationship="child"))
+                              relationship="child", status="idle"))
         self.assertIn({"taskId": "parser", "sessionId": "late-child-session",
                         "name": "worker", "role": "worker"},
                       (await self.client._context())["agents"])
         await task.link(Agent(name="sibling-peer", session_id="peer-session",
-                              relationship="sibling", child_id="ignored"))
+                              relationship="sibling", child_id="ignored", status="idle"))
         # A real session id is mandatory: no fake ids, no guessed names.
-        for agent in (Agent(name="w", relationship="child", child_id="c", session_dir=directory),
-                      Agent(name="w", session_id="  "),
-                      Agent(name="w", session_id="s", relationship="cousin")):
+        for agent in (Agent(name="w", session_id=None, relationship="child", child_id="c", session_dir=directory, status="idle"),
+                      Agent(name="w", session_id="  ", relationship="sibling", status="idle"),
+                      Agent(name="w", session_id="s", relationship="cousin", status="idle")):
             with self.subTest(agent=agent):
                 with self.assertRaises((TypeError, ValueError)):
                     await task.link(agent)
@@ -309,15 +281,15 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
         directory = Path(self.directory.name) / "child"
         with mock.patch.object(rlm, "host_request", AsyncMock(return_value={
                 "agent": {"sessionId": "child-session", "sessionName": "actual-name"}})) as lookup:
-            await task.link(Agent(session_id="child-session", relationship="child",
-                                  child_id="child", session_dir=directory))
+            await task.link(Agent(name=None, session_id="child-session", relationship="child",
+                                  child_id="child", session_dir=directory, status="idle"))
         lookup.assert_awaited_once_with("agent_observe.get", {"target": "child-session"})
         self.assertEqual((await self.client._context())["agents"], [{
             "taskId": "parser", "rlmChildId": "child", "sessionDir": str(directory),
             "sessionId": "child-session", "name": "actual-name", "role": "worker"}])
         with mock.patch.object(rlm, "host_request", AsyncMock(return_value={
                 "agent": {"sessionId": "peer-session", "sessionName": None}})) as lookup:
-            await task.link(Agent(session_id="peer-session", relationship="parent"))
+            await task.link(Agent(name=None, session_id="peer-session", relationship="parent", status="idle"))
         lookup.assert_awaited_once_with("agent_observe.get", {"target": "peer-session"})
         self.assertIn({"taskId": "parser", "sessionId": "peer-session",
                        "name": "peer-session", "role": "worker"},
@@ -325,7 +297,7 @@ class TaskTests(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(rlm, "host_request", AsyncMock(side_effect=RuntimeError(
                 "agent unreachable is not reachable"))):
             with self.assertRaises(RuntimeError):
-                await task.link(Agent(session_id="gone-session", relationship="sibling"))
+                await task.link(Agent(name=None, session_id="gone-session", relationship="sibling", status="idle"))
         self.assertEqual(len((await self.client._context())["agents"]), 2)
 
     async def test_timeout_terminates_child_and_does_not_block_event_loop(self):

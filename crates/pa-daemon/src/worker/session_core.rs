@@ -55,6 +55,10 @@ pub(crate) struct SessionCore {
     pub(crate) rlm_child_id: Option<String>,
     pub(crate) parent_active_session_id: Option<String>,
     pub(crate) parent_session_id: Option<String>,
+    /// The starter link of a depth-0 `rlm.create_session` session: the
+    /// family view reads it as a parent edge without nesting the session.
+    pub(crate) starter_active_session_id: Option<String>,
+    pub(crate) starter_session_id: Option<String>,
     /// The create command's harness `childScript` (kept across the runtime swap
     /// so a replacement's children stay scripted); `None` for product sessions.
     pub(crate) child_script: Option<String>,
@@ -135,6 +139,8 @@ impl SessionCore {
             rlm_child_id: None,
             parent_active_session_id: None,
             parent_session_id: None,
+            starter_active_session_id: None,
+            starter_session_id: None,
             child_script: None,
             service_tier: None,
             active_service_tier: None,

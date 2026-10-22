@@ -82,8 +82,8 @@ impl Drop for EnvOverride {
     }
 }
 
-/// The kernel cell: the raw host requests the `compact` skill module
-/// issues, recorded on disk for the verifier (and printed so the tool result
+/// The kernel cell: the raw host requests the harness module issues,
+/// recorded on disk for the verifier (and printed so the tool result
 /// carries the same proof into the session transcript).
 fn harness_cell(receipt_path: &Path) -> String {
     format!(

@@ -1410,35 +1410,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn without_a_websearch_skill_no_serper_key_env() {
-        let dir = tempfile::tempdir().unwrap();
-        let agent_dir = dir.path().join("agent");
-        let cwd = dir.path().join("project");
-        std::fs::create_dir_all(&agent_dir).unwrap();
-        std::fs::create_dir_all(cwd.join(".prime/agent")).unwrap();
-        std::fs::write(
-            agent_dir.join("settings.json"),
-            serde_json::json!({ "bundledSkills": { "websearch": false } }).to_string(),
-        )
-        .unwrap();
-        std::fs::write(
-            agent_dir.join("auth.json"),
-            r#"{ "serper": { "type": "api_key", "key": "!printf key-from-cmd" } }"#,
-        )
-        .unwrap();
-        let engine = shell_test_session(cwd, agent_dir).await.unwrap();
-        assert!(
-            !engine
-                .provisioner
-                .inner
-                .options
-                .env
-                .contains_key("SERPER_API_KEY"),
-            "the key rides the env only when a websearch skill is loaded"
-        );
-    }
-
-    #[tokio::test]
     async fn session_settings_reject_a_missing_shell_path() {
         let dir = tempfile::tempdir().unwrap();
         let agent_dir = dir.path().join("agent");

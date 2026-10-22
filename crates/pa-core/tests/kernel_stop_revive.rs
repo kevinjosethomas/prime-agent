@@ -180,7 +180,7 @@ async fn revival_waits_for_in_flight_stop_before_booting() {
     let first = provisioner.ensure(None, None).await.unwrap();
     let first_cell = tokio::spawn(async move {
         first
-            .execute("await rlm.find_models('hold')", ExecuteOptions::default())
+            .execute("await harness.models('hold')", ExecuteOptions::default())
             .await
     });
     tokio::time::timeout(Duration::from_secs(10), entered_rx)

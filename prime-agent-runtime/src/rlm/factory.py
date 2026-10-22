@@ -14,7 +14,7 @@ rejected at validation time.
 Machines live in the machine library and nowhere else: ``MACHINE.md`` files
 (bundled seeds inside the runtime, the personal library under the agent dir)
 validated at import time (``prime-agent factory import``) and run directly
-(``rlm.factory.run('<name>')``). There is no stored-spec store: a state's
+(``factory.run('<name>')``). There is no stored-spec store: a state's
 subagent is an inline object with a prompt, and every run resolves its
 machine from the library.
 
@@ -22,24 +22,23 @@ This module implements the validation dry run for both forms -- the machine
 validator, the dag-to-machine compiler, the unified entry point
 (``validate_factory_spec`` detects the form), and a canonicalizer that
 applies defaults and returns the canonical MACHINE form -- plus the
-executor (``FactoryExecutor`` and the ``rlm.factory`` namespace:
+executor (``FactoryExecutor`` and the ``factory`` namespace:
 run/status/stop/resume) that runs canonicalized machines through the
-existing RLM supervisor: states are admitted with ``rlm.spawn``, settled
-through ``rlm.collect``, and cancelled with ``rlm.delete_subagent``. The
+existing RLM supervisor: states are admitted with ``agents.spawn``, settled and cancelled through the ``rlm.agents`` host bridge. The
 supervisor owns the children; the executor owns the run state in kernel
 memory. Runs do not survive a kernel restart (the registry lives in this
 module's state); children are supervisor-owned and keep running, so
-``rlm.list_subagents`` can still see them after a restart.
+``agents.list`` can still see them after a restart.
 
 The full agent-facing reference — authoring rules, guards/joins/cycles,
-foreach, budgets, stall detectors, and the ``rlm.factory`` API with worked
+foreach, budgets, stall detectors, and the ``factory`` API with worked
 examples — is embedded in this module as ``FACTORY_HELP``;
-``rlm.factory.help()`` returns it with no filesystem resolution, so
+``factory.help()`` returns it with no filesystem resolution, so
 packaged kernels (where the repo layout is not adjacent) see the same
 guide.
 
 The namespace is opt-in: while the ``factory.enabled`` setting is off (the
-default; the user turns it on with ``/factory on``), every ``rlm.factory``
+default; the user turns it on with ``/factory on``), every ``factory``
 call except ``help()`` refuses with one clean message
 (``FACTORY_DISABLED_MESSAGE``), never a crash.
 """
@@ -1021,7 +1020,7 @@ own roster previews cap at 160 characters, ``compactRlmText``).
 ANSWER_BINDING_CAP = 8192
 """Local cap for the settle-capture binding lane.
 
-``rlm.collect`` carries the child's full final answer (``answer_text``,
+the ``rlm.agents`` collect bridge carries the child's full final answer (``answer_text``,
 host-bounded at 64 KiB): input binding and output capture work on that
 text, not the roster preview — a fenced JSON output longer than the old
 200-character preview cap was truncated before the executor ever saw it,
@@ -1043,7 +1042,7 @@ parent or replay checker reads.
 """
 
 POLL_TIMEOUT_MS = 2000
-"""How long each control-loop ``rlm.collect`` waits for unsettled children."""
+"""How long each control-loop the ``rlm.agents`` collect bridge waits for unsettled children."""
 
 WATCH_TIMEOUT_CAP_SECONDS = 60.0
 """Upper bound on one ``factory.watch`` timeout (seconds), the agent-side
@@ -1519,11 +1518,10 @@ class FactoryExecutor:
     """Runs canonicalized state-machine factories through the existing RLM supervisor.
 
     Ownership split: the supervisor owns the children (admission via
-    ``rlm.spawn``, settlement via ``rlm.collect``, cancellation via
-    ``rlm.delete_subagent``); this executor owns the run state in kernel
-    memory. Every host call resolves through the module-level ``rlm``
-    functions and ``host_request`` at call time, so tests can patch
-    ``rlm.host_request``. ``now`` (default ``time.monotonic``) and ``sleep``
+    ``agents.spawn``, settlement via the ``rlm.agents`` collect bridge, cancellation via
+    the ``rlm.agents`` delete bridge); this executor owns the run state in kernel
+    memory. Every host call resolves through ``rlm.agents`` helpers and
+    ``host_request`` at call time, so tests can patch ``rlm.host_request``. ``now`` (default ``time.monotonic``) and ``sleep``
     (default ``asyncio.sleep``) are injectable: budgets measure admission
     to settlement and rate-limit backoff is testable with fake sleeps.
 
@@ -1537,7 +1535,7 @@ class FactoryExecutor:
 
     Runs do not survive a kernel restart (the registry lives in kernel
     memory); children are supervisor-owned and keep running, so
-    ``rlm.list_subagents`` can still see and stop them after a restart.
+    ``agents.list`` can still see and stop them after a restart.
     """
 
     def __init__(
@@ -1652,7 +1650,7 @@ class FactoryExecutor:
             if run.last_error is not None:
                 payload["last_error"] = run.last_error
                 payload["remedy"] = (
-                    f"resume with await rlm.factory.resume('{run.run_id}') to re-admit the "
+                    f"resume with await factory.resume('{run.run_id}') to re-admit the "
                     "failed state's entry as a fresh attempt (same rendered prompt, no extra "
                     "max_entries); author the state with failure_policy 'continue' to run its "
                     "dependents past a failure instead"
@@ -2006,7 +2004,7 @@ class FactoryExecutor:
             # ``done``/``failed`` run whose instances are still in
             # flight (the resident lifecycle — admitted residents never
             # block completion, and the finished milestone tells the
-            # operator to ``rlm.factory.stop()`` them) is LIVE, so the
+            # operator to ``factory.stop()`` them) is LIVE, so the
             # page keeps the run and its stop control while any child
             # runs; the terminal history window holds only runs with no
             # child in flight.
@@ -2132,7 +2130,7 @@ class FactoryExecutor:
         resolution and validation. The reply's result payload carries the WIRE's
         camelCase keys (``_wire_payload`` re-keys the snake_case rows: the
         protocol's request frame is camelCase end to end) — the
-        conversation API (``rlm.factory.graph()`` in-kernel) stays
+        conversation API (``factory.graph()`` in-kernel) stays
         snake_case.
         """
         # The lane rides the same opt-in gate as the namespace: while
@@ -2435,7 +2433,7 @@ class FactoryExecutor:
                         run,
                         "max_transitions_exceeded",
                         f"max_transitions {run.max_transitions} exceeded; no new entries; "
-                        f"resume with await rlm.factory.resume('{run.run_id}')",
+                        f"resume with await factory.resume('{run.run_id}')",
                     )
                     return
                 if join_signature is not None:
@@ -2529,7 +2527,7 @@ class FactoryExecutor:
             run,
             "budget_exceeded",
             f"run budget_ms {run.run_budget_ms} exceeded after {int(elapsed_ms)}ms; no new spawns; "
-            f"resume with await rlm.factory.resume('{run.run_id}')",
+            f"resume with await factory.resume('{run.run_id}')",
         )
 
     def _children_budget_exceeded(self, run: FactoryRun) -> bool:
@@ -2554,7 +2552,7 @@ class FactoryExecutor:
             run,
             "max_children_exceeded",
             f"run max_children {run.max_children} exceeded after {run.spawn_count} children; "
-            f"no new spawns; resume with await rlm.factory.resume('{run.run_id}')",
+            f"no new spawns; resume with await factory.resume('{run.run_id}')",
         )
 
     async def _prepare_ready_entries(self, run: FactoryRun) -> None:
@@ -2739,12 +2737,12 @@ class FactoryExecutor:
         ``stop()`` is retracted (deleted and cancelled) instead of
         registered running.
         """
-        from . import spawn
+        from .agents import _spawn_child
 
         instance.attempt += 1
         child_name = _spawn_label(state.name, run.run_id, state.state_id, instance.index, instance.attempt)
         try:
-            handle = await spawn(
+            handle = await _spawn_child(
                 instance.prompt, name=child_name, model=state.model, thinking=state.thinking
             )
         except RuntimeError as exc:
@@ -2943,13 +2941,13 @@ class FactoryExecutor:
         concurrent pass (stop(), fail_fast) claimed the instance or the
         worker answered alive (the loop keeps collecting it).
         """
-        from . import collect
+        from .agents import _collect_children
 
         child_id = instance.child_id
         await self._sleep_fn(INFRA_VERIFY_QUIET_SECONDS)
         if instance.status != "running" or instance.child_id != child_id:
             return None  # a stop, fail_fast, or resumed lane claimed the instance
-        results = await collect([child_id], timeout_ms=0)
+        results = await _collect_children([child_id], timeout_ms=0)
         if instance.status != "running" or instance.child_id != child_id:
             return None
         row = next((r for r in results if r.rlm_child_id == child_id), None)
@@ -2974,7 +2972,7 @@ class FactoryExecutor:
         free respawn; a second verified death falls through to the normal
         retries/failure_policy path.
         """
-        from . import delete_subagent
+        from .agents import _delete_child
 
         old_child = instance.child_id or ""
         # The worker may be alive-but-unreachable rather than dead: retire
@@ -2985,7 +2983,7 @@ class FactoryExecutor:
         # respawn; the supervisor-side zombie sweep this pairs with lands
         # in PR 2 of the [factory] group.
         try:
-            await delete_subagent(old_child)
+            await _delete_child(old_child)
         except Exception:
             pass
         if instance.status != "running" or run.state not in ("running", "paused"):
@@ -3115,7 +3113,7 @@ class FactoryExecutor:
     async def _refresh_entry_answers(self, run: FactoryRun, state: _StateRun, entry: _StateEntry) -> bool:
         """Refresh settled answers, waiting one bounded poll window for a
         missing hand-off. Returns whether any answer changed."""
-        from . import collect
+        from .agents import _collect_children
 
         child_ids = [
             instance.child_id
@@ -3131,7 +3129,7 @@ class FactoryExecutor:
         changed = False
         while entry.status == "running":
             try:
-                results = await collect(child_ids, timeout_ms=0)
+                results = await _collect_children(child_ids, timeout_ms=0)
             except Exception as exc:
                 self._event(
                     run,
@@ -3318,7 +3316,7 @@ class FactoryExecutor:
             await self._milestone(
                 run,
                 "paused",
-                f"state {state.state_id} failed: {reason}; resume with await rlm.factory.resume('{run.run_id}') "
+                f"state {state.state_id} failed: {reason}; resume with await factory.resume('{run.run_id}') "
                 "to re-admit the failed entry as a fresh attempt",
                 node=state.state_id,
             )
@@ -3375,11 +3373,11 @@ class FactoryExecutor:
         cancelled instead of registered running. Without this the child
         would keep running under the supervisor after a "stopped" run.
         """
-        from . import delete_subagent
+        from .agents import _delete_child
 
         child_id = instance.child_id or ""
         try:
-            await delete_subagent(child_id)
+            await _delete_child(child_id)
         except Exception as exc:
             self._event(run, "cancel_failed", node=state.state_id, entry=entry.index, instance=instance.index, child=child_id, error=str(exc))
             # The slot is released either way, so the ledger must record the
@@ -3393,7 +3391,7 @@ class FactoryExecutor:
         instance.status = "cancelled"
 
     async def _cancel_running(self, run: FactoryRun) -> None:
-        from . import delete_subagent
+        from .agents import _delete_child
 
         for state_id in run.order:
             state = run.states[state_id]
@@ -3411,7 +3409,7 @@ class FactoryExecutor:
                     # is dropped instead of applying to a child being torn down.
                     instance.status = "cancelled"
                     try:
-                        await delete_subagent(child_id)
+                        await _delete_child(child_id)
                     except Exception as exc:
                         self._event(run, "cancel_failed", node=state_id, entry=entry.index, instance=instance.index, child=child_id, error=str(exc))
                         # The slot is released either way, so the ledger also
@@ -3436,7 +3434,7 @@ class FactoryExecutor:
         settle -- finalizing earlier orphaned them under the supervisor
         with no collector. Admitted resident instances are the one
         exception: they stay alive under the parent session until
-        rlm.factory.stop() or session teardown, so a resident entry's
+        factory.stop() or session teardown, so a resident entry's
         running instances never block completion -- but its still-queued
         (pending) instances do: the admission queue must drain before the
         run can end, or a resident left pending by max_parallel was
@@ -3481,7 +3479,7 @@ class FactoryExecutor:
         ]
         detail = f"run complete: {len(run.states)} state(s), {run.transitions_fired} transition(s) fired"
         if residents:
-            detail += f"; {len(residents)} resident state(s) still running (stop with await rlm.factory.stop('{run.run_id}'))"
+            detail += f"; {len(residents)} resident state(s) still running (stop with await factory.stop('{run.run_id}'))"
         await self._milestone(run, "finished", detail)
 
     # -- control loop --------------------------------------------------------
@@ -3517,7 +3515,7 @@ class FactoryExecutor:
     async def _loop_body(self, run: FactoryRun, generation: int) -> None:
         import asyncio
 
-        from . import collect
+        from .agents import _collect_children
 
         # The generation re-checks after every await are the resume-race
         # fix: a resume() that lands while this task is suspended at an
@@ -3533,7 +3531,7 @@ class FactoryExecutor:
                 if instance.status == "running" and instance.child_id is not None
             ]
             if in_flight:
-                results = await collect(
+                results = await _collect_children(
                     [instance.child_id for _, _, instance in in_flight], timeout_ms=POLL_TIMEOUT_MS
                 )
                 settled = {entry.rlm_child_id: entry for entry in results if entry.settled}
@@ -3730,7 +3728,7 @@ def factory_enabled() -> bool:
 def require_factory_enabled() -> None:
     """Refuse with one clean error while the factory is disabled.
 
-    Every gated surface funnels through here -- the ``rlm.factory``
+    Every gated surface funnels through here -- the ``factory``
     namespace calls (``run``/``status``/``stop``/``resume``, and the later
     ``graph``/``watch``) and the out-of-band activity lane -- so the refusal
     is one message at every seam. ``help()`` is deliberately exempt: the
@@ -3744,7 +3742,7 @@ _DEFAULT_EXECUTOR: FactoryExecutor | None = None
 
 
 def default_factory_executor() -> FactoryExecutor:
-    """The process-wide executor behind the ``rlm.factory`` namespace.
+    """The process-wide executor behind the ``factory`` namespace.
 
     Tests that need an injected clock or sleep assign their own
     ``FactoryExecutor`` to ``factory._DEFAULT_EXECUTOR``; the namespace then
@@ -3760,7 +3758,7 @@ async def run_factory(spec_id: str, *, name: str | None = None) -> dict[str, Any
     """Validate a library machine and start a nonblocking run of it.
 
     The argument names a machine from the library (repo directory first,
-    user second) and runs it directly: ``await rlm.factory.run("review-sweep")``
+    user second) and runs it directly: ``await factory.run("review-sweep")``
     starts the library machine. Machines in the library are the only specs.
     """
     require_factory_enabled()
@@ -3830,6 +3828,36 @@ async def watch_factory(
     return await default_factory_executor().watch(run_id, timeout, compact=compact)
 
 
+
+class _FactoryNamespace:
+    """The ``factory`` global: run/status/stop/resume/graph/watch/help."""
+
+    async def run(self, spec_id: str, *, name: str | None = None) -> dict[str, Any]:
+        return await run_factory(spec_id, name=name)
+
+    async def status(self, run_id: str) -> dict[str, Any]:
+        return await status_factory(run_id)
+
+    async def stop(self, run_id: str) -> dict[str, Any]:
+        return await stop_factory(run_id)
+
+    async def resume(self, run_id: str) -> dict[str, Any]:
+        return await resume_factory(run_id)
+
+    async def graph(self, ref: str | None = None) -> dict[str, Any]:
+        return graph_factory(ref)
+
+    async def watch(self, run_id: str, timeout: float = 0.0) -> dict[str, Any]:
+        return await watch_factory(run_id, timeout)
+
+    def help(self) -> str:
+        """Return the embedded factory authoring reference and API guide."""
+        return FACTORY_HELP
+
+
+#: The kernel's ``factory`` global; the bootstrap binds it with
+#: ``from factory import factory``.
+factory = _FactoryNamespace()
 def _machine_structure(
     machine: dict[str, Any],
     resolved: "dict[str, tuple[str | None, str | None]] | None" = None,
@@ -3919,7 +3947,7 @@ def _wire_payload(value: Any) -> Any:
     comparison ``value`` mirrors the executor's declared condition
     exactly, so re-keying it would display a condition that no longer
     matches the machine. The in-kernel conversation API
-    (``rlm.factory.graph()`` and friends) stays snake_case.
+    (``factory.graph()`` and friends) stays snake_case.
     """
     if isinstance(value, dict):
         if "output" in value and "op" in value:
@@ -4064,7 +4092,7 @@ def _cap_factory_frame(frame: dict[str, Any]) -> None:
 # a run's canonical machine back to MACHINE.md (byte-pretty, stable
 # formatting for diffs). Machines in the library are the only specs, so
 # ``run_factory`` resolves its argument against the library directly:
-# ``await rlm.factory.run("review-sweep")``.
+# ``await factory.run("review-sweep")``.
 # ---------------------------------------------------------------------------
 
 MACHINE_FILE_NAME = "MACHINE.md"
@@ -4561,7 +4589,7 @@ def resolve_machine(
     parse, or carries a spec the write-time validator rejects, never
     claims its name on either surface: resolution falls through to the
     next level exactly like the listing does, so `factory list`,
-    ``rlm.factory.run``, and export can never disagree about a name. A
+    ``factory.run``, and export can never disagree about a name. A
     name whose only carriers are invalid files raises
     ``MachineResolutionError`` with ``broken=True`` and the first file's
     exact errors (in repo-to-user order) — broken, never missing; a name
@@ -4813,7 +4841,7 @@ FACTORY_HELP: str = r"""# Factory
 
 The factory runs state-machine workflows of spawned child agents. A library
 machine declares the shape — states, each backed by an inline subagent
-object, plus guarded transitions between them. `await rlm.factory.run('<name>')`
+object, plus guarded transitions between them. `await factory.run('<name>')`
 spawns each state's subagent as an ordinary child, feeds captured outputs
 into the successors' prompts, and drives the run to quiescence in a
 background kernel task; the call returns immediately and the run continues
@@ -4824,7 +4852,7 @@ per list item.
 The factory is opt-in: it ships disabled, and the user turns it on with
 `/factory on` (`/factory off` disables it again, `/factory status` reports
 it; the persisted setting is `factory.enabled` in the agent dir's
-settings.json). While it is disabled, every `rlm.factory` call except
+settings.json). While it is disabled, every `factory` call except
 `help()` — run, status, stop, and resume — refuses with one
 clean error:
 "the factory is disabled; run /factory on to enable it". `help()` answers
@@ -4836,7 +4864,7 @@ A factory spec is a machine in the library: a `MACHINE.md` file (frontmatter
 plus one fenced `machine-spec` block), imported with
 `prime-agent factory import <path>` — the import validates, so an invalid
 machine never persists — and run directly with
-`await rlm.factory.run('<name>')`, which re-validates before starting.
+`await factory.run('<name>')`, which re-validates before starting.
 The spec rides the `machine` form (the native shape below) or the `dag`
 form (sugar that compiles to machine form). This review/fix loop is the
 shipped `pr-manager` library machine's spec, as its `machine-spec` fence
@@ -5045,11 +5073,11 @@ shipped `review-sweep` library machine was authored in dag form; its
 ## Run and steer
 
 ```python
-result = await rlm.factory.run("pr-manager")
+result = await factory.run("pr-manager")
 # {"run_id": "...", "spec_id": "pr-manager", "nodes": 4, "max_parallel": 8,
 #  "started": ["entry"], "pending": []}  — returns immediately.
 
-status = await rlm.factory.status(result["run_id"])
+status = await factory.status(result["run_id"])
 status["state"]    # running | stopping | paused | done | failed | stopped
 status["nodes"]    # per state: status, entries_used/max_entries, instances,
                    # latest answer_preview, error
@@ -5071,7 +5099,7 @@ status["last_error"]    # last admission/bind failure) and a one-line "remedy"
 ships alongside the stacked live-view PR's TUI page:
 
 ```python
-graph = await rlm.factory.graph(result["run_id"])
+graph = await factory.graph(result["run_id"])
 # {"run_id": "...", "spec_id": "pr-manager", "state": "running",
 #  "machine": {"order": [...], "states": [...],
 #              "transitions": [...], "run": {...}},
@@ -5079,10 +5107,10 @@ graph = await rlm.factory.graph(result["run_id"])
 #  "events": [...], "usage": {...}, "budget": {"limit_ms": ...,
 #  "consumed_ms": ...}}  — structure fused with live state.
 
-every = await rlm.factory.graph()        # every live run ({"runs": [...]})
-spec = await rlm.factory.graph("pr-manager")  # a library machine's static graph
+every = await factory.graph()        # every live run ({"runs": [...]})
+spec = await factory.graph("pr-manager")  # a library machine's static graph
 
-watched = await rlm.factory.watch(result["run_id"], 30)
+watched = await factory.watch(result["run_id"], 30)
 # the same fused snapshot plus "changed" — the call blocks until the
 # run's state/instance shape changes or the bounded timeout elapses,
 # so one call streams a run's progress without polling `status()`.
@@ -5109,7 +5137,7 @@ watched = await rlm.factory.watch(result["run_id"], 30)
   after an escalate pause it first re-admits the failed entry.
 - The activity lane the daemon and TUI speak is camelCase on the wire
   (`runId`, `specId`, `timeoutMs`); the kernel API here
-  (`rlm.factory.*`) is snake_case.
+  (`factory.*`) is snake_case.
 
 ## Discovering machines
 
@@ -5123,7 +5151,7 @@ watched = await rlm.factory.watch(result["run_id"], 30)
   parses and validates (broken files print as warnings), import validates the
   spec the same way `run` does so an invalid machine never
   persists, and export copies a library machine verbatim to a fresh path
-  (an existing target is refused, never overwritten). `rlm.factory.run('<name>')`
+  (an existing target is refused, never overwritten). `factory.run('<name>')`
   runs a library machine directly; a
   machine that exists but is broken names its errors
   instead of pretending the name is unknown. The bundled seeds are
@@ -5149,10 +5177,10 @@ watched = await rlm.factory.watch(result["run_id"], 30)
   ~160 characters — and let the full answer live in the child's session.
 - Run registries live in kernel memory: a kernel restart loses `status`
   for old runs, but the children keep running under the supervisor
-  (`rlm.list_subagents` sees them). Stop runs before restarting, or
+  (`agents.list` sees them). Stop runs before restarting, or
   delete the children by hand afterwards.
 - Residents outlive their run; stop the run (or tear down the session) to
-  retire them. Prefer `rlm.factory.stop(run_id)` over deleting a factory
+  retire them. Prefer `factory.stop(run_id)` over deleting a factory
   child by hand — the executor claims and cancels children itself, and a
   hand deletion surfaces as a child failure through the state's policy.
 """

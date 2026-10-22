@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use crate::cron::store::{
     AgentCronJobStore, CreateAgentCronJobInput, RlmHeartbeatStatusUpdate, RlmHeartbeatUpdate,
 };
-use crate::cron::{AgentCronJob, DeliveryMode, JobStatus};
+use crate::cron::{normalize_heartbeat_schedule, AgentCronJob, DeliveryMode, JobStatus};
 use crate::goals::{goal_host_response, GoalHostResponse, GoalState, GoalStatus};
 use crate::session::manager::SessionManager;
 
@@ -109,7 +109,7 @@ fn create_goal_from_host(
 ) -> anyhow::Result<GoalState> {
     match driver.state().status {
         GoalStatus::Active => anyhow::bail!(
-            "cannot create a new goal because this thread already has an active goal; run `await goal.complete()` when it is achieved, or ask the user to clear it with /goal clear"
+            "cannot create a new goal because this thread already has an active goal; run `await harness.goal.complete()` when it is achieved, or ask the user to clear it with /goal clear"
         ),
         GoalStatus::Paused => anyhow::bail!(
             "cannot create a new goal because a paused goal exists; ask the user to resume it with /goal resume or clear it with /goal clear"
@@ -231,7 +231,7 @@ pub fn handle_rlm_heartbeat_host_request(
             let label = string_field("label")?;
             create_input.prompt = instruction.to_string();
             create_input.label = label;
-            create_input.schedule_text = interval.unwrap_or_else(|| "every 5m".to_string());
+            create_input.schedule_text = normalize_heartbeat_schedule(interval.as_deref());
             create_input.delivery_mode = delivery_mode;
             let heartbeat = store.create_rlm_heartbeat(&create_input)?;
             let response = json!({ "heartbeat": rlm_heartbeat_host_response(&heartbeat) });
@@ -286,7 +286,9 @@ pub fn handle_rlm_heartbeat_host_request(
                 &RlmHeartbeatUpdate {
                     label,
                     prompt: instruction,
-                    schedule_text: interval,
+                    schedule_text: interval
+                        .as_deref()
+                        .map(|text| normalize_heartbeat_schedule(Some(text))),
                     status,
                     delivery_mode,
                     now: Some(now),
@@ -447,6 +449,7 @@ mod tests {
             &bind,
         )
         .unwrap();
+
         let heartbeat = created.response.get("heartbeat").cloned().unwrap();
         assert_eq!(heartbeat["status"], "active");
         assert_eq!(heartbeat["instruction"], "watch pods");
@@ -535,5 +538,34 @@ mod tests {
         assert!(error
             .to_string()
             .contains("unknown RLM heartbeat request type"));
+    }
+
+    /// A bare interval (`"5m"`) normalizes like the /heartbeat command, on
+    /// create and update alike.
+    #[test]
+    fn rlm_heartbeat_bare_intervals_normalize() {
+        let store = heartbeat_store();
+        let bind = binding();
+        let created = handle_rlm_heartbeat_host_request(
+            "rlm_heartbeat.create",
+            &json!({ "instruction": "watch nodes", "interval": "5m" }),
+            &store,
+            "live-1",
+            &bind,
+        )
+        .unwrap();
+        let heartbeat = created.response.get("heartbeat").cloned().unwrap();
+        assert_eq!(heartbeat["schedule"]["kind"], "interval");
+        assert_eq!(heartbeat["schedule"]["intervalMs"], json!(5 * 60_000));
+        let updated = handle_rlm_heartbeat_host_request(
+            "rlm_heartbeat.update",
+            &json!({ "id": heartbeat["id"].as_str().unwrap(), "interval": "10m" }),
+            &store,
+            "live-1",
+            &bind,
+        )
+        .unwrap();
+        let updated = updated.response.get("heartbeat").cloned().unwrap();
+        assert_eq!(updated["schedule"]["intervalMs"], json!(10 * 60_000));
     }
 }

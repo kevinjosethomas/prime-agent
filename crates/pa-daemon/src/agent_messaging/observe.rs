@@ -63,15 +63,16 @@ impl LinkAgentObserveController {
         Ok((sessions, identity))
     }
 
-    /// This session's resident children's live active session ids (rows the
-    /// registry owns are Children even before their durable edges hydrate).
-    async fn registry_child_active_ids(&self) -> Vec<String> {
+    /// This session's resident children's live active session ids with
+    /// their top-level flags (rows the registry owns are Children even
+    /// before their durable edges hydrate).
+    async fn registry_child_active_ids(&self) -> Vec<(String, bool)> {
         match &self.children {
             Some(children) => children
                 .child_identities()
                 .await
                 .into_iter()
-                .map(|child| child.active_session_id)
+                .map(|child| (child.active_session_id, child.top_level))
                 .collect(),
             None => Vec::new(),
         }
@@ -150,7 +151,7 @@ impl AgentObserveController for LinkAgentObserveController {
 pub(super) fn summaries_from_roster(
     sessions: Vec<Value>,
     identity: &FamilyIdentity,
-    registry_child_active_ids: &[String],
+    registry_child_active_ids: &[(String, bool)],
 ) -> Vec<AgentObserveSummary> {
     sessions
         .into_iter()
@@ -161,13 +162,13 @@ pub(super) fn summaries_from_roster(
                 .and_then(Value::as_str)
                 .map(str::to_string)?;
             let is_current = active_session_id == identity.active_session_id;
+            let registry_child_top_level = registry_child_active_ids
+                .iter()
+                .find(|(child, _)| child == &active_session_id)
+                .map(|(_, top_level)| *top_level);
             let relationship = if is_current {
                 None
-            } else if registry_child_active_ids
-                .iter()
-                .any(|child| child == &active_session_id)
-                || row_is_child(&session, identity)
-            {
+            } else if registry_child_top_level.is_some() || row_is_child(&session, identity) {
                 Some(AgentFamilyRelationship::Child)
             } else if row_is_parent(&session, identity) {
                 Some(AgentFamilyRelationship::Parent)
@@ -256,6 +257,7 @@ pub(super) fn summaries_from_roster(
                     .map(str::to_string),
                 relationship,
                 runtime_kind: Some(runtime_kind),
+                top_level: registry_child_top_level.unwrap_or_default(),
                 status,
                 activity: has_live_session.then_some(activity),
                 is_current,
@@ -264,6 +266,16 @@ pub(super) fn summaries_from_roster(
                 attached_clients,
                 queued_count: queued,
                 is_session_active,
+                note: session
+                    .get("progressNote")
+                    .and_then(Value::as_str)
+                    .filter(|note| !note.is_empty())
+                    .map(str::to_string),
+                note_at: session
+                    .get("noteAt")
+                    .and_then(Value::as_str)
+                    .filter(|at| !at.is_empty())
+                    .map(str::to_string),
             })
         })
         .collect()

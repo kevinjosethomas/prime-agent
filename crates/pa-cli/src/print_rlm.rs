@@ -6,14 +6,16 @@
 //! `waitForRlmQuiescence` minus the #2270 bug (print must wait for RLM
 //! quiescence, not just headless idle).
 
+use std::future::Future;
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
 
 use pa_core::session_engine::agent_messaging::{
     create_agent_session_message_id, create_agent_session_message_prompt,
-    create_agent_session_message_row, AgentFamilyMember, AgentFamilyRelationship,
-    AgentMessageController, AgentMessageDeliveryStatus, AgentMessagePromptPayload,
-    AgentMessageReceipt, AgentMessageSendInput, AgentSessionMessageRowPayload,
+    create_agent_session_message_row, register_agent_observe_host_handlers, AgentFamilyMember,
+    AgentFamilyRelationship, AgentFamilyStatus, AgentMessageController, AgentMessageDeliveryStatus,
+    AgentMessagePromptPayload, AgentMessageReceipt, AgentMessageSendInput, AgentObserveController,
+    AgentObserveMessagePreview, AgentObserveSummary, AgentSessionMessageRowPayload,
 };
 use pa_core::session_engine::engine::SessionEngine;
 use pa_core::session_engine::goal_boundary::custom_message_to_loop_row;
@@ -231,7 +233,126 @@ pub(crate) fn inline_subagent_wiring(
         std::sync::Arc::new(InlineMessages(Arc::clone(node))),
         &mut handlers,
     );
+    register_agent_observe_host_handlers(
+        std::sync::Arc::new(InlineObserver(Arc::clone(node))),
+        &mut handlers,
+    );
     (Arc::new(InlineHost(Arc::clone(node))), handlers)
+}
+
+// The observe controller (the `agent_observe.*` kernel surface)
+
+/// The family roster observer over one node's tree position: the same
+/// parent/sibling/children edges the messaging controller resolves, one
+/// row per member.
+struct InlineObserver(Arc<InlineSessionNode>);
+
+/// Whether a node still runs: a live engine with a streaming turn or
+/// queued rows; a disposed node (an exited child) never runs.
+async fn node_is_running(node: &Arc<InlineSessionNode>) -> bool {
+    if node.is_disposed() {
+        return false;
+    }
+    let Some(engine) = node.engine.get().and_then(Weak::upgrade) else {
+        return false;
+    };
+    let agent = engine.session.agent();
+    agent.has_queued_messages() || agent.state().await.is_streaming
+}
+
+impl InlineObserver {
+    fn row(
+        node: &Arc<InlineSessionNode>,
+        relationship: Option<AgentFamilyRelationship>,
+        is_current: bool,
+        running: bool,
+    ) -> AgentObserveSummary {
+        AgentObserveSummary {
+            active_session_id: Some(node.session_id.clone()),
+            session_id: node.session_id.clone(),
+            session_name: node.session_name().filter(|name| !name.is_empty()),
+            relationship,
+            runtime_kind: Some(
+                if node.depth > 0 {
+                    "subagent"
+                } else {
+                    "top-level"
+                }
+                .to_string(),
+            ),
+            top_level: false,
+            status: if running {
+                AgentFamilyStatus::Running
+            } else {
+                AgentFamilyStatus::Idle
+            },
+            activity: None,
+            is_current,
+            is_streaming: running,
+            is_compacting: false,
+            attached_clients: 0,
+            queued_count: 0,
+            is_session_active: false,
+            note: None,
+            note_at: None,
+        }
+    }
+}
+
+impl AgentObserveController for InlineObserver {
+    async fn list_agents(&self) -> anyhow::Result<Vec<AgentObserveSummary>> {
+        let node = &self.0;
+        let mut rows = Vec::new();
+        rows.push(Self::row(node, None, true, node_is_running(node).await));
+        if let Some(parent) = node.parent_node() {
+            rows.push(Self::row(
+                &parent,
+                Some(AgentFamilyRelationship::Parent),
+                false,
+                node_is_running(&parent).await,
+            ));
+            for sibling in parent.children.lock().await.iter() {
+                if Arc::ptr_eq(&sibling.node, node) {
+                    continue;
+                }
+                rows.push(Self::row(
+                    &sibling.node,
+                    Some(AgentFamilyRelationship::Sibling),
+                    false,
+                    child_is_unsettled(sibling).await,
+                ));
+            }
+        }
+        for child in node.children.lock().await.iter() {
+            rows.push(Self::row(
+                &child.node,
+                Some(AgentFamilyRelationship::Child),
+                false,
+                child_is_unsettled(child).await,
+            ));
+        }
+        Ok(rows)
+    }
+
+    async fn get_agent(&self, target: &str) -> anyhow::Result<Option<AgentObserveSummary>> {
+        let rows = self.list_agents().await?;
+        Ok(rows.into_iter().find(|row| {
+            row.active_session_id.as_deref() == Some(target)
+                || row.session_id == target
+                || row.session_name.as_deref() == Some(target)
+        }))
+    }
+
+    fn recent_messages(
+        &self,
+        _target: &str,
+        _limit: usize,
+        _max_chars: usize,
+    ) -> impl Future<Output = anyhow::Result<Vec<AgentObserveMessagePreview>>> + Send {
+        std::future::ready(Err(anyhow::anyhow!(
+            "agent_observe recent messages are not available in this session"
+        )))
+    }
 }
 
 // The quiescence drive
@@ -625,6 +746,7 @@ impl RlmSubagentHost for InlineHost {
                         &agent_dir,
                         reference.as_deref(),
                         parent_model.as_deref(),
+                        "subagent",
                     )
                 })
                 .await
@@ -769,6 +891,7 @@ impl RlmSubagentHost for InlineHost {
             *child.driver.lock().await = Some(driver);
             Ok(RlmSpawnHandle {
                 rlm_child_id: child_id,
+                session_id: child_node.session_id.clone(),
                 name,
                 session_dir: child_node.session_dir.clone(),
                 model: selector,
@@ -966,6 +1089,7 @@ fn roster_entry(
             .session_name()
             .unwrap_or_else(|| child.rlm_child_id.clone()),
         session_dir: child.node.session_dir.clone(),
+        top_level: false,
         status: if unsettled {
             "running"
         } else {
@@ -980,6 +1104,7 @@ fn roster_entry(
         answer_preview: state.answer_text.as_deref().map(compact_rlm_text),
         replied_since_task: Some(state.replied_since_task),
         progress_note: None,
+        note_at: None,
         label: None,
         last_activity_at: Some(state.started_at_ms),
         activity_stale_ms: None,

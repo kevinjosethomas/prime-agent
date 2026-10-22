@@ -37,14 +37,17 @@ const RLM_COLLECT_MAX_TIMEOUT_MS: u64 = 2_147_483_647;
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RlmSpawnHandle {
     pub rlm_child_id: String,
+    pub session_id: String,
     pub name: String,
     pub session_dir: String,
     pub model: String,
 }
 
-/// `rlm.create_session` handle: one resident depth-0 daemon session.
+/// `rlm.create_session` handle: one resident depth-0 daemon session,
+/// registered in the starter's child registry under `rlm_child_id`.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RlmCreateSessionHandle {
+    pub rlm_child_id: String,
     pub active_session_id: String,
     pub session_id: String,
     pub name: String,
@@ -60,6 +63,8 @@ pub struct RlmSubagentEntry {
     pub session_id: Option<String>,
     pub session_name: String,
     pub session_dir: String,
+    /// A depth-0 session this starter created (`rlm.create_session`).
+    pub top_level: bool,
     /// `running` | `completed` | `error` | `cancelled` (a cancelled run
     /// keeps its status verbatim in the registry row).
     pub status: &'static str,
@@ -75,6 +80,8 @@ pub struct RlmSubagentEntry {
     pub replied_since_task: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub progress_note: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -436,14 +443,6 @@ impl RlmProgressNotes {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .latest
             .clone()
-    }
-
-    /// Drops the stored note at a run boundary; the throttle clock stays.
-    pub fn clear(&self) {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .latest = None;
     }
 }
 
@@ -914,6 +913,7 @@ mod tests {
                 requests.lock().await.push(request);
                 Ok(RlmSpawnHandle {
                     rlm_child_id: "sub-1".into(),
+                    session_id: "session-1".into(),
                     name: "worker".into(),
                     session_dir: "/tmp/sub-1".into(),
                     model: "p/m".into(),
@@ -928,6 +928,7 @@ mod tests {
             Box::pin(async move {
                 requests.lock().await.push(request);
                 Ok(RlmCreateSessionHandle {
+                    rlm_child_id: "sub-toplevel".into(),
                     active_session_id: "live-2".into(),
                     session_id: "s-2".into(),
                     name: "root-2".into(),
@@ -944,6 +945,7 @@ mod tests {
                     session_id: Some("s-2".into()),
                     session_name: "worker".into(),
                     session_dir: "/tmp/sub-1".into(),
+                    top_level: false,
                     status: "running",
                     activity: Some(RlmSubagentActivity {
                         kind: "executing",
@@ -954,6 +956,7 @@ mod tests {
                     answer_preview: None,
                     replied_since_task: Some(false),
                     progress_note: Some("halfway".into()),
+                    note_at: Some("2026-10-20T23:45:00.000Z".into()),
                     label: Some("child agent".into()),
                     last_activity_at: Some(1_000),
                     activity_stale_ms: None,
@@ -971,6 +974,7 @@ mod tests {
                         session_id: None,
                         session_name: "worker".into(),
                         session_dir: "/tmp/sub-1".into(),
+                        top_level: false,
                         status: "completed",
                         activity: None,
                         tool_use_count: None,
@@ -978,6 +982,7 @@ mod tests {
                         answer_preview: None,
                         replied_since_task: None,
                         progress_note: None,
+                        note_at: None,
                         label: None,
                         last_activity_at: None,
                         activity_stale_ms: None,
@@ -1203,8 +1208,6 @@ mod tests {
         assert_eq!(accepted, json!({ "accepted": true }));
         let (latest, _) = wiring.rlm.notes.latest_note().unwrap();
         assert_eq!(latest, "making progress");
-        wiring.rlm.notes.clear();
-        assert!(wiring.rlm.notes.latest_note().is_none());
         let still_throttled = call(
             &wiring,
             "rlm.progress.note",
@@ -1313,6 +1316,7 @@ mod tests {
             response,
             json!({
                 "rlm_child_id": "sub-1",
+                "session_id": "session-1",
                 "name": "worker",
                 "session_dir": "/tmp/sub-1",
                 "model": "p/m",
@@ -1402,6 +1406,7 @@ mod tests {
         assert_eq!(
             response,
             json!({
+                "rlm_child_id": "sub-toplevel",
                 "active_session_id": "live-2",
                 "session_id": "s-2",
                 "name": "root-2",
@@ -1481,12 +1486,14 @@ mod tests {
                 "session_id": "s-2",
                 "session_name": "worker",
                 "session_dir": "/tmp/sub-1",
+                "top_level": false,
                 "status": "running",
                 "activity": { "kind": "executing", "tool_name": "bash" },
                 "tool_use_count": 3,
                 "duration_ms": 1500,
                 "replied_since_task": false,
                 "progress_note": "halfway",
+                "note_at": "2026-10-20T23:45:00.000Z",
                 "label": "child agent",
                 "last_activity_at": 1000,
             })

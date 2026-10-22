@@ -83,7 +83,7 @@ class MockHandler(http.server.BaseHTTPRequestHandler):
 
         if server.scenario == "recover" and number == 2:
             delta = {"tool_calls": [{"index": 0, "id": "call_complete", "type": "function",
-                                     "function": {"name": "ipython", "arguments": json.dumps({"code": "await goal.complete()"})}}]}
+                                     "function": {"name": "ipython", "arguments": json.dumps({"code": server.complete_code})}}]}
             finish = "tool_calls"
         elif server.scenario == "recover" and number >= 3:
             delta = {"content": "Goal completed."}
@@ -126,6 +126,8 @@ def run_case(binary, label, scenario, base_dir, observation):
     for path in (agent, sessions, cwd):
         path.mkdir()
     server = MockServer(scenario)
+    server.complete_code = ("await goal.complete()" if label == "ts"
+                            else "await harness.goal.complete()")
     server.started = time.monotonic()
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

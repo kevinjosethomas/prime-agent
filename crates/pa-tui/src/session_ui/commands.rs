@@ -414,7 +414,7 @@ impl SessionUi {
                         // The write refuses while the session's kernel
                         // reports live runs, naming the count the dock
                         // shows; the runs stop first (the page's stop
-                        // action or `rlm.factory.stop`). An unreadable
+                        // action or `factory.stop`). An unreadable
                         // count fails closed on the lane-advertised client
                         // (the only state where the guard matters): the
                         // count's own failure classes — a timed-out or
@@ -439,7 +439,7 @@ impl SessionUi {
                                 let them = if live == 1 { "it" } else { "them" };
                                 self.error_row(
                                     &format!(
-                                        "Cannot disable the factory while {live} {runs} still live — stop {them} first (the factory page's stop action or rlm.factory.stop), then /factory off."
+                                        "Cannot disable the factory while {live} {runs} still live — stop {them} first (the factory page's stop action or factory.stop), then /factory off."
                                     ),
                                     view,
                                 );

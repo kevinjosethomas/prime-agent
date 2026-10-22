@@ -6,7 +6,7 @@
 //! inside an agent must not stamp the new root's recursion identity);
 //! one session's forwarded env never bleeds into another's worker; the
 //! durable artifacts (descriptor, update-restart roster) never carry the
-//! client env; and an `rlm.spawn` child inherits the parent worker's env.
+//! client env; and an `agents.spawn` child inherits the parent worker's env.
 // Pedantic-gate dispositions (fleet-uniform ruling; see kernel_dispose_e2e).
 #![allow(clippy::large_futures)]
 #![allow(clippy::too_many_lines)]
@@ -485,7 +485,7 @@ fn the_kernel_runs_in_the_client_launch_env() {
     );
 }
 
-/// An `rlm.spawn` child is a separate worker process in the Rust port;
+/// An `agents.spawn` child is a separate worker process in the Rust port;
 /// TS runs it in-process inside the parent worker. Parity: the child
 /// create forwards the parent worker's own env (filtered), so the child
 /// worker inherits it — while the parent's `RLM_DEPTH` never rides

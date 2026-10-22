@@ -14,6 +14,10 @@ impl SupervisorChildSessionsInner {
     /// without a sink nothing is read, a torn trailing line lands on the
     /// next read. Returns false if the source could not be observed or its report is still owed.
     pub(super) async fn emit_child_usage(&self, record: &Arc<Mutex<ChildRecord>>) -> bool {
+        // A top-level session's usage is its own row, never attributed here.
+        if record.lock().await.top_level {
+            return true;
+        }
         let sink = self.usage_sink.lock().expect("usage sink lock").clone();
         let Some(sink) = sink else {
             return true;
@@ -109,7 +113,11 @@ impl SupervisorChildSessionsInner {
     /// Drop registration only after the final report persisted; return whether it is cleared.
     /// A failed bounded replay leaves both the report and its registration owed.
     pub(super) async fn forget_child_usage(&self, record: &Arc<Mutex<ChildRecord>>) -> bool {
-        if record.lock().await.usage_registration_forgotten {
+        let skip = {
+            let record = record.lock().await;
+            record.usage_registration_forgotten || record.top_level
+        };
+        if skip {
             return true;
         }
         let sink = self.usage_sink.lock().expect("usage sink lock").clone();
@@ -232,7 +240,11 @@ impl SupervisorChildSessionsInner {
     /// busy again (a delayed agent-message turn): observation-only, it
     /// never touches the run status, notices, or the settle hook.
     pub(super) async fn arm_usage_watch(this: &Arc<Self>, record: &Arc<Mutex<ChildRecord>>) {
-        if record.lock().await.closed_by_parent {
+        let skip = {
+            let record = record.lock().await;
+            record.closed_by_parent || record.top_level
+        };
+        if skip {
             return;
         }
         // Prime a lazy cursor at the tail so the pre-restart history is never billed.

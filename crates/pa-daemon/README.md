@@ -4,7 +4,7 @@ Session supervision and wire serving.
 
 `subagent_model_defaults` advertises supervisor-only `get_subagent_model_default`
 and `set_subagent_model_default` commands. The global `subagentDefaultModel`
-preference affects future `rlm.spawn` calls only: an explicit spawn model wins,
+preference affects future `agents.spawn` calls only: an explicit spawn model wins,
 then the configured exact catalog selector, then the parent model. A null save
 restores inheritance. Saves validate the credential-backed catalog and current
 `allowedModels`, preserve unrelated settings, and return a fresh persisted read.
@@ -130,10 +130,10 @@ the capped `allMessagesText` transcript text (64 KiB). Archived sessions live in
 covers live sessions only.
 Supervisor-backed RLM child sessions
 (`rlm_children.rs`, the daemon side of the pa-core `RlmSubagentHost` seam):
-`rlm.spawn`/`rlm.create_session` create real daemon sessions through the
-worker's supervisor link - one supervised worker process per child - and the
-parent-side registry serves `rlm.list_subagents`/`rlm.collect`/
-`rlm.delete_subagent` with TS-parity selector errors; child model resolution
+`agents.spawn` (the `rlm.run`/`rlm.create_session` host requests) creates real
+daemon sessions through the worker's supervisor link - one supervised worker
+process per child - and the parent-side registry serves `agents.list`/
+`Agent.wait`/`Agent.stop` with TS-parity selector errors; child model resolution
 and thinking-level validation live in `rlm_child_model.rs`; the create
 command carries the RLM recursion identity (`rlmDepth`/`rlmMaxDepth`/
 `parentSessionPath`/`thinking`) so respawned children keep their depth. Per-session model binding: the
@@ -246,7 +246,7 @@ them).
 Live MCP product-path verifier
 (`tests/mcp_product_path_e2e.rs`): a settings-declared stdio MCP server
 round-trips through a real worker session and kernel - the kernel cell's
-`mcp.list_tools`/`mcp.call_tool` resolve `mcp.config` through the
+`mcp.tools`/`mcp.call` resolve `mcp.config` through the
 session's host handlers, spawn the fixture
 (`tests/fixtures/mcp_echo_server.py`), and echo back.
 

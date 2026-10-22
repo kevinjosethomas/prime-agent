@@ -142,37 +142,56 @@ fn cached_prefix_is_stable_across_sessions() {
 // Tool surface
 
 /// Host-request types that are host-internal plumbing, not model-facing
-/// programmatic tools (the prompt must not document them).
-const INTERNAL_HOST_REQUESTS: &[&str] =
-    &["model.info", "mcp.config", "mcp.refresh", "mcp.begin_login"];
+/// programmatic tools (the prompt must not document them): the model-fact and
+/// MCP-config lanes, the `agent_observe.get` row refresh the runtime never calls,
+/// and the `agent_message.list_agents` migration tombstone.
+const INTERNAL_HOST_REQUESTS: &[&str] = &[
+    "model.info",
+    "mcp.config",
+    "mcp.refresh",
+    "mcp.begin_login",
+    "agent_observe.get",
+    "agent_message.list_agents",
+];
 
-/// Map one registered host-request type to the prompt token that documents
-/// it. `None` when the request is host-internal.
-fn prompt_token_for_host_request(request: &str) -> Option<String> {
+/// Map one registered host-request type to the prompt tokens that document it
+/// (one wire request can back several new-surface calls). Empty when the
+/// request is host-internal.
+fn prompt_tokens_for_host_request(request: &str) -> Vec<String> {
     if INTERNAL_HOST_REQUESTS.contains(&request) {
-        return None;
+        return Vec::new();
     }
-    Some(
-        match request {
-            "rlm.run" => "rlm.spawn",
-            "rlm.progress.note" => "rlm.progress_note",
-            "agent_observe.list" | "agent_message.list_agents" => "agent_observe.list_agents",
-            "agent_observe.get" => "agent_observe.get_agent",
-            "agent_observe.recent" => "agent_observe.recent_messages",
-            other => other,
-        }
-        .to_string(),
-    )
+    match request {
+        "rlm.run" | "rlm.create_session" => vec!["agents.spawn"],
+        "rlm.list_subagents" => vec!["agents.list"],
+        "rlm.collect" => vec!["a.wait"],
+        "rlm.delete_subagent" => vec!["a.stop"],
+        "rlm.rename" => vec!["agents.rename", "a.rename"],
+        "rlm.progress.note" => vec!["agents.note"],
+        "agent_message.send" => vec!["a.send"],
+        "agent_observe.list" => vec!["agents.parent", "agents.siblings"],
+        "agent_observe.recent" => vec!["a.recent"],
+        "rlm.find_models" => vec!["harness.models"],
+        "compact.run" => vec!["harness.compact"],
+        "compact.status" => vec!["harness.context"],
+        "goal.create" => vec!["harness.goal.create"],
+        "goal.get" => vec!["harness.goal.get"],
+        "goal.complete" => vec!["harness.goal.complete"],
+        "rlm_heartbeat.create" => vec!["heartbeat.create"],
+        "rlm_heartbeat.list" => vec!["heartbeat.list"],
+        "rlm_heartbeat.update" => vec!["hb.update", "hb.pause", "hb.resume"],
+        "rlm_heartbeat.delete" => vec!["hb.delete"],
+        "mcp.list_connections" => vec!["mcp.connections"],
+        other => vec![other],
+    }
+    .into_iter()
+    .map(str::to_string)
+    .collect()
 }
 
 /// Kernel-side programmatic tools implemented by the vendored `prime-agent-runtime` package
 /// (generic MCP calls). Update together with the runtime sidecar.
-const KERNEL_LOCAL_TOKENS: &[&str] = &[
-    "mcp.list_tools",
-    "mcp.call_tool",
-    "mcp.search_tools",
-    "mcp.describe_tool",
-];
+const KERNEL_LOCAL_TOKENS: &[&str] = &["mcp.tools", "mcp.call"];
 
 /// A host-request type literal: lowercase dotted name (`rlm.collect`).
 fn is_request_type_literal(literal: &str) -> bool {
@@ -259,18 +278,21 @@ fn all_string_literals(text: &str) -> Vec<String> {
     literals
 }
 
-/// Kernel-bound REPL names from the real bootstrap code (`rlm`, `bash`,
-/// `mcp`), derived from `build_rlm_bootstrap_code`.
+/// Kernel-bound REPL globals from the real bootstrap code
+/// (`agents`, `harness`, `heartbeat`, `mcp`, `factory`, `bash`, `edit`,
+/// `websearch`, `attach_image`), derived from `build_rlm_bootstrap_code`.
 fn kernel_bound_names() -> BTreeSet<String> {
     let code = pa_core::kernel::bootstrap::build_rlm_bootstrap_code(&[]);
     let mut names = BTreeSet::new();
     for line in code.lines() {
         let line = line.trim_start();
-        if line.starts_with("rlm = ") {
-            names.insert("rlm".to_string());
+        if let Some(rest) = line.strip_prefix("from rlm import ") {
+            names.extend(rest.split(',').map(str::trim).map(str::to_string));
         }
-        if line.starts_with("bash = ") {
-            names.insert("bash".to_string());
+        if let Some(rest) = line.strip_prefix("from rlm.") {
+            if let Some((_, bound)) = rest.split_once(" import ") {
+                names.insert(bound.trim().to_string());
+            }
         }
         if let Some(rest) = line.strip_prefix("import rlm.mcp as ") {
             names.insert(rest.trim().to_string());
@@ -355,9 +377,7 @@ fn allowed_surface_tokens() -> BTreeSet<String> {
     let mut allowed = BTreeSet::new();
     allowed.extend(kernel_bound_names());
     for request in registered_host_requests() {
-        if let Some(token) = prompt_token_for_host_request(&request) {
-            allowed.insert(token);
-        }
+        allowed.extend(prompt_tokens_for_host_request(&request));
     }
     for (import, functions) in bundled_python_skills() {
         allowed.insert(import.clone());
@@ -376,9 +396,7 @@ fn allowed_surface_tokens() -> BTreeSet<String> {
 fn required_surface_tokens() -> BTreeSet<String> {
     let mut required = BTreeSet::new();
     for request in registered_host_requests() {
-        if let Some(token) = prompt_token_for_host_request(&request) {
-            required.insert(token);
-        }
+        required.extend(prompt_tokens_for_host_request(&request));
     }
     for (import, functions) in bundled_python_skills() {
         required.insert(import.clone());
@@ -396,7 +414,7 @@ fn required_surface_tokens() -> BTreeSet<String> {
 }
 
 /// Surface tokens documented in the core layer: bullet entries whose first
-/// backtick token is a lowercase module path.
+/// backtick token (after an optional `await`) is a lowercase module path.
 fn documented_surface_tokens() -> BTreeSet<String> {
     let mut documented = BTreeSet::new();
     for line in CORE_LAYER.lines() {
@@ -407,6 +425,7 @@ fn documented_surface_tokens() -> BTreeSet<String> {
             continue;
         };
         let token = rest[..end].split('(').next().unwrap_or_default().trim();
+        let token = token.strip_prefix("await ").unwrap_or(token);
         let valid = token
             .chars()
             .next()
@@ -466,21 +485,15 @@ fn core_layer_documents_the_real_tool_surface() {
 // Packaged-set parity (TS packages/coding-agent/skills)
 
 /// The packaged skill set at TS tip `f62dae4d0` (`packages/coding-agent/skills/`), minus this
-/// fork's removed `refine` skill (the continual-harness feature removal): 11 skills — the generic
-/// `mcp` doc skill in, the per-service linear/notion pair out (TS removed theirs when the
-/// generic MCP surface landed).
+/// fork's removals: the `refine` skill (the continual-harness feature removal) and the eight
+/// packages absorbed into the runtime's agent-facing API (agent-message, agent-observe,
+/// attach-image, compact, edit, goal, rlm-heartbeat, websearch). The generic `mcp` doc skill
+/// stays, the per-service linear/notion pair is out.
 const TS_PACKAGED_SKILL_SET: &[&str] = &[
-    "agent-message",
-    "agent-observe",
-    "attach-image",
-    "compact",
-    "edit",
-    "goal",
+    "factory",
     "mcp",
     "prime-intellect",
-    "rlm-heartbeat",
     "skill-creator",
-    "websearch",
     // The desktop fork's runtime skill for the tasks Python API (no TS counterpart).
     "tasks",
 ];
@@ -511,7 +524,7 @@ fn bundled_skills_match_the_ts_packaged_set() {
     );
     assert_eq!(
         mcp_skill.description,
-        "Use external MCP services generically from Python - search the supported-service catalog, inspect the user's connections, discover live tool schemas, and call tools on any connection (Notion, Linear, Slack, and the rest of the catalog) without per-service packages."
+        "Use external MCP services generically from Python - inspect the user's connections, discover live tool schemas, and call tools on any connection (Notion, Linear, Slack, and the rest of the catalog) without per-service packages."
     );
 }
 
@@ -552,7 +565,5 @@ fn generic_mcp_skill_renders_in_the_prompt_inventory() {
     );
     options.generic_mcp_servers = vec!["notion".into()];
     let second = system_prompt_breakdown(&options);
-    assert!(second
-        .assembled
-        .contains("await mcp.list_tools(\"notion\")"));
+    assert!(second.assembled.contains("await mcp.tools(\"notion\")"));
 }

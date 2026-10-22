@@ -446,7 +446,6 @@ impl TurnRunner {
         let turn_coalescer = Arc::clone(&coalescer);
         let herdr = std::sync::Arc::clone(&self.herdr);
         let agent_dir = crate::paths::agent_dir().unwrap_or_default();
-        let settle_engine = std::sync::Arc::clone(&engine);
         // The settled outcome reaches the waiting prompt only at full
         // settle: resolving at `Done` queued a follow-up behind the
         // indefinite suspension.
@@ -554,18 +553,12 @@ impl TurnRunner {
                 );
                 let mut core = core.lock().unwrap();
                 // The run's TRUE end — an `agent_end` with no queued work
-                // taking the next turn — keys both the note clear here and
-                // the pane's idle debounce below. An internal boundary that
-                // hands the next turn to queued work (the async bash
-                // completion that cut this run) keeps the note for the work
-                // continuing in the next delivery. Clear before the frame:
-                // its roster flush must not publish the stale note.
+                // taking the next turn — keys the pane's idle debounce below;
+                // an internal boundary that hands the next turn to queued work
+                // (the async bash completion that cut this run) does not.
                 let agent_end = matches!(event, EngineEvent::AgentEnd { .. });
                 let more_queued =
                     agent_end && (!core.steering.is_empty() || !core.follow_up.is_empty());
-                if agent_end && !more_queued {
-                    engine.clear_progress_note();
-                }
                 // Durable model cleanup is independent of visual abort-row
                 // suppression and emits no client-facing frame.
                 if core.abort_requested && !matches!(&event, EngineEvent::ModelChange(_)) {
@@ -1238,15 +1231,6 @@ impl TurnRunner {
         let more_queued = {
             let mut core = self.core.lock().unwrap();
             let more_queued = !core.steering.is_empty() || !core.follow_up.is_empty();
-            // Publish the note clear and idle transition atomically to
-            // roster readers, which capture core then the engine note.
-            // An abort-gated run may emit no later event to repair a
-            // roster push that observes idle with its old note.
-            // AgentEnd may have retained the note for work withdrawn before
-            // this settle. Recheck the lanes even when that frame was observed.
-            if !more_queued {
-                settle_engine.clear_progress_note();
-            }
             core.busy = false;
             core.active_action = None;
             core.running_admission_ids.clear();

@@ -1,6 +1,7 @@
 //! The runtime bootstrap code injected into each kernel right after start or
-//! restore: binds the `rlm`, `bash`, and MCP surfaces and pre-imports every
-//! Python skill.
+//! restore: binds the `agents`, `harness`, `heartbeat`, `mcp`, `factory`,
+//! `bash`, `edit`, `websearch`, and `attach_image` globals and pre-imports
+//! every Python skill.
 
 use super::KernelPythonSkill;
 
@@ -35,15 +36,17 @@ const RLM_BOOTSTRAP_HEADER_CODE: &str =
 
 const RLM_BOOTSTRAP_RUNTIME_CODE: &str = r#"
 try:
-    import rlm as _prime_agent_rlm_module
-    rlm = _prime_agent_rlm_module.rlm
-    bash = _prime_agent_rlm_module.bash
+    from rlm import agents, harness, heartbeat, bash
+    from rlm.factory import factory
+    from rlm.edit import edit
+    from rlm.websearch import websearch
+    from rlm.attach_image import attach_image
     import rlm.mcp as mcp
 except Exception as _prime_agent_rlm_error:
     _PRIME_AGENT_RLM_IMPORT_ERROR = str(_prime_agent_rlm_error)
 
-    class _PrimeAgentMissingRlm:
-        def _raise_missing(self):
+    class _PrimeAgentMissingRuntime:
+        def __getattr__(self, name):
             raise RuntimeError(
                 "prime-agent-runtime is not installed in this kernel. "
                 "Remove ~/.prime/agent/kernel-venv so prime-agent can rebuild it, or set "
@@ -51,29 +54,21 @@ except Exception as _prime_agent_rlm_error:
                 f"Import error: {_PRIME_AGENT_RLM_IMPORT_ERROR}"
             )
 
-        async def spawn(self, prompt, **kwargs):
-            self._raise_missing()
+    _PRIME_AGENT_MISSING_RUNTIME = _PrimeAgentMissingRuntime()
+    agents = harness = heartbeat = mcp = factory = _PRIME_AGENT_MISSING_RUNTIME
 
-        async def find_models(self, query="", limit=8):
-            self._raise_missing()
+    def _prime_agent_missing_runtime(*args, **kwargs):
+        raise RuntimeError(
+            "prime-agent-runtime is not installed in this kernel. "
+            "Remove ~/.prime/agent/kernel-venv so prime-agent can rebuild it, or set "
+            "PRIME_AGENT_KERNEL_PYTHON to a kernel environment with prime-agent-runtime installed. "
+            f"Import error: {_PRIME_AGENT_RLM_IMPORT_ERROR}"
+        )
 
-        async def create_session(self, prompt, **kwargs):
-            self._raise_missing()
+    bash = edit = websearch = attach_image = _prime_agent_missing_runtime"#;
 
-        async def list_subagents(self):
-            self._raise_missing()
-
-        async def delete_subagent(self, target):
-            self._raise_missing()
-
-    rlm = _PrimeAgentMissingRlm()
-
-    def bash(command):
-        rlm._raise_missing()
-"#;
-
-/// The code the session injects right after kernel start/restore: binds the `rlm`, `bash`, and MCP
-/// surfaces, imports every Python skill.
+/// The code the session injects right after kernel start/restore: binds the runtime globals, imports
+/// every Python skill.
 #[must_use]
 pub fn build_rlm_bootstrap_code(python_skills: &[KernelPythonSkill]) -> String {
     let base_code = format!("{RLM_BOOTSTRAP_HEADER_CODE}\n\n{RLM_BOOTSTRAP_RUNTIME_CODE}");
@@ -179,22 +174,27 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn bootstrap_code_without_skills_binds_rlm() {
+    fn bootstrap_code_without_skills_binds_the_runtime_globals() {
         let code = build_rlm_bootstrap_code(&[]);
-        assert!(code.contains("import rlm as _prime_agent_rlm_module"));
+        assert!(code.contains("from rlm import agents, harness, heartbeat, bash"));
+        assert!(code.contains("from rlm.factory import factory"));
+        assert!(code.contains("from rlm.edit import edit"));
+        assert!(code.contains("from rlm.websearch import websearch"));
+        assert!(code.contains("from rlm.attach_image import attach_image"));
+        assert!(code.contains("import rlm.mcp as mcp"));
         assert!(!code.contains("_PrimeAgentUnavailableSkill"));
     }
 
     #[test]
     fn bootstrap_code_imports_skills() {
         let skills = vec![KernelPythonSkill {
-            name: "edit".into(),
-            import_name: "edit".into(),
-            package_path: PathBuf::from("/pkg/edit"),
-            pyproject_path: PathBuf::from("/pkg/edit/pyproject.toml"),
+            name: "alpha".into(),
+            import_name: "alpha".into(),
+            package_path: PathBuf::from("/pkg/alpha"),
+            pyproject_path: PathBuf::from("/pkg/alpha/pyproject.toml"),
         }];
         let code = build_rlm_bootstrap_code(&skills);
-        assert!(code.contains(r#"for _prime_agent_skill_name in ["edit"]"#));
+        assert!(code.contains(r#"for _prime_agent_skill_name in ["alpha"]"#));
         assert!(code.contains("_PrimeAgentUnavailableSkill"));
     }
 

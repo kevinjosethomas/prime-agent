@@ -22,7 +22,7 @@
 //!       and their subagents appeared grouped into one session: the
 //!       battery creates a parent session and a REAL child (the daemon
 //!       create carrying `parentSessionPath`/`rlmDepth` - the same
-//!       durable create a `rlm.spawn` issues) and asserts the two store
+//!       durable create an `agents.spawn` issues) and asserts the two store
 //!       entries are distinct files with distinct header ids, the child's
 //!       header names the parent, and the agents view nests the child
 //!       under the parent as its own row.
@@ -292,7 +292,7 @@ fn dump_frames(scenario: &str, frames: &[String]) {
 
 /// The daemon-protocol session create the battery uses: the scripted
 /// engine's responses ride the script file; a parent path + depth make
-/// the session a real subagent (the same durable create a `rlm.spawn`
+/// the session a real subagent (the same durable create an `agents.spawn`
 /// issues).
 // The harness mirrors the daemon Create command's own config rows; a builder struct would shadow the protocol.
 #[allow(clippy::too_many_arguments)]
@@ -513,7 +513,7 @@ async fn subagent_session_stays_a_distinct_store_entry() {
 
     // The child: the REAL subagent create (the daemon create carrying
     // `parentSessionPath`/`rlmDepth` - the same durable create a
-    // `rlm.spawn` issues).
+    // `agents.spawn` issues).
     let child_script = dir.path().join("child-script.json");
     let child_id = create_session_via_daemon(
         &supervisor.socket,

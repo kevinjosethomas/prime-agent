@@ -1,7 +1,7 @@
 //! End-to-end RLM child machinery against the real `pa-daemon` supervisor: child sessions
 //! spawn through the supervisor link, run in their own worker processes, appear in the
-//! supervisor roster, settle with an answer, and die on delete (`rlm.spawn`/
-//! `list_subagents`/`collect`/`delete_subagent`/`create_session`).
+//! supervisor roster, settle with an answer, and die on delete (`agents.spawn`/
+//! `list`/`wait`/`stop`/`top_level` spawns).
 // Stack-resident futures by design; boxing for a lint tick is a perf regression.
 #![allow(clippy::large_futures)]
 // 64-bit-only targets; narrowing casts sit at bounded OS/protocol boundaries.
@@ -543,11 +543,15 @@ async fn rlm_create_session_spawns_a_prompted_depth_zero_session() {
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0]["rlmDepth"], 0);
     assert_eq!(sessions[0]["runtimeKind"], "top-level");
+    // The created session is tracked like a child, flagged top-level.
     let roster = children.list_subagents().await.expect("roster");
-    assert!(
-        roster.is_empty(),
-        "create_session children are not subagents"
+    assert_eq!(
+        roster.len(),
+        1,
+        "the started session is registered: {roster:?}"
     );
+    assert!(roster[0].top_level);
+    assert_eq!(roster[0].status, "running");
 
     // The session was prompted: its worker answered.
     let active_id = handle.active_session_id.clone();
@@ -611,7 +615,7 @@ async fn rlm_recursion_bound_is_enforced() {
         .expect_err("create_session from depth 2");
     assert_eq!(
         error.to_string(),
-        "rlm.create_session is available only from a depth-0 session"
+        "top-level sessions can only be created from a depth-0 session"
     );
 }
 
@@ -630,7 +634,7 @@ async fn parallel_same_name_subagent_creates_admit_exactly_one() {
     let parent_file = agent_dir.join("parent.jsonl");
     let parent_file = parent_file.to_string_lossy().to_string();
 
-    // The raw create a worker's `rlm.spawn` routes: a scripted subagent with the reserved name.
+    // The raw create a worker's `agents.spawn` routes: a scripted subagent with the reserved name.
     let subagent_create = |child_id: &str| {
         let session_dir = agent_dir
             .join("session-artifacts")

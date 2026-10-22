@@ -44,7 +44,7 @@ author: Factory fixture
 ```
 '''
 CELL = '''import json
-factory_started = await rlm.factory.run('recovery-fixture')
+factory_started = await factory.run('recovery-fixture')
 print('FACTORY_RECOVERY_RESULT=' + json.dumps(factory_started))'''
 
 

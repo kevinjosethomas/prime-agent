@@ -603,7 +603,7 @@ fn factory_run_row(id: &str, state: &str, running_children: u64) -> Value {
 /// `/factory off` refuses while the session's kernel reports live runs
 /// (the lifecycle guard, end to end through the daemon lane): the
 /// refusal names the live count, and the gate stays enabled — the runs
-/// keep their stop and visibility path (the page, `rlm.factory.stop`)
+/// keep their stop and visibility path (the page, `factory.stop`)
 /// until the user stops them. The live count reads the dock's own
 /// liveness rule: a `running` run and a `done` run with children still
 /// in flight both count; a fully terminal run never does.
@@ -628,7 +628,7 @@ fn factory_off_refuses_while_runs_are_live() {
     let all = flat_text(&frames);
     assert!(
         all.contains(
-            "Cannot disable the factory while 2 runs are still live — stop them first (the factory page's stop action or rlm.factory.stop), then /factory off."
+            "Cannot disable the factory while 2 runs are still live — stop them first (the factory page's stop action or factory.stop), then /factory off."
         ),
         "the refusal names the live count:\n{all}"
     );
@@ -692,7 +692,7 @@ fn factory_off_refuses_on_a_client_whose_hello_predates_the_gate() {
     let all = flat_text(&frames);
     assert!(
         all.contains(
-            "Cannot disable the factory while 1 run is still live — stop it first (the factory page's stop action or rlm.factory.stop), then /factory off."
+            "Cannot disable the factory while 1 run is still live — stop it first (the factory page's stop action or factory.stop), then /factory off."
         ),
         "the unadvertised-lane guard still refused:\n{all}"
     );

@@ -269,10 +269,11 @@ fn display_ids_are_twelve_hex() {
     assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
 }
 
-/// The summary carries the live note, and the next run's boundaries clear it.
+/// The summary carries the accepted note past the run boundary, on the row
+/// until a newer note replaces it.
 #[allow(clippy::await_holding_lock)] // the faux registry is process-global: the guard must span the async flow
 #[tokio::test]
-async fn summary_carries_the_live_note_until_the_run_boundaries_clear_it() {
+async fn summary_carries_the_note_past_the_run_boundary() {
     let _faux = crate::agent_engine::tests::FAUX_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -337,8 +338,13 @@ async fn summary_carries_the_live_note_until_the_run_boundaries_clear_it() {
     assert!(second.success, "the second turn failed: {second:?}");
     let state = worker.dispatch("get_state", &json!({})).await;
     let summary = state.data.unwrap_or(Value::Null);
+    assert_eq!(
+        summary["progressNote"],
+        json!("running tests"),
+        "the run boundary keeps the last accepted note: {summary:?}"
+    );
     assert!(
-        summary.get("progressNote").is_none(),
-        "the run boundary cleared the note: {summary:?}"
+        summary["noteAt"].as_str().is_some(),
+        "the row carries the note's timestamp: {summary:?}"
     );
 }

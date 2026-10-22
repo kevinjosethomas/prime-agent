@@ -181,7 +181,7 @@ async fn compact_with_paused_goal_never_continues() {
 /// continuation (the engine consults at every settled boundary, the
 /// admission sink queues the follow-up, the runner wakes), the
 /// budget-free loop keeps prompting until the kernel's
-/// `goal.complete()` (the scripted ipython tool call, the f18
+/// `harness.goal.complete()` (the scripted ipython tool call, the f18
 /// completion surface) settles the goal, and the completion's
 /// boundary mints nothing more. The completing cell needs a
 /// bootable kernel: a gate run needs the kernel venv, bootstrapped
@@ -212,7 +212,7 @@ async fn goal_turn_end_loop_runs_to_completion() {
                 "second pursuit turn",
                 { "content": [
                     { "type": "toolCall", "name": "python_repl",
-                      "arguments": { "code": "import goal; await goal.complete()" } },
+                      "arguments": { "code": "await harness.goal.complete()" } },
                 ] },
                 "wrap-up after the completion",
                 "after the loop settled",

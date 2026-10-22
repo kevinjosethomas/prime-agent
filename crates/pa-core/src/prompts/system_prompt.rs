@@ -87,7 +87,7 @@ pub struct BuildSystemPromptOptions<'a> {
     /// bash-completion wake-ups). The wake-up facts the daemonless line
     /// states must match the embedding's wiring.
     pub daemonless: bool,
-    /// Whether `rlm.spawn` can create children in this session (the
+    /// Whether `agents.spawn` can create children in this session (the
     /// daemonless print host or a daemon worker); a daemonless session
     /// without one cannot spawn at all.
     pub can_spawn: bool,
@@ -298,7 +298,7 @@ fn session_role_section(options: &BuildSystemPromptOptions, has_ipython: bool) -
             "This session has no daemon: heartbeats never fire, and background `bash()` completions do not wake you, so await them before ending your turn. Subagent replies and exit notices still wake you, and the run waits for your subagents before it exits."
                 .to_string()
         } else {
-            "This session has no daemon: `rlm.spawn` is unavailable, heartbeats never fire, and background `bash()` completions do not wake you, so await them before ending your turn."
+            "This session has no daemon: `agents.spawn` is unavailable, heartbeats never fire, and background `bash()` completions do not wake you, so await them before ending your turn."
                 .to_string()
         });
     }
@@ -318,10 +318,10 @@ fn session_role_section(options: &BuildSystemPromptOptions, has_ipython: bool) -
         ));
         if has_ipython {
             lines.push(
-                "When a task calls for an answer, reply explicitly with `await agent_message.send(message, receiver_role=\"parent\")`. Not every message or task needs a reply; continue cleanup after sending and go idle normally.".to_string(),
+                "When a task calls for an answer, reply explicitly with `await (await agents.parent()).send(message)`. Not every message or task needs a reply; continue cleanup after sending and go idle normally.".to_string(),
             );
             lines.push(
-                "For long-running work, report brief progress with `await rlm.progress_note('...')` (at most 512 characters, throttled to about one note per 10 seconds); the parent sees notes without needing a reply.".to_string(),
+                "For long-running work, report brief progress with `await agents.note('...')` (at most 512 characters, about one per 10 seconds; False when throttled); the parent sees notes without needing a reply.".to_string(),
             );
         }
     }
@@ -374,7 +374,7 @@ fn format_generic_mcp_guidance(servers: &[String]) -> String {
     ];
     for server in &enabled {
         lines.push(format!(
-            "For `{server}`, first discover its tools with `await mcp.list_tools(\"{server}\")`, then call one with `await mcp.call_tool(\"{server}\", \"<tool>\", arguments)`."
+            "For `{server}`, first discover its tools with `await mcp.tools(\"{server}\")`, then call one with `await mcp.call(\"{server}\", \"<tool>\", **arguments)`."
         ));
     }
     lines.join("\n")
@@ -411,10 +411,7 @@ mod tests {
         BuildSystemPromptOptions {
             cwd: "/w".to_string(),
             messages_path: Some("/log.jsonl".to_string()),
-            skills: vec![
-                skill("web-search", Some("websearch")),
-                skill("agent-message", Some("agent_message")),
-            ],
+            skills: vec![skill("alpha", Some("alpha")), skill("beta", Some("beta"))],
             ..Default::default()
         }
     }

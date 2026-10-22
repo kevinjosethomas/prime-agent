@@ -208,11 +208,11 @@ fn await_receipt(receipt: &Path) -> String {
     }
 }
 
-/// The spawn turn's kernel cell: spawn one RLM child via the product `rlm.spawn` and
+/// The spawn turn's kernel cell: spawn one RLM child via the product `agents.spawn` and
 /// record its child id.
 fn spawn_cell(receipt: &Path, error_receipt: &Path) -> String {
     format!(
-        "import json, traceback\ntry:\n    handle = await rlm.spawn(\"run the lane task\", name=\"kid\")\n    open({receipt:?}, \"w\").write(json.dumps({{\"rlm_child_id\": handle.rlm_child_id}}))\n    print(handle.rlm_child_id)\nexcept Exception:\n    open({error_receipt:?}, \"w\").write(traceback.format_exc())\n    raise",
+        "import json, traceback\ntry:\n    handle = await agents.spawn(\"run the lane task\", name=\"kid\")\n    open({receipt:?}, \"w\").write(json.dumps({{\"rlm_child_id\": handle.child_id}}))\n    print(handle.child_id)\nexcept Exception:\n    open({error_receipt:?}, \"w\").write(traceback.format_exc())\n    raise",
         receipt = receipt.display().to_string(),
         error_receipt = error_receipt.display().to_string(),
     )
@@ -253,7 +253,7 @@ fn write_parent_script(dir: &Path, first_cell: &str) -> PathBuf {
 }
 
 /// Create a scripted parent session through the supervisor. The create's
-/// `childScript` (harness seam) makes every `rlm.spawn` child a scripted worker.
+/// `childScript` (harness seam) makes every `agents.spawn` child a scripted worker.
 fn create_parent(
     client: &mut Client,
     dir: &Path,

@@ -31,6 +31,7 @@ impl SupervisorChildSessionsInner {
             session_name: record.session_name.clone(),
             session_dir: record.session_dir.clone(),
             started_at_ms: record.started_at_ms,
+            top_level: record.top_level,
             status: record.roster_status(),
             answer_preview: record.answer_preview.clone(),
             error: record
@@ -103,6 +104,11 @@ impl SupervisorChildSessionsInner {
         }
         let children = self.children.lock().await.clone();
         for record in &children {
+            // A top-level session is a normal session; its delete is the
+            // session surface's, never the inactive-child teardown.
+            if record.lock().await.top_level {
+                continue;
+            }
             let matched = record.lock().await.rlm_child_id == child_id;
             if !matched {
                 continue;
@@ -187,7 +193,15 @@ impl SupervisorChildSessionsInner {
         let children = self.children.lock().await.clone();
         let mut close_error = (!usage_persisted)
             .then(|| anyhow::anyhow!("RLM child usage remains owed after retirement; retry close"));
+        let mut top_level_records: Vec<Arc<Mutex<ChildRecord>>> = Vec::new();
         for record in &children {
+            // A top-level session outlives its starter: stop tracking it
+            // (the registry dies with the starter's session identity) but
+            // never stop the session itself.
+            if record.lock().await.top_level {
+                top_level_records.push(Arc::clone(record));
+                continue;
+            }
             let rename_lock = record.lock().await.rename_lock.clone();
             let _guard = rename_lock.lock().await;
             if !self
@@ -224,6 +238,19 @@ impl SupervisorChildSessionsInner {
                 close_error.get_or_insert_with(|| {
                     anyhow::anyhow!("RLM child usage remains owed after retirement; retry close")
                 });
+            }
+        }
+        // The unregistered top-level records: the watcher stops (no
+        // notice is owed to a closing starter) and the registry drops
+        // them; the sessions themselves keep running.
+        if !top_level_records.is_empty() {
+            self.children.lock().await.retain(|held| {
+                !top_level_records
+                    .iter()
+                    .any(|record| Arc::ptr_eq(held, record))
+            });
+            for record in &top_level_records {
+                record.lock().await.closed_by_parent = true;
             }
         }
         // The walk changed the registry: wake a parked barrier (a closed
@@ -474,6 +501,7 @@ fn ledger_child_records(
             session_name: edge.name,
             active_session_id: session_id.clone().unwrap_or_default(),
             session_id,
+            top_level: edge.top_level,
             session_dir: child
                 .parent()
                 .map(|dir| dir.to_string_lossy().into_owned())
@@ -505,7 +533,11 @@ fn ledger_child_records(
                 },
                 |display| display.created_at,
             ),
-            settled_status: Some(
+            // A reseeded nested child cannot run again (its worker is
+            // gone with the run): the display file's verdict settles it.
+            // A top-level session is resident and may still be live, so
+            // the row stays unsettled and reads tell the truth.
+            settled_status: (!edge.top_level).then_some(
                 if display
                     .as_ref()
                     .is_some_and(|display| display.status == "running")
@@ -515,7 +547,7 @@ fn ledger_child_records(
                     "done"
                 },
             ),
-            settled: true,
+            settled: !edge.top_level,
             answer_preview: None,
             answer_text: None,
             answer_captured: false,
@@ -523,6 +555,8 @@ fn ledger_child_records(
             notice_delivered: true,
             prompt_admitted: true,
             error: None,
+            progress_note: None,
+            note_at: None,
             closed_by_parent: false,
             retirement_finished: false,
             retirement_notified: false,

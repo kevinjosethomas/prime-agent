@@ -1,8 +1,8 @@
-//! Real withdrawal commands preserve active/remaining work and clear the last idle note.
+//! Real withdrawal commands preserve active/remaining work and keep the run's note.
 use super::*;
 
 #[tokio::test]
-async fn queue_withdrawals_clear_only_the_last_idle_notes() {
+async fn queue_withdrawals_keep_the_retained_note() {
     for command in [
         "mutate_queued_message",
         "cancel_prompt_admission",
@@ -77,7 +77,6 @@ async fn queue_withdrawals_clear_only_the_last_idle_notes() {
                         pid: 4321,
                         command: "fixture command".to_string(),
                     },
-                    Some(engine.as_ref()),
                 );
             } else {
                 let payload = match command {
@@ -103,16 +102,24 @@ async fn queue_withdrawals_clear_only_the_last_idle_notes() {
                 usize::from(state == "remaining"),
                 "{command}/{state}"
             );
-            let expected = (state != "last").then(|| "checking deployment".to_string());
-            assert_eq!(engine.progress_note(), expected, "{command}/{state}");
+            assert_eq!(
+                engine.progress_note().map(|(note, _)| note).as_deref(),
+                Some("checking deployment"),
+                "{command}/{state}"
+            );
             drop(core);
             if matches!(command, "cancel_prompt_admission" | "abort") {
                 assert!(publication_pending(), "{command}/{state}: no roster push");
                 let (core, inputs) = worker.summary_inputs();
                 let summary = crate::worker::summary::session_summary(&core, inputs);
                 assert_eq!(
-                    summary.progress_note, expected,
+                    summary.progress_note.as_deref(),
+                    Some("checking deployment"),
                     "{command}/{state}: summary"
+                );
+                assert!(
+                    summary.note_at.is_some(),
+                    "{command}/{state}: summary note timestamp"
                 );
             }
         }

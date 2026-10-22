@@ -190,6 +190,110 @@ async fn family_reads_siblings_from_the_supervisor_roster() {
     assert_eq!(family[1].name, None);
 }
 
+/// The starter's family view: a started top-level session is a Child
+/// (keyed by the registry join), while unrelated roots stay Sibling.
+#[tokio::test]
+async fn family_lists_a_started_top_level_session_as_a_child() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let socket = dir.path().join("sup.sock");
+    spawn_fake_supervisor(
+        socket.clone(),
+        json!({ "sessions": [
+            { "activeSessionId": "aaa111", "sessionId": "sess-a", "sessionName": "alpha" },
+            { "activeSessionId": "ttt777", "sessionId": "sess-t", "sessionName": "peer",
+              "runtimeKind": "top-level" },
+            { "activeSessionId": "bbb222", "sessionId": "sess-b", "sessionName": "beta" },
+        ]}),
+        None,
+    )
+    .await;
+    let controller = controller_with_children(socket, own_summary());
+    admit_child(
+        &controller,
+        RlmChildIdentity {
+            rlm_child_id: "sub-tl1".to_string(),
+            active_session_id: "ttt777".to_string(),
+            session_id: Some("sess-t".to_string()),
+            session_name: "peer".to_string(),
+            top_level: true,
+        },
+    )
+    .await;
+    let family = controller.family().await.unwrap();
+    assert_eq!(family.len(), 2, "{family:?}");
+    let child = family
+        .iter()
+        .find(|member| member.id == "ttt777")
+        .expect("the started session is listed");
+    assert_eq!(child.relationship, AgentFamilyRelationship::Child);
+    assert!(child.aliases.contains(&"sub-tl1".to_string()));
+    assert!(
+        family.iter().any(|member| member.id == "bbb222"
+            && member.relationship == AgentFamilyRelationship::Sibling),
+        "an unrelated root stays a sibling: {family:?}"
+    );
+}
+
+/// The created session's view: its starter link names the starter as the
+/// parent, and other roots stay siblings; the starter's own view of the
+/// created row carries `topLevel: true`.
+#[tokio::test]
+async fn a_started_top_level_session_sees_its_starter_as_parent() {
+    let roster = vec![
+        json!({ "activeSessionId": "ttt777", "sessionId": "sess-t", "sessionName": "peer",
+                "runtimeKind": "top-level" }),
+        json!({ "activeSessionId": "aaa111", "sessionId": "sess-a", "sessionName": "alpha" }),
+        json!({ "activeSessionId": "bbb222", "sessionId": "sess-b", "sessionName": "beta" }),
+    ];
+    let started = FamilyIdentity {
+        active_session_id: "ttt777".to_string(),
+        session_id: Some("sess-t".to_string()),
+        session_file: None,
+        parent_active_session_id: None,
+        parent_session_id: None,
+        parent_session_path: None,
+        starter_active_session_id: Some("aaa111".to_string()),
+        starter_session_id: Some("sess-a".to_string()),
+        rlm_depth: 0,
+    };
+    let labeled = labeled(roster.clone(), &started);
+    assert_eq!(
+        labeled,
+        vec![
+            (Some("ttt777".to_string()), None),
+            (
+                Some("aaa111".to_string()),
+                Some(AgentFamilyRelationship::Parent)
+            ),
+            (
+                Some("bbb222".to_string()),
+                Some(AgentFamilyRelationship::Sibling)
+            ),
+        ],
+        "the starter is the parent and other roots stay siblings: {labeled:?}"
+    );
+    // The starter's own observe view: the registry join carries topLevel.
+    let starter_view = FamilyIdentity {
+        active_session_id: "aaa111".to_string(),
+        session_id: Some("sess-a".to_string()),
+        session_file: None,
+        parent_active_session_id: None,
+        parent_session_id: None,
+        parent_session_path: None,
+        starter_active_session_id: None,
+        starter_session_id: None,
+        rlm_depth: 0,
+    };
+    let registry = vec![("ttt777".to_string(), true)];
+    let summaries = summaries_from_roster(roster, &starter_view, &registry);
+    let peer = summaries
+        .iter()
+        .find(|summary| summary.active_session_id.as_deref() == Some("ttt777"))
+        .expect("the started session is in the starter's family");
+    assert_eq!(peer.relationship, Some(AgentFamilyRelationship::Child));
+    assert!(peer.top_level);
+}
+
 #[tokio::test]
 async fn family_labels_children_and_parent_from_the_registry() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -224,6 +328,7 @@ async fn family_labels_children_and_parent_from_the_registry() {
             active_session_id: "ddd444".to_string(),
             session_id: Some("sess-d".to_string()),
             session_name: "worker-a".to_string(),
+            top_level: false,
         },
     )
     .await;
@@ -299,6 +404,7 @@ async fn family_keeps_off_roster_children_addressable() {
             active_session_id: "eee555".to_string(),
             session_id: Some("sess-e".to_string()),
             session_name: "worker-b".to_string(),
+            top_level: false,
         },
     )
     .await;
@@ -513,6 +619,8 @@ fn summaries_label_the_nuclear_family_by_durable_edges() {
         parent_active_session_id: Some("ppp000".to_string()),
         parent_session_id: Some("sess-p".to_string()),
         parent_session_path: Some("/agent/sessions/sess-p.jsonl".to_string()),
+        starter_active_session_id: None,
+        starter_session_id: None,
         rlm_depth: 1,
     };
     let sessions = vec![
@@ -528,6 +636,7 @@ fn summaries_label_the_nuclear_family_by_durable_edges() {
             "activeSessionId": "sib222", "sessionId": "sess-sib",
             "sessionName": "sibling", "runtimeKind": "subagent", "activity": "working",
             "parentActiveSessionId": "ppp000", "parentSessionId": "sess-p",
+            "progressNote": "finishing the audit", "noteAt": "2026-10-20T22:30:00.000Z",
         }),
         json!({
             "activeSessionId": "own333", "sessionId": "sess-own",
@@ -564,6 +673,16 @@ fn summaries_label_the_nuclear_family_by_durable_edges() {
         .find(|s| s.active_session_id.as_deref() == Some("own333"))
         .unwrap();
     assert_eq!(child.relationship, Some(AgentFamilyRelationship::Child));
+    // The roster row's note and its timestamp carry onto the observe row.
+    let note_row = summaries
+        .iter()
+        .find(|s| s.active_session_id.as_deref() == Some("sib222"))
+        .unwrap();
+    assert_eq!(note_row.note.as_deref(), Some("finishing the audit"));
+    assert_eq!(
+        note_row.note_at.as_deref(),
+        Some("2026-10-20T22:30:00.000Z")
+    );
     assert!(!summaries
         .iter()
         .any(|s| s.active_session_id.as_deref() == Some("foreign444")));
@@ -744,6 +863,8 @@ fn summaries_carry_the_typed_status_and_activity() {
         parent_active_session_id: Some("ppp00".to_string()),
         parent_session_id: Some("sess-p".to_string()),
         parent_session_path: Some("/agent/sessions/sess-p.jsonl".to_string()),
+        starter_active_session_id: None,
+        starter_session_id: None,
         rlm_depth: 1,
     };
     let sessions = vec![
@@ -895,6 +1016,7 @@ async fn family_joins_a_replaced_child_by_its_durable_ids() {
             active_session_id: "ddd444".to_string(),
             session_id: Some("sess-kid".to_string()),
             session_name: "kid".to_string(),
+            top_level: false,
         },
     )
     .await;

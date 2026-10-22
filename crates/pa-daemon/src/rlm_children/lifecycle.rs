@@ -352,21 +352,17 @@ impl SupervisorChildSessionsInner {
     /// running while any descendant does). `Err` means the child cannot be
     /// reached right now.
     pub(super) async fn child_busy(&self, active_session_id: &str) -> Result<bool> {
+        Ok(summary_is_busy(&self.child_state(active_session_id).await?))
+    }
+
+    /// One `GetState` round trip: the child's session summary.
+    pub(super) async fn child_state(&self, active_session_id: &str) -> Result<Value> {
         let command = DaemonCommand::GetState {
             id: None,
             active_session_id: active_session_id.to_string(),
             rest: Map::default(),
         };
-        let state = self.command(&command, STATE_TIMEOUT_MS).await?;
-        let flag = |name: &str| state.get(name).and_then(Value::as_bool).unwrap_or(false);
-        Ok(flag("isStreaming")
-            || flag("hasRunningSubagents")
-            || state
-                .get("sessionActions")
-                .and_then(|actions| actions.get("queuedCount"))
-                .and_then(Value::as_u64)
-                .unwrap_or(0)
-                > 0)
+        self.command(&command, STATE_TIMEOUT_MS).await
     }
 
     /// One `GetLastAssistantText` round trip: the raw text the roster
@@ -410,8 +406,8 @@ impl SupervisorChildSessionsInner {
             .await;
     }
 
-    /// Refresh one record against its worker: settle a child whose worker ran out of work and
-    /// capture its answer once; an unreachable child keeps its last known state.
+    /// Refresh one record against its worker: take its latest note, settle a child whose worker
+    /// ran out of work and capture its answer once; an unreachable child keeps its last known state.
     pub(super) async fn refresh_record(&self, record: &Arc<Mutex<ChildRecord>>) {
         {
             let record = record.lock().await;
@@ -420,8 +416,21 @@ impl SupervisorChildSessionsInner {
             }
         }
         let active_session_id = record.lock().await.active_session_id.clone();
-        let busy = self.child_busy(&active_session_id).await;
-        if !matches!(busy, Ok(false)) {
+        // An unreachable child keeps its last known state.
+        let Ok(state) = self.child_state(&active_session_id).await else {
+            return;
+        };
+        // A summary without a note keeps the last accepted one: the note
+        // lives until the run's boundary clears it (TS parity).
+        if let Some(note) = state.get("progressNote").and_then(Value::as_str) {
+            let mut record = record.lock().await;
+            record.progress_note = Some(note.to_string());
+            record.note_at = state
+                .get("noteAt")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+        }
+        if summary_is_busy(&state) {
             return;
         }
         // Capture the answer before taking the record lock (the capture is
@@ -844,6 +853,19 @@ pub(super) fn last_assistant_text_from_file(session_file: &str) -> Option<String
         }
     }
     None
+}
+
+/// The child streams, runs subagents of its own, or holds queued rows.
+fn summary_is_busy(state: &Value) -> bool {
+    let flag = |name: &str| state.get(name).and_then(Value::as_bool).unwrap_or(false);
+    flag("isStreaming")
+        || flag("hasRunningSubagents")
+        || state
+            .get("sessionActions")
+            .and_then(|actions| actions.get("queuedCount"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            > 0
 }
 
 #[cfg(test)]

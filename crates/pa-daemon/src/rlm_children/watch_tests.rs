@@ -33,6 +33,9 @@ enum FakeChild {
     /// Unreachable; the watcher's give-up poll parks until the test
     /// lands a reader's verdict.
     UnreachableUntilVerdict,
+    /// The prompt fails; the first prompt parks until the test has scored
+    /// its collect misread, so the failure cannot race the reader.
+    PromptFailsParkedUntilVerdict,
 }
 
 /// A scripted JSONL supervisor for the watcher tests: creates one child
@@ -72,6 +75,9 @@ async fn spawn_fake_supervisor(
         // Shared across link connections: the give-up gate counts the
         // child's state reads on whichever connection carries them.
         let state_reads = Arc::new(AtomicU32::new(0));
+        // Shared across link connections: the parked prompt's first
+        // command parks on whichever connection carries it.
+        let prompt_parks = Arc::new(AtomicU32::new(0));
         loop {
             let Ok(stream) = listener.accept().await else {
                 return;
@@ -81,6 +87,7 @@ async fn spawn_fake_supervisor(
             let kill_behavior = std::sync::Arc::clone(&kill_behavior);
             let gone = Arc::clone(&gone);
             let state_reads = Arc::clone(&state_reads);
+            let prompt_parks = Arc::clone(&prompt_parks);
             let child_session_file = std::sync::Arc::clone(&child_session_file);
             let child_subagents = Arc::clone(&child_subagents);
             tokio::spawn(async move {
@@ -102,6 +109,24 @@ async fn spawn_fake_supervisor(
                     let command = value["command"].clone();
                     let command_type: &str = command["type"].as_str().unwrap_or_default();
                     let response = match command_type {
+                        _ if matches!(
+                            (child, command_type),
+                            (FakeChild::PromptFailsParkedUntilVerdict, "prompt")
+                        ) =>
+                        {
+                            // The first prompt parks in the fake until the
+                            // test's collect has scored its misread; the
+                            // retry passes through.
+                            if prompt_parks.fetch_add(1, Ordering::SeqCst) == 0 {
+                                PROMPT_FAIL_LANDED.notified().await;
+                            }
+                            response_failure(
+                                Some(&id),
+                                command_type,
+                                "refused by the fake supervisor",
+                                None,
+                            )
+                        }
                         _ if matches!(
                             (child, command_type),
                             (FakeChild::PromptFails, "prompt")
@@ -171,6 +196,8 @@ async fn spawn_fake_supervisor(
                                 "isStreaming": false,
                                 "hasRunningSubagents": child_subagents.running.load(Ordering::SeqCst),
                                 "sessionActions": { "queuedCount": 0 },
+                                "progressNote": "finishing the audit",
+                                "noteAt": "2026-10-20T23:45:00.000Z",
                             })),
                         ),
                         "get_last_assistant_text" => {
@@ -332,6 +359,7 @@ async fn roster_snapshot_does_not_wait_for_a_slow_child_worker() {
             active_session_id: "child-live".to_string(),
             session_id: Some("child-file".to_string()),
             session_name: "slow-child".to_string(),
+            top_level: false,
         })
         .await;
     let roster = tokio::time::timeout(Duration::from_millis(10), sessions.list_subagents())
@@ -374,6 +402,135 @@ async fn a_settled_child_without_a_reply_delivers_the_terminal_notice() {
     let extra =
         tokio::time::timeout(std::time::Duration::from_millis(300), follow_up_rx.recv()).await;
     assert!(extra.is_err(), "no second notice may arrive");
+}
+
+#[tokio::test]
+async fn the_roster_row_carries_the_child_note() {
+    let (follow_up_tx, _follow_up_rx) = mpsc::unbounded_channel();
+    let (sessions, _kill_rx) =
+        sessions_with_fake_supervisor(follow_up_tx, 0, FakeKill::Success, FakeChild::Healthy).await;
+    let settled = sessions.settle_notified();
+    spawn_child(&sessions).await;
+    sessions.notify_turn_done();
+    tokio::time::timeout(Duration::from_secs(10), settled)
+        .await
+        .expect("the child settles");
+    let roster = sessions.list_subagents().await.expect("child roster");
+    assert_eq!(
+        roster[0].progress_note.as_deref(),
+        Some("finishing the audit")
+    );
+    assert_eq!(
+        roster[0].note_at.as_deref(),
+        Some("2026-10-20T23:45:00.000Z")
+    );
+}
+
+/// A spawn and a blocking collect in one cell: the collect's parent-activity
+/// bump releases the task prompt, so the boundary wait never applies. The
+/// snapshot path is covered by the roster-read test.
+#[tokio::test]
+async fn a_blocking_collect_releases_the_parked_task_prompt() {
+    let (follow_up_tx, _follow_up_rx) = mpsc::unbounded_channel();
+    let (sessions, _kill_rx) =
+        sessions_with_fake_supervisor(follow_up_tx, 0, FakeKill::Success, FakeChild::Healthy).await;
+    let handle = spawn_child(&sessions).await;
+    let results = tokio::time::timeout(
+        Duration::from_secs(10),
+        sessions.collect(vec![handle.rlm_child_id.clone()], 30_000),
+    )
+    .await
+    .expect("the collect must not wait out the turn boundary")
+    .expect("blocking collect");
+    assert_eq!(results[0].status, "done");
+    assert_eq!(
+        results[0].answer_text.as_deref(),
+        Some("the child final answer")
+    );
+    assert_eq!(
+        *sessions.inner.turn_done.borrow(),
+        0,
+        "the blocking collect keeps the turn boundary untouched"
+    );
+}
+
+/// A fan-out cell spawns several children: every spawn after the first is
+/// parent activity, so the earlier children's parked prompts release
+/// mid-cell instead of waiting for the turn boundary.
+#[tokio::test]
+async fn a_later_spawn_releases_the_earlier_parked_task_prompt() {
+    let (follow_up_tx, _follow_up_rx) = mpsc::unbounded_channel();
+    let (sessions, _kill_rx) =
+        sessions_with_fake_supervisor(follow_up_tx, 0, FakeKill::Success, FakeChild::Healthy).await;
+    let settled = sessions.settle_notified();
+    let first = spawn_child(&sessions).await;
+    let second = sessions
+        .spawn(RlmSpawnRequest {
+            prompt: "f20 second task".to_string(),
+            name: Some("f20-second".to_string()),
+            model: None,
+            thinking: None,
+            spawned_by_request_id: None,
+        })
+        .await
+        .expect("second spawn");
+    tokio::time::timeout(Duration::from_secs(10), settled)
+        .await
+        .expect("the second spawn releases the first prompt without the boundary");
+    let roster = sessions.list_subagents().await.expect("child roster");
+    assert_eq!(roster.len(), 2);
+    assert_eq!(roster[0].rlm_child_id, first.rlm_child_id);
+    assert_eq!(roster[1].rlm_child_id, second.rlm_child_id);
+}
+
+/// A spawn and a delete in one cell: the delete never releases the parked
+/// prompt (the removed child owes no kickoff), so the release skips the
+/// closed record and the delete's own cancelled notice is the only row.
+#[tokio::test]
+async fn a_same_cell_delete_does_not_release_the_parked_task_prompt() {
+    let (follow_up_tx, mut follow_up_rx) = mpsc::unbounded_channel();
+    let (sessions, _kill_rx) =
+        sessions_with_fake_supervisor(follow_up_tx, 0, FakeKill::Success, FakeChild::Healthy).await;
+    let handle = spawn_child(&sessions).await;
+    sessions
+        .delete_subagent(handle.rlm_child_id.clone())
+        .await
+        .expect("delete");
+    let follow_up = tokio::time::timeout(Duration::from_secs(10), follow_up_rx.recv())
+        .await
+        .expect("the delete delivers its cancelled notice")
+        .expect("follow_up channel open");
+    let custom = &follow_up["customMessage"];
+    assert_eq!(custom["customType"], "rlm_child_terminal_notice");
+    assert_eq!(custom["details"]["kind"], "cancelled");
+    assert_eq!(custom["details"]["childId"], json!(handle.rlm_child_id));
+    sessions.notify_turn_done();
+    let extra = tokio::time::timeout(Duration::from_millis(300), follow_up_rx.recv()).await;
+    assert!(
+        extra.is_err(),
+        "the released prompt never fires: no second notice"
+    );
+}
+
+/// A mid-turn roster read releases the parked task prompt: a parent that
+/// polls `agents.list()` right after spawn must not park the child until
+/// the turn boundary.
+#[tokio::test]
+async fn a_mid_turn_roster_read_releases_the_parked_task_prompt() {
+    let (follow_up_tx, _follow_up_rx) = mpsc::unbounded_channel();
+    let (sessions, _kill_rx) =
+        sessions_with_fake_supervisor(follow_up_tx, 0, FakeKill::Success, FakeChild::Healthy).await;
+    let settled = sessions.settle_notified();
+    let handle = spawn_child(&sessions).await;
+    let roster = sessions.list_subagents().await.expect("roster read");
+    assert_eq!(roster[0].rlm_child_id, handle.rlm_child_id);
+    assert_eq!(roster[0].status, "running");
+    tokio::time::timeout(Duration::from_secs(10), settled)
+        .await
+        .expect("the roster read releases the prompt without the turn boundary");
+    assert_eq!(*sessions.inner.turn_done.borrow(), 0);
+    let roster = sessions.list_subagents().await.expect("child roster");
+    assert_eq!(roster[0].status, "completed");
 }
 
 /// The settle grace re-marks only a BUSY child as running: a worker that
@@ -573,6 +730,11 @@ async fn an_unreachable_child_delivers_the_failure_notice_instead_of_no_reply() 
 static GIVE_UP_POLL: tokio::sync::Notify = tokio::sync::Notify::const_new();
 static VERDICT_LANDED: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
+/// Hand-off into the parked prompt failure: the test scores its collect
+/// misread, then this release lands the failure verdict. Only the
+/// failure-window test uses it.
+static PROMPT_FAIL_LANDED: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
 /// A reader's refresh can settle the child between the watcher's settle
 /// read and its unreachable give-up claim: the claim keeps that verdict,
 /// and the watcher still runs its settle tail.
@@ -620,8 +782,7 @@ async fn a_verdict_landing_inside_the_unreachable_give_up_still_runs_the_settle_
 }
 
 /// The review's C1 interleaving: a `collect` that lands inside the
-/// prompt-failure window (after the detached task flips
-/// `prompt_admitted`, before the retry verdict) reads the alive-but-idle
+/// prompt-failure window (before the retry verdict) reads the alive-but-idle
 /// worker as `done` — `refresh_record`'s admission-window misread, not a
 /// settle verdict. The prompt arm's failure claim must ignore it: the
 /// failure row still lands, the roster reports `error`, the hook fires,
@@ -630,23 +791,27 @@ async fn a_verdict_landing_inside_the_unreachable_give_up_still_runs_the_settle_
 #[tokio::test]
 async fn a_collect_inside_the_prompt_failure_window_does_not_swallow_the_failure_row() {
     let (follow_up_tx, mut follow_up_rx) = mpsc::unbounded_channel();
-    let (sessions, _kill_rx) =
-        sessions_with_fake_supervisor(follow_up_tx, 0, FakeKill::Success, FakeChild::PromptFails)
-            .await;
+    let (sessions, _kill_rx) = sessions_with_fake_supervisor(
+        follow_up_tx,
+        0,
+        FakeKill::Success,
+        FakeChild::PromptFailsParkedUntilVerdict,
+    )
+    .await;
     let (hook_tx, mut hook_rx) = mpsc::unbounded_channel();
     sessions.set_settle_hook(Arc::new(move || {
         let _ = hook_tx.send(());
     }));
     let handle = spawn_child(&sessions).await;
-    // The window's entry condition, set deterministically: the detached
-    // prompt task flips `prompt_admitted` BEFORE its first
-    // `prompt_child` (host.rs), and the collect below races that task in
-    // production. With the flag set and the worker alive-but-idle, the
-    // real collect path scores the misread.
+    // The window's entry condition, set by hand: with the flag set and the
+    // worker alive-but-idle, the real collect path scores the misread.
     sessions.inner.children.lock().await[0]
         .lock()
         .await
         .prompt_admitted = true;
+    // The collect releases the parked prompt (parent activity); the fake
+    // parks the prompt command, so the collect's refresh cannot race the
+    // failure verdict.
     let misread = sessions
         .collect(vec![handle.rlm_child_id.clone()], 0)
         .await
@@ -655,11 +820,10 @@ async fn a_collect_inside_the_prompt_failure_window_does_not_swallow_the_failure
         misread[0].status, "done",
         "the premise: the collect misreads the pre-prompt idle worker as done"
     );
+    PROMPT_FAIL_LANDED.notify_one();
 
-    // The task prompt now runs and fails (prompt + retry) inside the
-    // window the collect already scored.
-    sessions.notify_turn_done();
-
+    // The task prompt now fails (prompt + retry) inside the window the
+    // collect already scored.
     let follow_up = tokio::time::timeout(Duration::from_secs(10), follow_up_rx.recv())
         .await
         .expect("the failure row must land despite the collect's misread")
@@ -852,6 +1016,40 @@ async fn close_children_stops_the_child_and_clears_the_roster() {
     );
     let extra = tokio::time::timeout(Duration::from_millis(300), follow_up_rx.recv()).await;
     assert!(extra.is_err(), "a closed child must not deliver a notice");
+}
+
+/// A started top-level session outlives its starter: `close_children`
+/// never stops it, only unregistering the starter's registry row.
+#[tokio::test]
+async fn close_children_unregisters_a_top_level_session() {
+    let (follow_up_tx, _follow_up_rx) = mpsc::unbounded_channel();
+    let (sessions, mut kill_rx) =
+        sessions_with_fake_supervisor(follow_up_tx, 10_000, FakeKill::Success, FakeChild::Healthy)
+            .await;
+    sessions
+        .push_test_child(RlmChildIdentity {
+            rlm_child_id: "child-tl".to_string(),
+            active_session_id: "peer-live".to_string(),
+            session_id: Some("peer-file".to_string()),
+            session_name: "peer".to_string(),
+            top_level: true,
+        })
+        .await;
+
+    sessions
+        .close_children(ChildCloseReason::Killed)
+        .await
+        .expect("close children");
+
+    let entries = sessions.list_subagents().await.expect("child roster");
+    assert!(
+        entries.is_empty(),
+        "the starter's close unregisters the record: {entries:?}"
+    );
+    assert!(
+        kill_rx.try_recv().is_err(),
+        "a top-level session is never stopped by the starter's close"
+    );
 }
 
 #[tokio::test]
@@ -1243,6 +1441,7 @@ fn an_already_settled_child_never_re_scores_as_an_unreachable_error() {
         active_session_id: "child-live".to_string(),
         session_id: Some("child-file".to_string()),
         session_dir: "/tmp".to_string(),
+        top_level: false,
         model: String::new(),
         label: "task".to_string(),
         started_at_ms: 0,
@@ -1255,6 +1454,8 @@ fn an_already_settled_child_never_re_scores_as_an_unreachable_error() {
         notice_delivered: false,
         prompt_admitted: true,
         error: None,
+        progress_note: None,
+        note_at: None,
         closed_by_parent: false,
         retirement_finished: false,
         retirement_notified: false,
@@ -1311,6 +1512,7 @@ async fn the_unreachable_give_up_skips_the_exit_capture_when_a_capture_stands() 
         active_session_id: "child-live".to_string(),
         session_id: Some("child-file".to_string()),
         session_dir: "/tmp".to_string(),
+        top_level: false,
         model: String::new(),
         label: "task".to_string(),
         started_at_ms: 0,
@@ -1323,6 +1525,8 @@ async fn the_unreachable_give_up_skips_the_exit_capture_when_a_capture_stands() 
         notice_delivered: false,
         prompt_admitted: true,
         error: None,
+        progress_note: None,
+        note_at: None,
         closed_by_parent: false,
         retirement_finished: false,
         retirement_notified: false,

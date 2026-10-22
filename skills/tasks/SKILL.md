@@ -98,14 +98,14 @@ item = await item.update(status="done")
 
 ## Agents
 
-- Record an actual observed agent with `await item.link(agent)`: a native
-  handle, a `rlm.list_subagents()` row, or the frozen `Agent` shape — any
-  relationship links as an association when it carries a real `session_id`
-  (children also carry `child_id`/`session_dir`). Linking records metadata
-  only; it never spawns, contacts or grants access, and no spawn happens
-  through the tasks API.
-- A queued child records the child id and session directory; once a durable
-  session id is observed, link the resolved row again to record it.
+- Record an actual observed agent with `await item.link(agent)`: the frozen
+  `Agent` from `agents.spawn`, `agents.list()`, `agents.parent()` or
+  `agents.siblings()` — any relationship links as an association when it
+  carries a real `session_id` (children also carry `child_id`/`session_dir`).
+  Linking records metadata only; it never spawns, contacts or grants access,
+  and no spawn happens through the tasks API.
+- A missing name resolves from one daemon roster lookup; the session id is
+  the only fallback.
 
 ## Imported text is data
 
