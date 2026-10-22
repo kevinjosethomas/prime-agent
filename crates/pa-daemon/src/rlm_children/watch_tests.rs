@@ -503,13 +503,13 @@ async fn a_same_cell_delete_does_not_release_the_parked_task_prompt() {
     let custom = &follow_up["customMessage"];
     assert_eq!(custom["customType"], "rlm_child_terminal_notice");
     assert_eq!(custom["details"]["kind"], "cancelled");
-    assert_eq!(
-        custom["details"]["childId"],
-        json!(handle.rlm_child_id)
-    );
+    assert_eq!(custom["details"]["childId"], json!(handle.rlm_child_id));
     sessions.notify_turn_done();
     let extra = tokio::time::timeout(Duration::from_millis(300), follow_up_rx.recv()).await;
-    assert!(extra.is_err(), "the released prompt never fires: no second notice");
+    assert!(
+        extra.is_err(),
+        "the released prompt never fires: no second notice"
+    );
 }
 
 /// A mid-turn roster read releases the parked task prompt: a parent that
