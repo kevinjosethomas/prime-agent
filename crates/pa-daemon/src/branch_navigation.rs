@@ -82,6 +82,41 @@ impl TreeNavigation {
         }
     }
 
+    /// `get_session_tree_page`: one bounded branch page (the paged
+    /// `get_session_tree` for clients that must not read the whole tree).
+    pub(crate) fn get_session_tree_page(&self, payload: &Value) -> DaemonResponse {
+        let cursor = payload.get("cursor").and_then(Value::as_str);
+        let limit = payload
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(session_tree::DEFAULT_BRANCH_PAGE_LIMIT as u64)
+            .clamp(1, session_tree::MAX_BRANCH_PAGE_LIMIT as u64) as usize;
+        let core = self.core.lock().unwrap();
+        match core.store.as_ref() {
+            Some(store) => match session_tree::branch_page(store, cursor, limit) {
+                Ok(page) => response_success(
+                    None,
+                    "get_session_tree_page",
+                    Some(json!({
+                        "flatNodes": page.flat_nodes,
+                        "leafId": store.leaf_id(),
+                        "cursor": page.next_cursor,
+                        "hasMore": page.has_more,
+                    })),
+                ),
+                Err(error) => {
+                    response_failure(None, "get_session_tree_page", &error.to_string(), None)
+                }
+            },
+            None => response_failure(
+                None,
+                "get_session_tree_page",
+                "Session is still initializing",
+                None,
+            ),
+        }
+    }
+
     /// `get_user_messages_for_forking`: the user messages with text (TS
     /// `getUserMessagesForForking`).
     pub(crate) fn get_user_messages_for_forking(&self) -> DaemonResponse {

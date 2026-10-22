@@ -66,22 +66,97 @@ pub fn flat_tree(store: &SessionFile) -> Vec<Value> {
     store
         .entries()
         .iter()
-        .map(|entry| {
-            let entry = serde_json::to_value(entry).unwrap_or(Value::Null);
-            let mut node = json!({ "entry": entry });
-            if let Some(id) = entry.get("id").and_then(Value::as_str) {
-                if let Some(label) = labels.labels.get(id) {
-                    node["label"] = json!(label);
-                    node["labelTimestamp"] = json!(labels
-                        .timestamps
-                        .get(id)
-                        .map(String::as_str)
-                        .unwrap_or_default());
-                }
-            }
-            node
-        })
+        .map(|entry| labeled_node(entry, &labels))
         .collect()
+}
+
+/// One page of the durable branch walk: the nodes (leaf-first), the id to
+/// continue from, and whether the walk continues past the page.
+pub struct BranchPage {
+    pub flat_nodes: Vec<Value>,
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
+}
+
+/// The default `branch_page` node count.
+pub const DEFAULT_BRANCH_PAGE_LIMIT: usize = 200;
+/// The `branch_page` serialized-node budget: the hard bound that keeps one
+/// page a small frame regardless of entry sizes.
+pub const MAX_BRANCH_PAGE_BYTES: usize = 4 * 1024 * 1024;
+/// The largest client-asked page: the budget above stays the real bound.
+pub const MAX_BRANCH_PAGE_LIMIT: usize = 2000;
+
+/// `get_session_tree_page`: one page of the leaf-to-root durable branch after
+/// `cursor` (None starts at the leaf), bounded by `limit` nodes and
+/// [`MAX_BRANCH_PAGE_BYTES`]; a page always yields its first node so a walk
+/// progresses even past the budgets. The chain walk covers entries the
+/// compaction window hides, mirroring the desktop's own parent-chain fold.
+///
+/// # Errors
+///
+/// Returns an error when `cursor` names no entry in the store.
+pub fn branch_page(
+    store: &SessionFile,
+    cursor: Option<&str>,
+    limit: usize,
+) -> Result<BranchPage> {
+    let mut current: Option<String> = match cursor {
+        Some(id) => {
+            let Some(entry) = store.entry(id) else {
+                return Err(anyhow!("Entry {id} not found"));
+            };
+            entry.parent_id.clone()
+        }
+        None => store.leaf_id().map(str::to_string),
+    };
+    let labels = LabelState::from_entries(store.entries());
+    let mut flat_nodes = Vec::new();
+    let mut next_cursor = None;
+    let mut has_more = false;
+    let mut bytes = 0usize;
+    let mut visited = std::collections::HashSet::new();
+    while let Some(id) = current {
+        let Some(entry) = store.entry(&id) else {
+            break;
+        };
+        if !visited.insert(entry.id.clone()) {
+            break;
+        }
+        let node = labeled_node(entry, &labels);
+        let node_bytes = serde_json::to_vec(&node).map_or(node.to_string().len(), Vec::len);
+        if !flat_nodes.is_empty()
+            && (flat_nodes.len() >= limit || bytes + node_bytes > MAX_BRANCH_PAGE_BYTES)
+        {
+            has_more = true;
+            break;
+        }
+        bytes += node_bytes;
+        flat_nodes.push(node);
+        next_cursor = Some(entry.id.clone());
+        current = entry.parent_id.clone();
+    }
+    Ok(BranchPage {
+        flat_nodes,
+        next_cursor,
+        has_more,
+    })
+}
+
+/// One wire node: the entry with its active label, the `flatNodes` shape.
+fn labeled_node(entry: &SessionEntry, labels: &LabelState) -> Value {
+    let entry = serde_json::to_value(entry).unwrap_or(Value::Null);
+    let mut node = json!({ "entry": entry });
+    if let Some(id) = entry.get("id").and_then(Value::as_str) {
+        if let Some(label) = labels.labels.get(id) {
+            node["label"] = json!(label);
+            node["labelTimestamp"] = json!(labels
+                .timestamps
+                .get(id)
+                .map(String::as_str)
+                .unwrap_or_default());
+        }
+    }
+    node
 }
 
 /// `get_user_messages_for_forking`: user messages with their text, in file order.
@@ -415,6 +490,90 @@ mod tests {
         let mut store = SessionFile::create("/w", None, 0);
         store.set_path(dir.path().join("s.jsonl"));
         (dir, store)
+    }
+
+    fn page_ids(page: &BranchPage) -> Vec<String> {
+        page.flat_nodes
+            .iter()
+            .filter_map(|node| node["entry"]["id"].as_str().map(str::to_string))
+            .collect()
+    }
+
+    #[test]
+    fn branch_page_walks_leaf_first_and_cursors_to_the_root() {
+        let (_dir, mut store) = temp_store();
+        let a = message_entry(&mut store, "user", "first");
+        let b = message_entry(&mut store, "assistant", "answer");
+        let c = message_entry(&mut store, "user", "second");
+        let page = branch_page(&store, None, 2).unwrap();
+        assert_eq!(page_ids(&page), vec![c.clone(), b.clone()]);
+        assert_eq!(page.next_cursor.as_deref(), Some(b.as_str()));
+        assert!(page.has_more);
+        let next = branch_page(&store, page.next_cursor.as_deref(), 2).unwrap();
+        assert_eq!(page_ids(&next), vec![a.clone()]);
+        assert_eq!(next.next_cursor.as_deref(), Some(a.as_str()));
+        assert!(!next.has_more);
+        let end = branch_page(&store, next.next_cursor.as_deref(), 2).unwrap();
+        assert!(end.flat_nodes.is_empty());
+        assert_eq!(end.next_cursor, None);
+        assert!(!end.has_more);
+    }
+
+    #[test]
+    fn branch_page_rejects_an_unknown_cursor() {
+        let (_dir, mut store) = temp_store();
+        message_entry(&mut store, "user", "first");
+        let error = branch_page(&store, Some("missing"), 2).unwrap_err();
+        assert_eq!(error.to_string(), "Entry missing not found");
+    }
+
+    #[test]
+    fn branch_page_yields_one_node_past_the_budgets() {
+        let (_dir, mut store) = temp_store();
+        let big = "x".repeat(5 * 1024 * 1024);
+        message_entry(&mut store, "user", &big);
+        message_entry(&mut store, "assistant", &big);
+        let page = branch_page(&store, None, MAX_BRANCH_PAGE_LIMIT).unwrap();
+        // One over-budget node still fills the page so the walk always progresses.
+        assert_eq!(page.flat_nodes.len(), 1);
+        assert!(page.has_more);
+        let next = branch_page(&store, page.next_cursor.as_deref(), MAX_BRANCH_PAGE_LIMIT).unwrap();
+        assert_eq!(next.flat_nodes.len(), 1);
+        assert!(!next.has_more);
+    }
+
+    #[test]
+    fn branch_page_reads_past_the_compaction_window() {
+        let dir = tempfile::tempdir();
+        let path = dir.path().join("paged.jsonl");
+        let mut full = SessionFile::create("/tmp", None, 0);
+        full.set_path(path.clone());
+        let oldest = full.append_message(&json!({"role": "user", "content": "oldest", "timestamp": 0u64}));
+        let mut kept = String::new();
+        for i in 1..10 {
+            let id = full.append_message(&json!({
+                "role": "user", "content": format!("old {i}"), "timestamp": i as u64
+            }));
+            if i == 5 {
+                kept = id;
+            }
+        }
+        full.append_entry(
+            "compaction",
+            json!({ "summary": "paged", "firstKeptEntryId": kept, "tokensBefore": 100 }),
+        );
+        let leaf = full.append_message(&json!({"role": "user", "content": "after", "timestamp": 20u64}));
+        full.rewrite().unwrap();
+
+        let mut windowed = SessionFile::open_windowed(&path).unwrap();
+        assert!(windowed.window.is_some());
+        assert!(windowed.entry(&oldest).is_none(), "the window hides the row");
+        windowed.install_full_history(SessionFile::open(&path).unwrap());
+        let page = branch_page(&windowed, None, MAX_BRANCH_PAGE_LIMIT).unwrap();
+        let ids = page_ids(&page);
+        assert_eq!(ids.first().map(String::as_str), Some(leaf.as_str()));
+        assert_eq!(ids.last().map(String::as_str), Some(oldest.as_str()));
+        assert!(!page.has_more);
     }
 
     #[test]
