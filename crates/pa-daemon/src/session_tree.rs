@@ -563,12 +563,16 @@ mod tests {
             "compaction",
             json!({ "summary": "paged", "firstKeptEntryId": kept, "tokensBefore": 100 }),
         );
-        let leaf = full.append_message(&json!({"role": "user", "content": "after", "timestamp": 20u64}));
+        let leaf =
+            full.append_message(&json!({"role": "user", "content": "after", "timestamp": 20u64}));
         full.rewrite().unwrap();
 
         let mut windowed = SessionFile::open_windowed(&path).unwrap();
         assert!(windowed.window.is_some());
-        assert!(windowed.entry(&oldest).is_none(), "the window hides the row");
+        assert!(
+            windowed.entry(&oldest).is_none(),
+            "the window hides the row"
+        );
         windowed.install_full_history(SessionFile::open(&path).unwrap());
         let page = branch_page(&windowed, None, MAX_BRANCH_PAGE_LIMIT).unwrap();
         let ids = page_ids(&page);

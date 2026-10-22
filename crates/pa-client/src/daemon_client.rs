@@ -981,7 +981,12 @@ impl DaemonClient {
                     }
                 }
             }
-tasks.register_connection(reader_task, writer_task);
+            // The supervisor socket closed: pending requests fail now and the
+            // death watch wakes the reconnect driver.
+            let _ = reader_dead_tx.send(true);
+            reader_shared.fail_pending("daemon_", "the daemon connection closed");
+        });
+        tasks.register_connection(reader_task, writer_task);
         Ok((
             DaemonClient {
                 socket_path: socket_path.to_path_buf(),
