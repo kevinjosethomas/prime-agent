@@ -72,6 +72,7 @@ pub fn flat_tree(store: &SessionFile) -> Vec<Value> {
 
 /// One page of the durable branch walk: the nodes (leaf-first), the id to
 /// continue from, and whether the walk continues past the page.
+#[derive(Debug)]
 pub struct BranchPage {
     pub flat_nodes: Vec<Value>,
     pub next_cursor: Option<String>,
@@ -123,7 +124,7 @@ pub fn branch_page(
             break;
         }
         let node = labeled_node(entry, &labels);
-        let node_bytes = serde_json::to_vec(&node).map_or(node.to_string().len(), Vec::len);
+        let node_bytes = serde_json::to_vec(&node).map_or_else(|_| node.to_string().len(), |bytes| bytes.len());
         if !flat_nodes.is_empty()
             && (flat_nodes.len() >= limit || bytes + node_bytes > MAX_BRANCH_PAGE_BYTES)
         {
@@ -544,7 +545,7 @@ mod tests {
 
     #[test]
     fn branch_page_reads_past_the_compaction_window() {
-        let dir = tempfile::tempdir();
+        let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("paged.jsonl");
         let mut full = SessionFile::create("/tmp", None, 0);
         full.set_path(path.clone());

@@ -275,6 +275,31 @@ pub(crate) fn client_event_from_value(value: &Value) -> Option<DaemonClientEvent
     }
 }
 
+/// The attribution budget for an over-limit frame: the typed response line
+/// writes the id first, so its leading bytes name the request it answers.
+const OVER_LIMIT_HEAD_BYTES: usize = 4096;
+
+/// The id an over-limit response frame answers, from its leading bytes.
+fn response_head_id(head: &[u8]) -> Option<String> {
+    const PREFIX: &[u8] = b"{\"id\":\"";
+    if !head.starts_with(PREFIX) {
+        return None;
+    }
+    let rest = &head[PREFIX.len()..];
+    let end = rest.iter().position(|byte| *byte == b'"')?;
+    std::str::from_utf8(&rest[..end]).ok().map(str::to_string)
+}
+
+/// A frame's leading bytes, partial-spill first, bounded by the attribution budget.
+fn frame_head(partial: &[u8], buffer: &[u8], limit: usize) -> Vec<u8> {
+    let mut head: Vec<u8> = partial.iter().copied().take(limit).collect();
+    if head.len() < limit {
+        let rest = (limit - head.len()).min(buffer.len());
+        head.extend_from_slice(&buffer[..rest]);
+    }
+    head
+}
+
 struct PendingRequest {
     reply: oneshot::Sender<Result<DaemonResponse, anyhow::Error>>,
     direct_owner: Option<Arc<()>>,
@@ -323,6 +348,15 @@ impl Shared {
         pending
             .remove(id)
             .is_some_and(|request| request.reply.send(Ok(response)).is_ok())
+    }
+
+    /// Fail one pending request with a transport error: the frame that
+    /// answered it exceeded the limit, while the connection stays up.
+    pub(crate) fn fail_pending_one(&self, id: &str, error: &str) -> bool {
+        let mut pending = self.pending.lock().unwrap();
+        pending
+            .remove(id)
+            .is_some_and(|request| request.reply.send(Err(anyhow!(error))).is_ok())
     }
 
     /// Fail every pending request whose id starts with `prefix` with a
@@ -847,6 +881,12 @@ impl DaemonClient {
                 }
             }
             if !seed_fatal {
+                // An over-limit frame fails only the request it answers: the
+                // reader skips the rest of the frame and keeps the connection.
+                // Attribution needs the frame's leading bytes; an unattributable
+                // frame still tears down (a dropped event would desync the
+                // client, so reconnecting is the honest failure).
+                let mut discarding: Option<String> = None;
                 loop {
                     let buffer = match reader.fill_buf().await {
                         // The socket closed: a trailing unterminated line still
@@ -862,13 +902,47 @@ impl DaemonClient {
                         Ok(buffer) => buffer,
                         Err(_) => break,
                     };
+                    if let Some(owner) = discarding.take() {
+                        // The skipped frame ends at its newline.
+                        match buffer.iter().position(|byte| *byte == b'\n') {
+                            Some(newline) => {
+                                reader.consume(newline + 1);
+                                reader_shared.fail_pending_one(
+                                    &owner,
+                                    "the daemon response exceeded the frame limit",
+                                );
+                            }
+                            None => {
+                                discarding = Some(owner);
+                                let read = buffer.len();
+                                reader.consume(read);
+                            }
+                        }
+                        continue;
+                    }
                     if let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
                         // The cap covers the line without its newline, like the
                         // bounded readers' byte accounting — the spill's already
                         // accumulated bytes count toward it too, so a split line
                         // whose head passed the cap alone still tears down.
                         if max_frame_bytes.is_some_and(|cap| partial.len() + newline > cap) {
-                            break;
+                            match response_head_id(&frame_head(
+                                &partial,
+                                &buffer[..newline],
+                                OVER_LIMIT_HEAD_BYTES,
+                            )) {
+                                Some(id) => {
+                                    partial.clear();
+                                    let consumed = newline + 1;
+                                    reader.consume(consumed);
+                                    reader_shared.fail_pending_one(
+                                        &id,
+                                        "the daemon response exceeded the frame limit",
+                                    );
+                                }
+                                None => break,
+                            }
+                            continue;
                         }
                         let line: Vec<u8> = if partial.is_empty() {
                             buffer[..newline].to_vec()
@@ -884,8 +958,22 @@ impl DaemonClient {
                     } else {
                         // No newline in the buffered bytes: the cap also bounds
                         // the partial frame accumulating across fills.
-                        if max_frame_bytes.is_some_and(|cap| partial.len() + buffer.len() > cap) {
-                            break;
+                        if max_frame_bytes.is_some_and(|cap| partial.len() + buffer.len() > cap)
+                        {
+                            match response_head_id(&frame_head(
+                                &partial,
+                                buffer,
+                                OVER_LIMIT_HEAD_BYTES,
+                            )) {
+                                Some(id) => {
+                                    discarding = Some(id);
+                                    partial.clear();
+                                    let read = buffer.len();
+                                    reader.consume(read);
+                                }
+                                None => break,
+                            }
+                            continue;
                         }
                         partial.extend_from_slice(buffer);
                         let read = buffer.len();
@@ -893,12 +981,7 @@ impl DaemonClient {
                     }
                 }
             }
-            // The supervisor socket closed: pending requests fail now and the
-            // death watch wakes the reconnect driver.
-            let _ = reader_dead_tx.send(true);
-            reader_shared.fail_pending("daemon_", "the daemon connection closed");
-        });
-        tasks.register_connection(reader_task, writer_task);
+tasks.register_connection(reader_task, writer_task);
         Ok((
             DaemonClient {
                 socket_path: socket_path.to_path_buf(),
