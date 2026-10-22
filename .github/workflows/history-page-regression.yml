@@ -1,0 +1,22 @@
+name: Bounded compaction history regression
+on:
+  push:
+    branches: [fix/compaction-history-pages]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - run: cargo fmt --all --check
+      - run: cargo clippy --locked -p pa-daemon --all-targets -- -D warnings
+      - run: cargo test --locked -p pa-daemon --lib history_page
+      - run: cargo test --locked -p pa-daemon --test supervisor_e2e
+      - run: cargo test --locked -p pa-daemon --test import_compaction_e2e

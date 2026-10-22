@@ -401,4 +401,52 @@ fn imported_session_compacts() {
         Some(first_kept),
         "the durable row records the same cut: {compactions:?}"
     );
+    verify_history_pages(&mut harness, first_kept, &rows);
+}
+
+/// Drive the actual supervisor/worker wire, not a page-shaped fixture. Paging must
+/// recover the imported messages before the cut without changing the store.
+fn verify_history_pages(harness: &mut Harness, first_kept: &str, original: &[Value]) {
+    let before = session_rows(harness, "message");
+    let mut request = json!({});
+    let mut recovered = Vec::new();
+    let mut cursors = std::collections::HashSet::new();
+    loop {
+        harness.client.send_command(
+            "history-page",
+            &json!({
+                "type": "get_session_tree", "activeSessionId": harness.session_id,
+                "historyPage": request,
+            }),
+        );
+        let response = harness.client.request("history-page");
+        assert_eq!(response["success"], true, "page response: {response}");
+        assert!(serde_json::to_vec(&response).unwrap().len() < 8 * 1024 * 1024);
+        let page = &response["data"]["historyPage"];
+        assert_eq!(page["version"], 1);
+        assert_eq!(page["compaction"]["firstKeptEntryId"], first_kept);
+        let entries = page["entries"].as_array().expect("page entries");
+        assert!(entries.len() <= 100);
+        recovered.splice(
+            0..0,
+            entries
+                .iter()
+                .filter(|entry| entry["type"] == "message")
+                .cloned(),
+        );
+        let Some(cursor) = page["nextBeforeEntryId"].as_str() else {
+            break;
+        };
+        assert!(cursors.insert(cursor.to_string()), "cursor did not advance");
+        request = json!({
+            "beforeEntryId": cursor, "boundaryId": page["boundaryId"],
+            "anchorLeafId": page["anchorLeafId"],
+        });
+    }
+    let cut = original
+        .iter()
+        .position(|entry| entry["id"] == first_kept)
+        .expect("kept entry in original");
+    assert_eq!(recovered, original[..cut]);
+    assert_eq!(session_rows(harness, "message"), before);
 }

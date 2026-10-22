@@ -138,7 +138,7 @@ impl Worker {
             "set_auto_retry" => self.handle_set_auto_retry(payload),
             "set_prompt_guidelines" => self.handle_set_prompt_guidelines(payload).await,
             "abort_retry" => self.handle_abort_retry(),
-            "get_session_tree" => self.tree_navigation.get_session_tree(),
+            "get_session_tree" => self.tree_navigation.get_session_tree(payload),
             "get_user_messages_for_forking" => self.tree_navigation.get_user_messages_for_forking(),
             "set_session_entry_label" => self.tree_navigation.set_session_entry_label(payload),
             "navigate_tree" => self.handle_navigate_tree(payload).await,

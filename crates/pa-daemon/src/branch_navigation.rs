@@ -62,8 +62,28 @@ impl TreeNavigation {
 
     /// `get_session_tree`: every entry in file order with its label plus the
     /// current leaf id (TS `getFlatTree` + `getLeafId`).
-    pub(crate) fn get_session_tree(&self) -> DaemonResponse {
+    pub(crate) fn get_session_tree(&self, payload: &Value) -> DaemonResponse {
         let core = self.core.lock().unwrap();
+        if let Some(request) = payload.get("historyPage") {
+            return match core.store.as_ref() {
+                Some(store) => match crate::history_page::history_page(store, request) {
+                    Ok(page) => response_success(
+                        None,
+                        "get_session_tree",
+                        Some(json!({ "historyPage": page })),
+                    ),
+                    Err(error) => {
+                        response_failure(None, "get_session_tree", &error.to_string(), None)
+                    }
+                },
+                None => response_failure(
+                    None,
+                    "get_session_tree",
+                    "Session is still initializing",
+                    None,
+                ),
+            };
+        }
         match core.store.as_ref() {
             Some(store) => response_success(
                 None,
